@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Widget test page</title>
+  <style>
+    body { font-family: system-ui; max-width: 800px; margin: 4rem auto; padding: 0 2rem; color: #333; }
+    h1 { font-size: 28px; font-weight: 500; margin-bottom: 1rem; }
+    p { color: #666; line-height: 1.6; }
+    .snippet { background: #f5f5f3; border-radius: 8px; padding: 1rem 1.25rem; margin-top: 2rem; }
+    code { font-family: monospace; font-size: 13px; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>Agent Platform Widget Test</h1>
+  <p>The chat bubble should appear in the bottom-right corner. Click it to open the widget and test your agent.</p>
+  <div class="snippet">
+    <p style="font-size:13px;margin-bottom:8px;font-weight:500;">Embed snippet for clients:</p>
+    <code>
+      &lt;script<br>
+      &nbsp;&nbsp;src="https://your-worker.your-subdomain.workers.dev/widget.js"<br>
+      &nbsp;&nbsp;data-client-id="YOUR_CLIENT_UUID"<br>
+      &nbsp;&nbsp;data-api-url="https://your-api.railway.app"<br>
+      &nbsp;&nbsp;data-title="Support"<br>
+      &nbsp;&nbsp;data-color="#1D9E75"<br>
+      &gt;&lt;/script&gt;
+    </code>
+  </div>
+
+  <!-- Widget — points to local API for testing -->
+  <script
+    src="./widget.js"
+    data-client-id="00000000-0000-0000-0000-000000000001"
+    data-api-url="http://localhost:3001"
+    data-title="Support Chat"
+    data-color="#1D9E75"
+    data-welcome="Hi! How can I help you today?"
+  ></script>
+</body>
+</html>
