@@ -55,7 +55,7 @@ const tools: Anthropic.Tool[] = [
   }
 ]
 
-function buildSystemPrompt(config: AgentConfig, clientName: string): string {
+function buildSystemPrompt(config: Partial<AgentConfig>, clientName: string): string {
   return `You are a helpful AI support agent for ${clientName}.
 
 Your job:
@@ -65,14 +65,14 @@ Your job:
 4. Escalate to a human when the question is complex, the user is upset, or you are not confident
 
 Be friendly, concise, and on-brand. Never invent information not found in the knowledge base.
-${config.systemPromptExtra ?? ''}`
+${config?.systemPromptExtra ?? ''}`
 }
 
 export async function runAgent(message: IncomingMessage): Promise<AgentResponse> {
   const client = await getClientById(message.clientId)
   if (!client) throw new Error(`Client ${message.clientId} not found`)
 
-  const systemPrompt = buildSystemPrompt(client.agentConfig, client.name)
+    const systemPrompt = buildSystemPrompt(client.agentConfig ?? {}, client.name)
   const messages: Anthropic.MessageParam[] = [
     { role: 'user', content: message.body }
   ]
