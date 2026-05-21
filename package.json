@@ -1,0 +1,21 @@
+{
+  "name": "agent-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Multi-tenant AI agent platform — FAQ, booking, lead capture, escalation",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter api dev\" \"pnpm --filter dashboard dev\"",
+    "build": "pnpm --filter api build && pnpm --filter dashboard build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5"
+  },
+  "packageManager": "pnpm@9.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
