@@ -1,3 +1,4 @@
+import React from 'react'
 export default function Dashboard() {
   const stats = [
     { label: 'Messages today', value: 47 },
