@@ -83,7 +83,7 @@
 
     /* Messages */
     #ap-messages {
-      flex: 1; overflow-y: auto; padding: 18px 18px 8px;
+      flex: 1; overflow-y: auto; padding: 20px 20px 12px;
       display: flex; flex-direction: column; gap: 4px;
       scroll-behavior: smooth;
       background: white;
@@ -96,12 +96,12 @@
       text-transform: uppercase; letter-spacing: 0.6px;
     }
 
-    .ap-msg-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+    .ap-msg-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
     .ap-msg-group.user { align-items: flex-end; }
     .ap-msg-group.assistant { align-items: flex-start; }
 
     .ap-msg {
-      max-width: 80%; padding: 13px 18px; font-size: 15px; line-height: 1.5;
+      max-width: 75%; padding: 14px 18px; font-size: 15px; line-height: 1.45;
       word-wrap: break-word;
       animation: ap-msg-in 0.35s cubic-bezier(0.34,1.56,0.64,1);
       letter-spacing: -0.1px;
@@ -131,7 +131,7 @@
     /* Typing */
     .ap-typing {
       background: ${PURPLE_BUBBLE}; border-radius: 22px 22px 22px 8px;
-      padding: 14px 18px; display: inline-flex; gap: 5px; align-items: center;
+      padding: 16px 20px; display: inline-flex; gap: 5px; align-items: center;
       animation: ap-msg-in 0.25s ease; margin-top: 2px;
     }
     .ap-tdot { width: 8px; height: 8px; border-radius: 50%; background: ${PURPLE}; animation: ap-typing 1.2s infinite ease-in-out; }
@@ -155,18 +155,18 @@
 
     /* Input */
     #ap-input-wrap {
-      padding: 12px 18px 18px; background: white; flex-shrink: 0;
+      padding: 12px 20px 20px; background: white; flex-shrink: 0;
     }
     #ap-input-row {
       display: flex; gap: 10px; align-items: flex-end;
-      background: ${PURPLE_LIGHT}; border-radius: 24px; padding: 6px 6px 6px 18px;
+      background: ${PURPLE_LIGHT}; border-radius: 28px; padding: 6px 6px 6px 20px;
       transition: box-shadow 0.2s;
       border: 2px solid transparent;
     }
     #ap-input-row.focused { background: white; border-color: ${PURPLE}; }
     #ap-input {
       flex: 1; border: none; background: transparent;
-      padding: 10px 0; font-size: 15px; resize: none; outline: none;
+      padding: 12px 0; font-size: 15px; resize: none; outline: none;
       line-height: 1.4; max-height: 100px; font-family: inherit; color: #2D2D3A;
     }
     #ap-input::placeholder { color: #9B96B8; }
