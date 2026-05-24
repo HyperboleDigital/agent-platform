@@ -9,33 +9,47 @@
     h1 { font-size: 28px; font-weight: 500; margin-bottom: 1rem; }
     p { color: #666; line-height: 1.6; }
     .snippet { background: #f5f5f3; border-radius: 8px; padding: 1rem 1.25rem; margin-top: 2rem; }
-    code { font-family: monospace; font-size: 13px; color: #333; }
+    code { font-family: ui-monospace, monospace; font-size: 13px; color: #333; display: block; white-space: pre-wrap; line-height: 1.6; }
   </style>
 </head>
 <body>
   <h1>Agent Platform Widget Test</h1>
-  <p>The chat bubble should appear in the bottom-right corner. Click it to open the widget and test your agent.</p>
+  <p>The chat bubble should appear in the bottom-right corner. Try clicking it.</p>
+
   <div class="snippet">
-    <p style="font-size:13px;margin-bottom:8px;font-weight:500;">Embed snippet for clients:</p>
-    <code>
-      &lt;script<br>
-      &nbsp;&nbsp;src="https://your-worker.your-subdomain.workers.dev/widget.js"<br>
-      &nbsp;&nbsp;data-client-id="YOUR_CLIENT_UUID"<br>
-      &nbsp;&nbsp;data-api-url="https://your-api.railway.app"<br>
-      &nbsp;&nbsp;data-title="Support"<br>
-      &nbsp;&nbsp;data-color="#1D9E75"<br>
-      &gt;&lt;/script&gt;
-    </code>
+    <p style="font-size:13px;margin-bottom:8px;font-weight:500;">Theming via data attributes:</p>
+    <code>&lt;script
+  src="./src/widget.js"
+  data-client-id="YOUR_CLIENT_UUID"
+  data-api-url="http://localhost:3001"
+  data-title="Spec-ID"
+  data-tagline="How can we help today?"
+  data-color="#C05B28"
+  data-logo="./img/Spec-ID Mark White.svg"
+  data-logo-inverse="./img/Spec-ID Mark Bonfire.svg"
+&gt;&lt;/script&gt;</code>
   </div>
 
-  <!-- Widget — points to local API for testing -->
+  <!--
+    Widget config:
+    - data-color:          primary brand color
+    - data-color-2:        optional secondary for gradients (defaults to primary)
+    - data-logo:           logo for bubble (designed for colored bg — usually white)
+    - data-logo-inverse:   logo for header (designed for white bg — usually colored)
+    - data-title:          company name
+    - data-tagline:        subtitle under name
+    - data-welcome:        first bot message
+  -->
   <script
-    src="https://agent-widget.HyperboleDigital.workers.dev/widget.js"
+    src="./src/widget.js"
     data-client-id="3f2e6c15-7cfb-439b-9190-3c6a3a69ac12"
     data-api-url="http://localhost:3001"
-    data-title="Support Chat"
-    data-color="#1D9E75"
-    data-welcome="Hi! How can I help you today?"
+    data-title="Spec-ID"
+    data-tagline="How can we help today?"
+    data-welcome="Hey 👋 What brings you in?"
+    data-color="#C05B28"
+    data-logo="./img/Spec-ID Mark White.svg"
+    data-logo-inverse="./img/Spec-ID Mark Bonfire.svg"
   ></script>
 </body>
 </html>
