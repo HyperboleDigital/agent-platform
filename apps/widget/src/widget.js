@@ -9,6 +9,7 @@
   const WELCOME = script?.getAttribute('data-welcome') || "How can I help you today?";
   const LOGO = script?.getAttribute('data-logo') || '';
   const AVATAR_EMOJI = script?.getAttribute('data-avatar-emoji') || '';
+  const PROMPT_LABEL = script?.getAttribute('data-prompt') || 'Questions?';
 
   // ─── Theme colors (override via data-color / data-color-2) ───────────────
   // data-color    → primary brand color (e.g. data-color="#C05B28")
@@ -70,6 +71,48 @@
       outline: none;
     }
     #ap-widget button:focus-visible { outline: 2px solid var(--p); outline-offset: 2px; }
+
+    /* ─── Prompt label (small chip above the bubble) ────────────────────── */
+    #ap-prompt {
+      position: fixed; bottom: 100px; right: 30px; z-index: 99998;
+      background: var(--p);
+      color: white;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 13px; font-weight: 600;
+      box-shadow: 0 8px 24px var(--p-shadow), 0 2px 6px rgba(0,0,0,0.08);
+      cursor: pointer;
+      pointer-events: auto;
+      transform: translateY(0);
+      animation: ap-prompt-in 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s backwards;
+      transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.3s ease;
+    }
+    #ap-prompt::after {
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      right: 24px;
+      width: 10px; height: 10px;
+      background: var(--p);
+      transform: rotate(45deg);
+    }
+    #ap-prompt.hidden { opacity: 0; transform: translateY(8px); pointer-events: none; }
+
+    /* When hovering EITHER the bubble or the prompt, lift both */
+    #ap-bubble:hover ~ #ap-prompt,
+    #ap-prompt:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 32px var(--p-shadow), 0 4px 8px rgba(0,0,0,0.1);
+    }
+    #ap-prompt:hover ~ #ap-bubble,
+    #ap-widget:has(#ap-prompt:hover) #ap-bubble {
+      transform: translateY(-3px) scale(1.05);
+      box-shadow: 0 16px 44px var(--p-shadow), 0 6px 14px rgba(0,0,0,0.1);
+    }
+    @keyframes ap-prompt-in {
+      from { opacity: 0; transform: translateY(8px) scale(0.9); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
 
     /* ─── Bubble (the FAB that opens the chat) ───────────────────────────── */
     /* Avatar inside is the same element that morphs to the header position */
@@ -404,6 +447,7 @@
   root.id = 'ap-widget';
   root.innerHTML = `
     <button id="ap-bubble" aria-label="Open chat">${avatarHTML()}</button>
+    <div id="ap-prompt" role="button" tabindex="0">${PROMPT_LABEL}</div>
     <div id="ap-window" role="dialog">
       <div id="ap-header">
         <div class="ap-h-row">
@@ -469,6 +513,7 @@
   document.body.appendChild(root);
 
   const bubble = document.getElementById('ap-bubble');
+  const promptLabel = document.getElementById('ap-prompt');
   const win = document.getElementById('ap-window');
   const closeBtn = document.getElementById('ap-close-btn');
   const contactTrigger = document.getElementById('ap-contact-trigger');
@@ -637,6 +682,7 @@
   function openChat() {
     if (isOpen || isAnimating) return;
     isOpen = true;
+    promptLabel.classList.add('hidden');
     renderMessages();
     morphBubbleToHeader();
     setTimeout(() => { if (view === 'chat') input.focus(); }, 600);
@@ -646,6 +692,8 @@
     if (!isOpen || isAnimating) return;
     isOpen = false;
     morphHeaderToBubble();
+    // Fade prompt back in once the bubble is settled
+    setTimeout(() => promptLabel.classList.remove('hidden'), 400);
   }
 
   async function sendMessage() {
@@ -693,6 +741,8 @@
 
   root.addEventListener('click', e => e.stopPropagation());
   bubble.addEventListener('click', openChat);
+  promptLabel.addEventListener('click', openChat);
+  promptLabel.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openChat(); } });
   closeBtn.addEventListener('click', closeChat);
   contactTrigger.addEventListener('click', () => setView('contact'));
   cfBack.addEventListener('click', () => setView('chat'));
