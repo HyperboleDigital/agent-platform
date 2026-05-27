@@ -41,6 +41,25 @@
 
   const SESSION_ID = 'sess_' + Math.random().toString(36).slice(2);
 
+  // ─── ANIMATION TUNING — adjust these to taste ──────────────────────────────
+  const ANIM = {
+    // How long the bubble takes to fly to/from the header (ms)
+    morphDuration: 450,
+    // Easing curve for the morph (cubic-bezier values)
+    morphEasing: 'cubic-bezier(0.5, 0, 0.2, 1)',
+    // Delay before measuring header position (ms) — lets the window animation settle
+    measureDelay: 50,
+    // How long the chat window takes to open (ms)
+    windowDuration: 400,
+    // Fade duration when bubble swaps to real header avatar at end of morph (ms)
+    swapFade: 150,
+    // ── Position fine-tuning (as % of header avatar size, scales with layout) ──
+    // Expressed as fractions: 0.1 = 10% of avatar width/height.
+    // If swap skips left, make landingOffsetX more positive. If skips up, more positive Y.
+    landingOffsetX: 0,
+    landingOffsetY: 0
+  };
+
   let isOpen = false;
   let isAnimating = false;
   let isTyping = false;
@@ -81,11 +100,11 @@
       border-radius: 999px;
       font-size: 13px; font-weight: 600;
       box-shadow: 0 8px 24px var(--p-shadow), 0 2px 6px rgba(0,0,0,0.08);
-      cursor: pointer;
-      pointer-events: auto;
+      pointer-events: none;
+      user-select: none;
       transform: translateY(0);
       animation: ap-prompt-in 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s backwards;
-      transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.3s ease;
+      transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
     }
     #ap-prompt::after {
       content: '';
@@ -98,17 +117,7 @@
     }
     #ap-prompt.hidden { opacity: 0; transform: translateY(8px); pointer-events: none; }
 
-    /* When hovering EITHER the bubble or the prompt, lift both */
-    #ap-bubble:hover ~ #ap-prompt,
-    #ap-prompt:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 12px 32px var(--p-shadow), 0 4px 8px rgba(0,0,0,0.1);
-    }
-    #ap-prompt:hover ~ #ap-bubble,
-    #ap-widget:has(#ap-prompt:hover) #ap-bubble {
-      transform: translateY(-3px) scale(1.05);
-      box-shadow: 0 16px 44px var(--p-shadow), 0 6px 14px rgba(0,0,0,0.1);
-    }
+
     @keyframes ap-prompt-in {
       from { opacity: 0; transform: translateY(8px) scale(0.9); }
       to { opacity: 1; transform: translateY(0) scale(1); }
@@ -128,12 +137,13 @@
       overflow: hidden;
     }
     #ap-bubble:hover { transform: translateY(-3px) scale(1.05); }
-    #ap-bubble:active { transform: scale(0.92); }
-    #ap-bubble.morphing {
-      pointer-events: none;
-      transition: transform 0.45s cubic-bezier(0.5, 0, 0.2, 1);
+    #ap-bubble:hover + #ap-prompt {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 32px var(--p-shadow), 0 4px 8px rgba(0,0,0,0.1);
     }
-    #ap-bubble.hidden { opacity: 0; transform: scale(0); pointer-events: none; }
+    #ap-bubble:active { transform: scale(0.92); }
+
+    #ap-bubble.hidden { opacity: 0; pointer-events: none; transform: scale(0.7); }
     #ap-bubble img { width: 52%; height: 52%; object-fit: contain; display: block; transition: opacity 0.3s ease; }
 
     /* ─── Window ─────────────────────────────────────────────────────────── */
@@ -146,7 +156,7 @@
       opacity: 0; pointer-events: none;
       transform: translateY(20px) scale(0.96);
       transform-origin: bottom right;
-      transition: opacity 0.35s ease, transform 0.4s cubic-bezier(0.34,1.4,0.6,1);
+      transition: opacity ${ANIM.windowDuration * 0.875}ms ease, transform ${ANIM.windowDuration}ms cubic-bezier(0.34,1.4,0.6,1);
     }
     #ap-window.open { opacity: 1; pointer-events: all; transform: translateY(0) scale(1); }
 
@@ -425,9 +435,7 @@
     #ap-success button:hover { opacity: 0.92; }
     #ap-success button:active { transform: scale(0.96); }
 
-    #ap-footer { text-align: center; font-size: 11px; color: var(--faded); padding: 6px 20px 12px; background: #FBFBFD; flex-shrink: 0; }
-    #ap-footer a { color: inherit; text-decoration: none; font-weight: 500; }
-    #ap-footer a:hover { color: var(--p); }
+
 
     @media (max-width: 440px) {
       #ap-window { width: calc(100vw - 16px); right: 8px; bottom: 8px; height: calc(100vh - 16px); max-height: none; }
@@ -447,7 +455,7 @@
   root.id = 'ap-widget';
   root.innerHTML = `
     <button id="ap-bubble" aria-label="Open chat">${avatarHTML()}</button>
-    <div id="ap-prompt" role="button" tabindex="0">${PROMPT_LABEL}</div>
+    <div id="ap-prompt" aria-hidden="true">${PROMPT_LABEL}</div>
     <div id="ap-window" role="dialog">
       <div id="ap-header">
         <div class="ap-h-row">
@@ -507,7 +515,7 @@
         <p>Thanks for reaching out. We'll get back to you within a few hours.</p>
         <button id="ap-back-to-chat">Continue chatting</button>
       </div>
-      <div id="ap-footer">Powered by <a href="https://hyperboledigital.com" target="_blank">Hyperbole Digital</a></div>
+      
     </div>
   `;
   document.body.appendChild(root);
@@ -530,75 +538,48 @@
   const cfBack = document.getElementById('cf-back-btn');
   const backToChat = document.getElementById('ap-back-to-chat');
 
-  // ─── FLIP morph animation: bubble → header avatar (and back) ──────────────
+  // ─── Simple fade transition: bubble fades out, window opens ───────────────
   function morphBubbleToHeader() {
     if (isAnimating) return;
     isAnimating = true;
 
-    // Get start position of bubble
-    const bubbleRect = bubble.getBoundingClientRect();
+    // Fade out the bubble (opacity only — no scale issues)
+    bubble.style.transition = `opacity ${ANIM.bubbleFade}ms ease-out, transform ${ANIM.bubbleFade}ms ease-out`;
+    bubble.style.opacity = '0';
+    bubble.style.transform = 'scale(0.7)';
+    // Also fade out prompt label so it doesn't linger
+    promptLabel.classList.add('hidden');
+
+    // Open the window in parallel
     win.classList.add('open');
-    headerAvatar.offsetHeight; // force layout
-    const targetRect = headerAvatar.getBoundingClientRect();
 
-    // Pure translation — same size start and end, so the logo just slides into the header
-    const dx = targetRect.left + targetRect.width/2 - (bubbleRect.left + bubbleRect.width/2);
-    const dy = targetRect.top + targetRect.height/2 - (bubbleRect.top + bubbleRect.height/2);
-
-    // Hide header avatar — bubble takes its place during the morph
-    headerAvatar.style.transition = 'none';
-    headerAvatar.style.opacity = '0';
-
-    bubble.classList.add('morphing');
-    bubble.style.transform = `translate(${dx}px, ${dy}px)`;
-    bubble.style.boxShadow = 'none';
-
-    // After morph completes, swap bubble out for real header avatar (instant, no fade)
     setTimeout(() => {
-      headerAvatar.style.opacity = '1';
       bubble.classList.add('hidden');
-      bubble.classList.remove('morphing');
-      bubble.style.transform = '';
-      bubble.style.boxShadow = '';
       isAnimating = false;
-    }, 450);
+    }, ANIM.windowDuration);
   }
 
   function morphHeaderToBubble() {
     if (isAnimating) return;
     isAnimating = true;
 
-    const targetRect = headerAvatar.getBoundingClientRect();
-
-    // Hide the header avatar instantly — bubble will take its visual place
-    headerAvatar.style.transition = 'none';
-    headerAvatar.style.opacity = '0';
-
-    // Pure translation back — no scale
-    const winRect = bubble.getBoundingClientRect();
-    const dx = targetRect.left + targetRect.width/2 - (winRect.left + 32);
-    const dy = targetRect.top + targetRect.height/2 - (winRect.top + 32);
-
-    // Place bubble at header position instantly
-    bubble.classList.remove('hidden');
-    bubble.style.transition = 'none';
-    bubble.style.transform = `translate(${dx}px, ${dy}px)`;
-    bubble.offsetHeight; // force reflow
-
-    // Now animate the bubble back to its resting bottom-right position
-    bubble.classList.add('morphing');
-    bubble.style.transform = '';
-
-    // Close the chat window in parallel
+    // Close the chat window
     win.classList.remove('open');
 
+    // Restore header avatar visibility (for next open)
+    headerAvatar.style.transition = 'none';
+    headerAvatar.style.opacity = '1';
+
+    // Fade bubble back in
+    bubble.classList.remove('hidden');
+    bubble.style.transition = `opacity ${ANIM.bubbleFade}ms ease-out, transform ${ANIM.bubbleFade}ms ease-out`;
+    bubble.style.opacity = '1';
+    bubble.style.transform = '';
+
     setTimeout(() => {
-      bubble.classList.remove('morphing');
       bubble.style.transition = '';
-      headerAvatar.style.opacity = '1';
-      headerAvatar.style.transition = '';
       isAnimating = false;
-    }, 500);
+    }, ANIM.windowDuration);
   }
 
   function formatTimeDivider(ts) {
@@ -741,8 +722,6 @@
 
   root.addEventListener('click', e => e.stopPropagation());
   bubble.addEventListener('click', openChat);
-  promptLabel.addEventListener('click', openChat);
-  promptLabel.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openChat(); } });
   closeBtn.addEventListener('click', closeChat);
   contactTrigger.addEventListener('click', () => setView('contact'));
   cfBack.addEventListener('click', () => setView('chat'));
