@@ -146,3 +146,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+.mcp.json
+.playwright-mcp/
+hyperboledigital-homepage.png

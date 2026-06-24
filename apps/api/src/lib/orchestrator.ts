@@ -107,7 +107,7 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
 
         if (block.name === 'search_knowledge_base') {
           const i = block.input as { query: string }
-          result = await searchDocs(i.query, client.agentConfig.knowledgeBaseIds)
+          result = await searchDocs(i.query, message.clientId)
           intent = 'faq'
         }
         if (block.name === 'get_booking_link') {
