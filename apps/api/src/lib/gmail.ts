@@ -1,5 +1,22 @@
 import { google } from 'googleapis'
 import { supabase } from './supabase'
+import { encryptSecret, decryptSecret } from './crypto'
+
+// Strips CR/LF (and stray control chars) from a value destined for an email
+// header, so caller-supplied fields (subject, recipient) can't inject extra
+// headers like Bcc. This is the fix for the CRLF header-injection vector.
+export function headerSafe(value: string): string {
+  return value.replace(/[\r\n]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim()
+}
+
+// Raw email headers are ASCII-only; non-ASCII text (em dashes, names with
+// accents, emoji, etc.) needs RFC 2047 encoded-word encoding or it renders as
+// mojibake in the recipient's client. ASCII-only values pass through untouched.
+export function encodeHeaderValue(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7f]*$/.test(value)) return value
+  return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`
+}
 
 // Send-only + identity. Deliberately NOT gmail.modify/readonly — the platform
 // never reads a connected inbox (inbound answering is out of scope), so the
@@ -53,7 +70,7 @@ export async function handleCallback(clientId: string, code: string): Promise<st
   await supabase.from('gmail_tokens').upsert({
     client_id: clientId,
     email,
-    refresh_token: tokens.refresh_token,
+    refresh_token: encryptSecret(tokens.refresh_token),
     updated_at: new Date().toISOString()
   })
 
@@ -69,7 +86,7 @@ async function connect(clientId: string): Promise<{ email: string; client: Retur
   if (!data) return null
 
   const client = oauthClient()
-  client.setCredentials({ refresh_token: data.refresh_token as string })
+  client.setCredentials({ refresh_token: decryptSecret(data.refresh_token as string) })
   return { email: data.email as string, client }
 }
 
@@ -94,7 +111,7 @@ export async function checkGmailStatus(clientId: string): Promise<GmailStatus> {
 
   try {
     const client = oauthClient()
-    client.setCredentials({ refresh_token: data.refresh_token as string })
+    client.setCredentials({ refresh_token: decryptSecret(data.refresh_token as string) })
     await client.getAccessToken() // throws if the grant is revoked/expired
     return { connected: true, email: data.email as string, connectedAt: data.created_at as string, status: 'ok' }
   } catch (err: any) {
@@ -122,13 +139,15 @@ export async function sendPlainEmail(
   if (!conn) throw new Error(`No Gmail connection for client ${clientId}`)
 
   const headerLines = [
-    `From: ${conn.email}`,
-    `To: ${to}`,
-    `Subject: ${subject}`,
+    `From: ${headerSafe(conn.email)}`,
+    `To: ${headerSafe(to)}`,
+    `Subject: ${encodeHeaderValue(headerSafe(subject))}`,
     `${STAMP_HEADER}: escalation`,
-    ...Object.entries(extraHeaders).map(([k, v]) => `${k}: ${v}`),
+    ...Object.entries(extraHeaders).map(([k, v]) => `${headerSafe(k)}: ${headerSafe(v)}`),
     'Content-Type: text/plain; charset="UTF-8"'
   ]
+  // Body is NOT header-sanitized (newlines are fine in the body), but it comes
+  // after the blank line so it can't inject headers regardless.
   const raw = Buffer.from([...headerLines, '', body].join('\r\n')).toString('base64url')
 
   const gmail = google.gmail({ version: 'v1', auth: conn.client })

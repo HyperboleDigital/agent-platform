@@ -7,13 +7,16 @@ create extension if not exists vector;        -- pgvector, for knowledge_base.em
 
 -- ── clients ──────────────────────────────────────────────────────────────────
 create table if not exists clients (
-  id           uuid primary key default gen_random_uuid(),
-  name         text not null,
-  domain       text,
-  industry     text,
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  domain        text,
+  industry      text,
   active        boolean not null default true,
-  agent_config jsonb not null default '{}'::jsonb,
-  created_at   timestamptz not null default now()
+  agent_config  jsonb not null default '{}'::jsonb,
+  created_at    timestamptz not null default now(),
+  -- Clerk Organization that owns this client — the tenant boundary. Null until
+  -- a client is onboarded into Clerk (superadmin-only access until then).
+  clerk_org_id  text unique
 );
 
 -- ── knowledge_base ───────────────────────────────────────────────────────────
@@ -118,3 +121,17 @@ as $$
   order by kb.embedding <=> query_embedding
   limit match_count;
 $$;
+
+-- ── Row-level security (defense-in-depth) ────────────────────────────────────
+-- The API exclusively uses the Supabase service_role key, which bypasses RLS
+-- entirely — this does NOT change app behavior. It exists so that a leaked
+-- anon/publishable key, a future client-side Supabase usage, or a bug that
+-- routes a request through a lower-privilege key CANNOT read/write tenant
+-- data. Deny-by-default: no policies are defined, so anon/authenticated roles
+-- get zero access to any row unless a policy is explicitly added later.
+alter table clients        enable row level security;
+alter table knowledge_base enable row level security;
+alter table leads          enable row level security;
+alter table escalations    enable row level security;
+alter table message_logs   enable row level security;
+alter table gmail_tokens   enable row level security;

@@ -174,8 +174,6 @@ function LeadsTab({ clientId }: { clientId: string }) {
   )
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
-
 function statusColor(status: ConnectorStatus['gmail']['status']): string {
   if (status === 'ok') return '#27ae60'
   if (status === 'error') return '#c0392b'
@@ -194,6 +192,19 @@ function statusLabel(status: ConnectorStatus['gmail']['status']): string {
 function ConnectorsTab({ clientId }: { clientId: string }) {
   const key = ['connectors', clientId]
   const { data, isLoading } = useSWR(key, () => api.clients.connectors(clientId), { refreshInterval: 30_000 })
+  const [connecting, setConnecting] = useState(false)
+
+  async function connectGmail() {
+    setConnecting(true)
+    try {
+      const { url } = await api.clients.gmailAuthUrl(clientId)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to start Gmail connection')
+    } finally {
+      setConnecting(false)
+    }
+  }
 
   if (isLoading || !data) return <Card><p style={{ fontSize: 13, color: colors.muted }}>Checking connectors…</p></Card>
 
@@ -224,13 +235,9 @@ function ConnectorsTab({ clientId }: { clientId: string }) {
             )}
           </div>
           {data.gmail.configured && data.gmail.status !== 'ok' && (
-            <a
-              href={`${API_URL}/auth/gmail?clientId=${clientId}`}
-              target="_blank" rel="noreferrer"
-              style={{ ...btnStyle, textDecoration: 'none', display: 'inline-block' }}
-            >
-              {data.gmail.status === 'not_connected' ? 'Connect' : 'Reconnect'}
-            </a>
+            <button onClick={connectGmail} disabled={connecting} style={btnStyle}>
+              {connecting ? 'Opening…' : data.gmail.status === 'not_connected' ? 'Connect' : 'Reconnect'}
+            </button>
           )}
         </div>
       </Card>

@@ -9,6 +9,7 @@ interface ClientRow {
   active: boolean
   agent_config: Client['agentConfig']
   created_at: string
+  clerk_org_id: string | null
 }
 
 function fromRow(row: ClientRow): Client {
@@ -19,7 +20,8 @@ function fromRow(row: ClientRow): Client {
     industry: row.industry,
     active: row.active,
     agentConfig: row.agent_config ?? ({} as Client['agentConfig']),
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    clerkOrgId: row.clerk_org_id ?? null
   }
 }
 
@@ -31,7 +33,18 @@ function toRow(client: Partial<Client>): Partial<ClientRow> {
   if (client.industry !== undefined) row.industry = client.industry
   if (client.active !== undefined) row.active = client.active
   if (client.agentConfig !== undefined) row.agent_config = client.agentConfig
+  if (client.clerkOrgId !== undefined) row.clerk_org_id = client.clerkOrgId
   return row
+}
+
+export async function getClientByOrgId(clerkOrgId: string): Promise<Client | null> {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .eq('clerk_org_id', clerkOrgId)
+    .single()
+  if (error) return null
+  return fromRow(data as ClientRow)
 }
 
 export async function getClientById(id: string): Promise<Client | null> {

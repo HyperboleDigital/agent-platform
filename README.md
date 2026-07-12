@@ -74,9 +74,19 @@ agent-platform/
 
 ## Auth
 
-Admin routes (`/clients`, `/webhooks`) require `Authorization: Bearer $API_SECRET`.
-The dashboard sends this automatically via `VITE_API_SECRET`. The widget's `/chat`
-and `/contact` endpoints are public (rate-limited).
+Dashboard users sign in with Clerk. Admin routes (`/clients`, `/webhooks`) require
+a valid Clerk session — the dashboard attaches the session token automatically
+(see `apps/dashboard/src/AuthBridge.tsx`); a raw request needs
+`Authorization: Bearer <clerk-session-jwt>`.
+
+**Tenant model:** each client maps to one Clerk Organization (`clients.clerk_org_id`).
+A signed-in user can only read/write the client whose `clerk_org_id` matches their
+active org. Your team gets cross-tenant access via `SUPERADMIN_USER_IDS` (comma-separated
+Clerk user IDs) in `apps/api/.env` — set your own Clerk user ID there after your first
+sign-in (find it in the Clerk dashboard under Users).
+
+The widget's `/chat` and `/contact` endpoints are public (rate-limited) — no login,
+since they're called anonymously by website visitors.
 
 ## Onboarding a new client
 

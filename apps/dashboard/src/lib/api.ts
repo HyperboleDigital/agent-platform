@@ -1,10 +1,18 @@
 import type { Client, Lead } from '@agent-platform/shared'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
-const API_SECRET = import.meta.env.VITE_API_SECRET ?? ''
 
-function authHeaders(): Record<string, string> {
-  return API_SECRET ? { Authorization: `Bearer ${API_SECRET}` } : {}
+// Set once by <AuthBridge/> (mounted inside <ClerkProvider>) so plain fetch
+// calls here can attach a fresh session token per request. No static secret
+// ever lives in this bundle — see AuthBridge.tsx.
+let getToken: (() => Promise<string | null>) | null = null
+export function setTokenGetter(fn: () => Promise<string | null>) {
+  getToken = fn
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = getToken ? await getToken() : null
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -12,7 +20,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...authHeaders(),
+      ...(await authHeaders()),
       ...options?.headers
     }
   })
@@ -70,7 +78,7 @@ export const api = {
       form.append('file', file)
       const res = await fetch(`${BASE}/clients/${id}/knowledge/upload`, {
         method: 'POST',
-        headers: authHeaders(),
+        headers: await authHeaders(),
         body: form
       })
       if (!res.ok) {
@@ -79,6 +87,7 @@ export const api = {
       }
       return res.json() as Promise<{ ids: string[]; chunks: number }>
     },
-    connectors: (id: string) => request<ConnectorStatus>(`/clients/${id}/connectors`)
+    connectors: (id: string) => request<ConnectorStatus>(`/clients/${id}/connectors`),
+    gmailAuthUrl: (id: string) => request<{ url: string }>(`/clients/${id}/gmail/auth-url`)
   }
 }

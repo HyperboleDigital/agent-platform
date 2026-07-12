@@ -30,6 +30,7 @@ export interface Client {
   active: boolean
   agentConfig: AgentConfig
   createdAt: string
+  clerkOrgId?: string | null   // Clerk Organization that owns this client (tenant boundary)
 }
 
 export interface AgentConfig {

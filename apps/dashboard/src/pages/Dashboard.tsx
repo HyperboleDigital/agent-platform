@@ -1,5 +1,6 @@
 import useSWR from 'swr'
 import { Link } from 'react-router-dom'
+import { UserButton } from '@clerk/react'
 import { api } from '../lib/api'
 import { Page, Card, colors, th, td } from '../ui'
 
@@ -8,20 +9,23 @@ export default function Dashboard() {
 
   return (
     <Page>
-      <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: '1.5rem' }}>Agent platform</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 500 }}>Agent platform</h1>
+        <UserButton />
+      </div>
 
       {isLoading && <Card><p style={{ fontSize: 13, color: colors.muted }}>Loading clients…</p></Card>}
 
       {error && (
         <Card>
           <p style={{ fontSize: 13, color: '#c0392b' }}>
-            Couldn't reach the API. Check VITE_API_URL / VITE_API_SECRET and that the API is running.
+            Couldn't reach the API, or your account isn't authorized. Check VITE_API_URL and that the API is running.
           </p>
         </Card>
       )}
 
       {clients && clients.length === 0 && (
-        <Card><p style={{ fontSize: 13, color: colors.muted }}>No clients yet. Create one via POST /clients.</p></Card>
+        <Card><p style={{ fontSize: 13, color: colors.muted }}>No clients yet — your account isn't linked to one, or none exist. An admin can create one via POST /clients.</p></Card>
       )}
 
       {clients && clients.length > 0 && (
