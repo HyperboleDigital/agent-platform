@@ -1,18 +1,18 @@
-import Anthropic from '@anthropic-ai/sdk'
 import type { IncomingMessage, AgentResponse, AgentConfig } from '@agent-platform/shared'
 import { searchDocs } from '../tools/knowledge-base'
 import { bookCalendly } from '../tools/calendly'
 import { logLead } from '../tools/crm'
-import { sendSlackAlert } from '../tools/slack'
+import { notifyEscalation } from './escalation'
 import { getClientById } from './clients'
+import { runToolLoop } from './llm'
+import type { ToolDef } from './llm'
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-const tools: Anthropic.Tool[] = [
+// Provider-neutral tool definitions (converted per-provider in lib/llm).
+const tools: ToolDef[] = [
   {
     name: 'search_knowledge_base',
     description: 'Search the client knowledge base for answers to FAQ questions. Always call this first for support questions.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: { query: { type: 'string', description: 'Search query based on the user question' } },
       required: ['query']
@@ -21,7 +21,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: 'get_booking_link',
     description: 'Get the scheduling link when a user wants to book a call, demo, or meeting.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         name: { type: 'string' },
@@ -32,8 +32,8 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: 'capture_lead',
-    description: 'Save lead info when a user is a new prospect expressing interest.',
-    input_schema: {
+    description: 'Save lead info when a user is a new prospect expressing interest. If you do not yet have their email, still call this with the intent and summary — the chat will show a contact form to collect their details.',
+    parameters: {
       type: 'object',
       properties: {
         name: { type: 'string' },
@@ -41,13 +41,13 @@ const tools: Anthropic.Tool[] = [
         intent: { type: 'string', description: 'What they are looking for' },
         summary: { type: 'string', description: 'Brief conversation summary' }
       },
-      required: ['email', 'intent', 'summary']
+      required: ['intent', 'summary']
     }
   },
   {
     name: 'escalate_to_human',
     description: 'Flag conversation for human review — use for upset users, billing disputes, or low confidence.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: { reason: { type: 'string', description: 'Why this needs human attention' } },
       required: ['reason']
@@ -73,79 +73,53 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
   const client = await getClientById(message.clientId)
   if (!client) throw new Error(`Client ${message.clientId} not found`)
 
-    const systemPrompt = buildSystemPrompt(client.agentConfig ?? {}, client.name)
-  const messages: Anthropic.MessageParam[] = [
-    { role: 'user', content: message.body }
-  ]
+  const systemPrompt = buildSystemPrompt(client.agentConfig ?? {}, client.name)
 
-  let reply = ''
   let escalate = false
   let captureLead = false
+  let needContact = false
   let intent: AgentResponse['intent'] = 'unknown'
 
-  // Agentic loop — Claude calls tools until stop_reason === 'end_turn'
-  while (true) {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      system: systemPrompt,
-      tools,
-      messages
-    })
-
-    for (const block of response.content) {
-      if (block.type === 'text') reply = block.text
+  // Tool dispatch — shared across providers. Closes over the flags above so we
+  // can derive intent/action after the loop regardless of which model ran it.
+  const execute = async (name: string, input: any): Promise<string> => {
+    if (name === 'search_knowledge_base') {
+      intent = 'faq'
+      return searchDocs(input.query, message.clientId)
     }
-
-    if (response.stop_reason === 'end_turn') break
-
-    if (response.stop_reason === 'tool_use') {
-      const toolResults: Anthropic.ToolResultBlockParam[] = []
-
-      for (const block of response.content) {
-        if (block.type !== 'tool_use') continue
-        let result = ''
-
-        if (block.name === 'search_knowledge_base') {
-          const i = block.input as { query: string }
-          result = await searchDocs(i.query, message.clientId)
-          intent = 'faq'
-        }
-        if (block.name === 'get_booking_link') {
-          const i = block.input as { name?: string; email?: string }
-          result = await bookCalendly(client.agentConfig.calendlyLink, i.name, i.email)
-          intent = 'booking'
-        }
-        if (block.name === 'capture_lead') {
-          const i = block.input as { name?: string; email: string; intent: string; summary: string }
-          await logLead({ clientId: message.clientId, ...i })
-          result = 'Lead captured.'
-          captureLead = true
-          intent = 'lead'
-        }
-        if (block.name === 'escalate_to_human') {
-          const i = block.input as { reason: string }
-          await sendSlackAlert(client.agentConfig.slackWebhook, {
-            clientName: client.name, from: message.from, body: message.body, reason: i.reason
-          })
-          result = 'Escalation sent.'
-          escalate = true
-          intent = 'escalate'
-        }
-
-        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result })
+    if (name === 'get_booking_link') {
+      intent = 'booking'
+      return bookCalendly(client.agentConfig?.calendlyLink, input.name, input.email)
+    }
+    if (name === 'capture_lead') {
+      intent = 'lead'
+      if (input.email) {
+        await logLead({ clientId: message.clientId, name: input.name, email: input.email, intent: input.intent, summary: input.summary })
+        captureLead = true
+        return 'Lead captured.'
       }
-
-      messages.push({ role: 'assistant', content: response.content })
-      messages.push({ role: 'user', content: toolResults })
+      needContact = true
+      return 'No email on file yet. A contact form will be shown to collect their details.'
     }
+    if (name === 'escalate_to_human') {
+      intent = 'escalate'
+      escalate = true
+      await notifyEscalation(client, { from: message.from, message: message.body, reason: input.reason, channel: 'chat' })
+      return 'Escalation sent.'
+    }
+    return `Unknown tool: ${name}`
   }
+
+  const { reply } = await runToolLoop({ system: systemPrompt, userMessage: message.body, tools, execute })
 
   const confidence = escalate ? 0.2 : intent === 'unknown' ? 0.4 : 0.9
 
   return {
     intent, reply,
-    action: escalate ? 'escalate' : captureLead ? 'capture_lead' : 'send_reply',
+    action: escalate ? 'escalate'
+      : needContact ? 'show_contact_form'
+      : captureLead ? 'capture_lead'
+      : 'send_reply',
     escalate, captureLead, confidence
   }
 }

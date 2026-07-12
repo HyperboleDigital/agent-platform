@@ -1,25 +1,59 @@
-import React from 'react'
+import useSWR from 'swr'
+import { Link } from 'react-router-dom'
+import { api } from '../lib/api'
+import { Page, Card, colors, th, td } from '../ui'
+
 export default function Dashboard() {
-  const stats = [
-    { label: 'Messages today', value: 47 },
-    { label: 'Leads this week', value: 12 },
-    { label: 'Open escalations', value: 2 },
-    { label: 'Resolved rate', value: '91%' }
-  ]
+  const { data: clients, error, isLoading } = useSWR('clients', api.clients.list)
+
   return (
-    <div style={{ padding: '2rem', fontFamily: 'system-ui', maxWidth: 1100, margin: '0 auto' }}>
+    <Page>
       <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: '1.5rem' }}>Agent platform</h1>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: '2rem' }}>
-        {stats.map(s => (
-          <div key={s.label} style={{ background: '#f5f5f3', borderRadius: 8, padding: '1rem' }}>
-            <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>{s.label}</div>
-            <div style={{ fontSize: 24, fontWeight: 500 }}>{s.value}</div>
-          </div>
-        ))}
-      </div>
-      <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: 12, padding: '1.25rem' }}>
-        <p style={{ fontSize: 13, color: '#888' }}>Connect Supabase in src/lib/api.ts to load live data.</p>
-      </div>
-    </div>
+
+      {isLoading && <Card><p style={{ fontSize: 13, color: colors.muted }}>Loading clients…</p></Card>}
+
+      {error && (
+        <Card>
+          <p style={{ fontSize: 13, color: '#c0392b' }}>
+            Couldn't reach the API. Check VITE_API_URL / VITE_API_SECRET and that the API is running.
+          </p>
+        </Card>
+      )}
+
+      {clients && clients.length === 0 && (
+        <Card><p style={{ fontSize: 13, color: colors.muted }}>No clients yet. Create one via POST /clients.</p></Card>
+      )}
+
+      {clients && clients.length > 0 && (
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={th}>Client</th>
+                <th style={th}>Domain</th>
+                <th style={th}>Industry</th>
+                <th style={th}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clients.map(c => (
+                <tr key={c.id}>
+                  <td style={td}>
+                    <Link to={`/clients/${c.id}`} style={{ color: colors.accent, textDecoration: 'none', fontWeight: 500 }}>
+                      {c.name}
+                    </Link>
+                  </td>
+                  <td style={td}>{c.domain || '—'}</td>
+                  <td style={td}>{c.industry || '—'}</td>
+                  <td style={{ ...td, color: c.active ? '#27ae60' : colors.muted }}>
+                    {c.active ? 'Active' : 'Inactive'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </Page>
   )
 }

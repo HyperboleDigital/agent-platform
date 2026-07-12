@@ -5,6 +5,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "backfill": "tsx src/scripts/backfill-embeddings.ts",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint src"
   },
   "dependencies": {
@@ -16,13 +18,19 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
+    "googleapis": "^173.0.0",
     "helmet": "^7.1.0",
+    "mammoth": "^1.12.0",
+    "multer": "^2.2.0",
+    "openai": "^6.46.0",
+    "pdf-parse": "^2.4.5",
     "ws": "^8.20.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/multer": "^2.2.0",
     "@types/node": "^20.14.2",
     "tsx": "^4.15.4",
     "typescript": "^5.4.5"

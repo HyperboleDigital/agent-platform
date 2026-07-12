@@ -10,6 +10,7 @@
   const LOGO = script?.getAttribute('data-logo') || '';
   const AVATAR_EMOJI = script?.getAttribute('data-avatar-emoji') || '';
   const PROMPT_LABEL = script?.getAttribute('data-prompt') || 'Questions?';
+  const INPUT_PLACEHOLDER = script?.getAttribute('data-placeholder') || 'Type a message...';
 
   // ─── Theme colors (override via data-color / data-color-2) ───────────────
   // data-color    → primary brand color (e.g. data-color="#C05B28")
@@ -53,6 +54,8 @@
     windowDuration: 400,
     // Fade duration when bubble swaps to real header avatar at end of morph (ms)
     swapFade: 150,
+    // Fade duration for the prompt bubble showing/hiding (ms)
+    bubbleFade: 200,
     // ── Position fine-tuning (as % of header avatar size, scales with layout) ──
     // Expressed as fractions: 0.1 = 10% of avatar width/height.
     // If swap skips left, make landingOffsetX more positive. If skips up, more positive Y.
@@ -479,7 +482,7 @@
         <div id="ap-chips"></div>
         <div id="ap-input-wrap">
           <div id="ap-input-row">
-            <textarea id="ap-input" rows="1" placeholder="Type a message..."></textarea>
+            <textarea id="ap-input" rows="1" placeholder="${INPUT_PLACEHOLDER}"></textarea>
             <button id="ap-send" disabled aria-label="Send">
               <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
@@ -708,12 +711,10 @@
     if (!email || !message) { alert('Please add your email and message.'); return; }
     cfSubmit.textContent = 'Sending...'; cfSubmit.disabled = true;
     try {
-      await fetch(`${API_URL}/chat`, {
+      // Explicit "I want a human" — goes to the escalation endpoint, not the agent.
+      await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientId: CLIENT_ID, from: email,
-          body: `[Contact form] Name: ${name || 'Unknown'} | Email: ${email} | Message: ${message}`
-        })
+        body: JSON.stringify({ clientId: CLIENT_ID, name: name || undefined, email, message })
       });
     } catch {}
     setView('success');

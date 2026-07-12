@@ -16,7 +16,7 @@ Uses Supabase credentials from `../api/.env`.
 ## Run scraper
 
 ```bash
-python test.py
+python website-scraper.py --url https://example.com --client-id <uuid>
 ```
 
 (Inside the venv, `python` works; outside, use `python3`.)

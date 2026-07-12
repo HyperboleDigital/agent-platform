@@ -15,7 +15,7 @@ export interface IncomingMessage {
 export interface AgentResponse {
   intent: Intent
   reply: string
-  action: 'send_reply' | 'book_call' | 'escalate' | 'capture_lead' | 'none'
+  action: 'send_reply' | 'book_call' | 'escalate' | 'capture_lead' | 'show_contact_form' | 'none'
   escalate: boolean
   captureLead: boolean
   confidence: number
@@ -37,6 +37,7 @@ export interface AgentConfig {
   knowledgeBaseIds: string[]
   calendlyLink?: string
   slackWebhook?: string
+  escalationEmail?: string   // where human-needed items (escalations, contact form) are sent
   autoSendThreshold: number
   emailDraft: boolean
 }

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { runAgent } from '../lib/orchestrator'
+import { logMessage } from '../lib/logs'
 import type { IncomingMessage } from '@agent-platform/shared'
 
 export const chatRouter = Router()
@@ -20,8 +21,16 @@ chatRouter.post('/', async (req, res) => {
     channel: 'chat'
   }
 
+  const startedAt = Date.now()
   try {
     const result = await runAgent(message)
+    void logMessage({
+      clientId: message.clientId,
+      channel: 'chat',
+      intent: result.intent,
+      resolved: !result.escalate,
+      durationMs: Date.now() - startedAt
+    })
     res.json({ reply: result.reply, intent: result.intent, action: result.action })
   } catch (err) {
     console.error('[chat] agent error', err)
