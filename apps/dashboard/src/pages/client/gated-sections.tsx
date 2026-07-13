@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Sparkles, MessageSquarePlus, FileBarChart } from 'lucide-react'
+import { Sparkles, FileBarChart } from 'lucide-react'
 import type { ServiceKey } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
 import { useClientCtx } from '@/pages/client/ClientLayout'
@@ -45,16 +45,6 @@ export function ContentSection() {
         blurb="AI-drafted, keyword-targeted blog posts you review and publish land here in the next build."
       />
     </Gate>
-  )
-}
-
-export function RequestsSection() {
-  return (
-    <ComingInBuild
-      icon={MessageSquarePlus}
-      title="Change Requests"
-      blurb="Submit and track website change requests here — arriving in an upcoming build."
-    />
   )
 }
 

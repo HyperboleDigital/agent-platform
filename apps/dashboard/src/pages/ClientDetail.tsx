@@ -86,7 +86,12 @@ export function BillingSection() {
 
 export function ConfigSection() {
   const { clientId, client } = useClientCtx()
-  return client ? <ConfigTab clientId={clientId} client={client} /> : <Skeleton className="h-40 w-full" />
+  return (
+    <div className="flex flex-col gap-4">
+      {client ? <ConfigTab clientId={clientId} client={client} /> : <Skeleton className="h-40 w-full" />}
+      <NotificationSettingsCard clientId={clientId} />
+    </div>
+  )
 }
 
 function ConversationsCard({ clientId }: { clientId: string }) {
@@ -578,6 +583,78 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
         </div>
         <Button onClick={save} disabled={saving} className="justify-self-start">
           {saving ? 'Saving…' : 'Save config'}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+function NotificationSettingsCard({ clientId }: { clientId: string }) {
+  const key = ['notification-settings', clientId]
+  const { data: settings, isLoading } = useSWR(key, () => api.clients.notificationSettings(clientId))
+  const [emailEnabled, setEmailEnabled] = useState(false)
+  const [emailTo, setEmailTo] = useState('')
+  const [slackEnabled, setSlackEnabled] = useState(false)
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  // Seed local state once, when settings first arrive — avoids clobbering
+  // in-progress edits on background revalidation.
+  if (settings && !loaded) {
+    setEmailEnabled(settings.email_enabled)
+    setEmailTo(settings.email_to ?? '')
+    setSlackEnabled(settings.slack_enabled)
+    setSlackWebhookUrl(settings.slack_webhook_url ?? '')
+    setLoaded(true)
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.clients.updateNotificationSettings(clientId, {
+        emailEnabled, emailTo, slackEnabled, slackWebhookUrl
+      })
+      mutate(key)
+      toast.success('Notification settings saved', { icon: <CheckCircle2 className="h-4 w-4" /> })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save', { icon: <XCircle className="h-4 w-4" /> })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (isLoading) return <Skeleton className="h-48 w-full" />
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Notifications</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4 pt-0">
+        <p className="text-xs text-muted-foreground">
+          Get notified when a change request comes in or its status changes.
+        </p>
+        <div className="grid gap-1.5">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input type="checkbox" checked={emailEnabled} onChange={e => setEmailEnabled(e.target.checked)} />
+            Email
+          </label>
+          {emailEnabled && (
+            <Input value={emailTo} onChange={e => setEmailTo(e.target.value)} placeholder="you@yourcompany.com" />
+          )}
+        </div>
+        <div className="grid gap-1.5">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input type="checkbox" checked={slackEnabled} onChange={e => setSlackEnabled(e.target.checked)} />
+            Slack
+          </label>
+          {slackEnabled && (
+            <Input value={slackWebhookUrl} onChange={e => setSlackWebhookUrl(e.target.value)} placeholder="https://hooks.slack.com/services/…" />
+          )}
+        </div>
+        <Button onClick={save} disabled={saving} className="justify-self-start">
+          {saving ? 'Saving…' : 'Save notification settings'}
         </Button>
       </CardContent>
     </Card>

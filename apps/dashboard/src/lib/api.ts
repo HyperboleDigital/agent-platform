@@ -234,6 +234,33 @@ export interface VisibilityTrendPoint {
   total: number
 }
 
+export type RequestStatus = 'open' | 'in_progress' | 'done' | 'declined'
+
+export interface ChangeRequest {
+  id: string
+  clientId: string
+  title: string
+  description: string
+  status: RequestStatus
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface ChangeRequestWithClient extends ChangeRequest {
+  clientName: string
+}
+
+export interface NotificationSettings {
+  client_id: string
+  email_enabled: boolean
+  email_to: string | null
+  slack_enabled: boolean
+  slack_webhook_url: string | null
+  events: Record<string, boolean>
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   clients: {
@@ -261,6 +288,15 @@ export const api = {
       request<VisibilityRun[]>(`/clients/${id}/visibility/run`, { method: 'POST', body: JSON.stringify({ queryId }) }),
     visibilityRuns: (id: string, days = 30) =>
       request<{ runs: VisibilityRun[]; trend: VisibilityTrendPoint[] }>(`/clients/${id}/visibility/runs?days=${days}`),
+    requests: (id: string) => request<ChangeRequest[]>(`/clients/${id}/requests`),
+    createRequest: (id: string, title: string, description: string) =>
+      request<ChangeRequest>(`/clients/${id}/requests`, { method: 'POST', body: JSON.stringify({ title, description }) }),
+    updateRequestStatus: (id: string, reqId: string, status: RequestStatus) =>
+      request<ChangeRequest>(`/clients/${id}/requests/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    notificationSettings: (id: string) => request<NotificationSettings>(`/clients/${id}/notification-settings`),
+    updateNotificationSettings: (id: string, patch: {
+      emailEnabled?: boolean; emailTo?: string; slackEnabled?: boolean; slackWebhookUrl?: string; events?: Record<string, boolean>
+    }) => request<NotificationSettings>(`/clients/${id}/notification-settings`, { method: 'PUT', body: JSON.stringify(patch) }),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
     knowledge: (id: string) => request<KnowledgeDoc[]>(`/clients/${id}/knowledge`),
     addKnowledge: (id: string, title: string, content: string) =>
@@ -306,6 +342,9 @@ export const api = {
   },
   overview: {
     summary: () => request<OverviewSummary>('/overview/summary'),
-    clients: () => request<ClientRollup[]>('/overview/clients')
+    clients: () => request<ClientRollup[]>('/overview/clients'),
+    requests: () => request<ChangeRequestWithClient[]>('/overview/requests'),
+    updateRequestStatus: (clientId: string, reqId: string, status: RequestStatus) =>
+      request<ChangeRequest>(`/overview/requests/${clientId}/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
   }
 }

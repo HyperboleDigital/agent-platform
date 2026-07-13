@@ -13,6 +13,8 @@ import { getEntitlements, isEntitled } from '../lib/entitlements'
 import { runAudits, getAuditHistory } from '../lib/seo'
 import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities } from '../lib/gsc'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
+import { listRequests, createRequest, updateRequestStatus } from '../lib/change-requests'
+import { getNotificationSettings, updateNotificationSettings } from '../lib/notify'
 import { getIdentity, canAccessClient } from '../lib/authz'
 import type { Identity } from '../lib/authz'
 
@@ -287,4 +289,65 @@ clientsRouter.get('/:id/visibility/runs', async (req, res) => {
   const days = Math.min(180, Math.max(1, Number(req.query.days) || 30))
   const [runs, trend] = await Promise.all([getRuns(id, days), getVisibilityTrend(id, days)])
   res.json({ runs, trend })
+})
+
+// ── Change requests ──────────────────────────────────────────────────────────
+// Free with any active base subscription (not gated behind an add-on).
+
+clientsRouter.get('/:id/requests', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await listRequests(req.params.id))
+})
+
+clientsRouter.post('/:id/requests', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : ''
+  const description = typeof req.body?.description === 'string' ? req.body.description.trim() : ''
+  if (!title) return res.status(400).json({ error: 'title is required' })
+  try {
+    res.json(await createRequest(req.params.id, title, description, identity.userId))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to create request' })
+  }
+})
+
+// Status transitions are a superadmin call (they own the fulfillment work).
+clientsRouter.patch('/:id/requests/:reqId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const status = req.body?.status
+  if (typeof status !== 'string') return res.status(400).json({ error: 'status is required' })
+  try {
+    res.json(await updateRequestStatus(req.params.id, req.params.reqId, status as never))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update status' })
+  }
+})
+
+// ── Notification settings ────────────────────────────────────────────────────
+
+clientsRouter.get('/:id/notification-settings', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await getNotificationSettings(req.params.id))
+})
+
+clientsRouter.put('/:id/notification-settings', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const { emailEnabled, emailTo, slackEnabled, slackWebhookUrl, events } = req.body ?? {}
+  try {
+    const updated = await updateNotificationSettings(req.params.id, {
+      ...(typeof emailEnabled === 'boolean' ? { email_enabled: emailEnabled } : {}),
+      ...(typeof emailTo === 'string' ? { email_to: emailTo } : {}),
+      ...(typeof slackEnabled === 'boolean' ? { slack_enabled: slackEnabled } : {}),
+      ...(typeof slackWebhookUrl === 'string' ? { slack_webhook_url: slackWebhookUrl } : {}),
+      ...(events && typeof events === 'object' ? { events } : {})
+    })
+    res.json(updated)
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to update settings' })
+  }
 })

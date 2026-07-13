@@ -1,13 +1,17 @@
-import useSWR from 'swr'
+import useSWR, { mutate } from 'swr'
 import { Link } from 'react-router-dom'
-import { AlertCircle, Building2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { AlertCircle, Building2, MessageSquarePlus } from 'lucide-react'
 import { api } from '@/lib/api'
+import type { RequestStatus } from '@/lib/api'
 import { StatTile } from '@/components/stat-tile'
 import { UsageBar } from '@/components/usage-bar'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Badge, StatusDot } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { EmptyState } from '@/components/empty-state'
 
 // Same status → badge-color mapping as ClientDetail.tsx's billing tab, kept
 // separate since this table needs a "no subscription" (null) case too.
@@ -19,6 +23,82 @@ function subStatusVariant(status: string | null): 'success' | 'warning' | 'secon
 
 function formatCents(cents: number): string {
   return (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+}
+
+function requestStatusVariant(status: RequestStatus): 'warning' | 'secondary' {
+  return status === 'in_progress' ? 'warning' : 'secondary'
+}
+
+const REQUEST_KEY = 'overview-requests'
+
+function OpenRequestsCard() {
+  const { data: requests, isLoading } = useSWR(REQUEST_KEY, api.overview.requests)
+
+  async function setStatus(clientId: string, reqId: string, status: RequestStatus) {
+    try {
+      await api.overview.updateRequestStatus(clientId, reqId, status)
+      mutate(REQUEST_KEY)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update status')
+    }
+  }
+
+  if (isLoading && !requests) return <Skeleton className="h-32 w-full" />
+  if (requests && requests.length === 0) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>Open change requests</CardTitle></CardHeader>
+        <CardContent className="pt-0">
+          <EmptyState icon={MessageSquarePlus} title="Nothing open" description="Client change requests show up here." />
+        </CardContent>
+      </Card>
+    )
+  }
+  if (!requests) return null
+
+  return (
+    <Card className="overflow-hidden p-0">
+      <div className="p-5 pb-0"><h2 className="text-sm font-medium">Open change requests</h2></div>
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead>Client</TableHead>
+            <TableHead>Request</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Submitted</TableHead>
+            <TableHead>Update</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {requests.map(r => (
+            <TableRow key={r.id}>
+              <TableCell>
+                <Link to={`/clients/${r.clientId}/requests`} className="font-medium text-primary hover:underline">
+                  {r.clientName}
+                </Link>
+              </TableCell>
+              <TableCell>{r.title}</TableCell>
+              <TableCell>
+                <Badge variant={requestStatusVariant(r.status)}>
+                  <StatusDot variant={requestStatusVariant(r.status)} />
+                  {r.status === 'in_progress' ? 'In progress' : 'Open'}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</TableCell>
+              <TableCell>
+                <div className="flex gap-1">
+                  {r.status !== 'in_progress' && (
+                    <Button variant="outline" size="sm" onClick={() => setStatus(r.clientId, r.id, 'in_progress')}>Start</Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => setStatus(r.clientId, r.id, 'done')}>Done</Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Card>
+  )
 }
 
 export default function Overview() {
@@ -113,6 +193,8 @@ export default function Overview() {
           </Table>
         </Card>
       )}
+
+      <OpenRequestsCard />
     </div>
   )
 }
