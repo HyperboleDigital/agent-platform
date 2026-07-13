@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams, useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import {
-  ArrowLeft, Upload, FileText, Users, Plug, CreditCard, Settings,
-  Mail, MessageSquare, CheckCircle2, XCircle
+  Upload, FileText, Users, Plug, CreditCard, Mail, MessageSquare, CheckCircle2, XCircle
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { ConnectorStatus, ServiceKey } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
+import { useClientCtx } from '@/pages/client/ClientLayout'
 import { StatTile } from '@/components/stat-tile'
 import { EmptyState } from '@/components/empty-state'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,18 +17,19 @@ import { Input, Textarea, Label } from '@/components/ui/input'
 import { Badge, StatusDot } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ConversationsChart } from '@/components/charts/conversations-chart'
 import { UsageBar } from '@/components/usage-bar'
 
-export default function ClientDetail() {
-  const { id = '' } = useParams()
-  const [searchParams, setSearchParams] = useSearchParams()
+// ── Section wrappers ─────────────────────────────────────────────────────────
+// Each maps a /clients/:id/<section> route to the section component below,
+// pulling clientId/client from the layout's outlet context.
 
-  const { data: client } = useSWR(id ? ['client', id] : null, () => api.clients.get(id))
+export function ClientHome() {
+  const { clientId: id } = useClientCtx()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { data: stats } = useSWR(id ? ['stats', id] : null, () => api.clients.stats(id))
 
-  // Billing redirect toast — the API's success/cancel URLs carry this param.
+  // Billing redirect toast — the API's success/cancel URLs land here.
   useEffect(() => {
     const billing = searchParams.get('billing')
     if (billing === 'success') toast.success("You're now subscribed!", { description: 'Your plan is active.' })
@@ -44,13 +45,6 @@ export default function ClientDetail() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <Link to="/" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="h-3.5 w-3.5" /> All clients
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold">{client?.name ?? 'Client'}</h1>
-      </div>
-
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile label="Messages this week" value={stats?.messagesThisWeek ?? '—'} />
         <StatTile label="Leads this week" value={stats?.leadsThisWeek ?? '—'} />
@@ -66,24 +60,33 @@ export default function ClientDetail() {
       </div>
 
       <ConversationsCard clientId={id} />
-
-      <Tabs defaultValue="knowledge">
-        <TabsList>
-          <TabsTrigger value="knowledge"><FileText className="mr-1.5 h-3.5 w-3.5" />Knowledge</TabsTrigger>
-          <TabsTrigger value="leads"><Users className="mr-1.5 h-3.5 w-3.5" />Leads</TabsTrigger>
-          <TabsTrigger value="connectors"><Plug className="mr-1.5 h-3.5 w-3.5" />Connectors</TabsTrigger>
-          <TabsTrigger value="billing"><CreditCard className="mr-1.5 h-3.5 w-3.5" />Billing</TabsTrigger>
-          <TabsTrigger value="config"><Settings className="mr-1.5 h-3.5 w-3.5" />Config</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="knowledge"><KnowledgeTab clientId={id} /></TabsContent>
-        <TabsContent value="leads"><LeadsTab clientId={id} /></TabsContent>
-        <TabsContent value="connectors"><ConnectorsTab clientId={id} /></TabsContent>
-        <TabsContent value="billing"><BillingTab clientId={id} /></TabsContent>
-        <TabsContent value="config">{client && <ConfigTab clientId={id} client={client} />}</TabsContent>
-      </Tabs>
     </div>
   )
+}
+
+export function KnowledgeSection() {
+  const { clientId } = useClientCtx()
+  return <KnowledgeTab clientId={clientId} />
+}
+
+export function LeadsSection() {
+  const { clientId } = useClientCtx()
+  return <LeadsTab clientId={clientId} />
+}
+
+export function ConnectorsSection() {
+  const { clientId } = useClientCtx()
+  return <ConnectorsTab clientId={clientId} />
+}
+
+export function BillingSection() {
+  const { clientId } = useClientCtx()
+  return <BillingTab clientId={clientId} />
+}
+
+export function ConfigSection() {
+  const { clientId, client } = useClientCtx()
+  return client ? <ConfigTab clientId={clientId} client={client} /> : <Skeleton className="h-40 w-full" />
 }
 
 function ConversationsCard({ clientId }: { clientId: string }) {

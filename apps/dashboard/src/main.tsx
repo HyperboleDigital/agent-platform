@@ -5,8 +5,14 @@ import { ClerkProvider } from '@clerk/react'
 import { dark } from '@clerk/themes'
 import { Toaster } from 'sonner'
 import Dashboard from './pages/Dashboard'
-import ClientDetail from './pages/ClientDetail'
 import Overview from './pages/Overview'
+import ClientLayout from './pages/client/ClientLayout'
+import {
+  ClientHome, KnowledgeSection, LeadsSection, ConnectorsSection, BillingSection, ConfigSection
+} from './pages/ClientDetail'
+import {
+  SeoSection, VisibilitySection, ContentSection, RequestsSection, ReportsSection
+} from './pages/client/gated-sections'
 import SignInPage from './pages/SignInPage'
 import { ProtectedLayout } from './ProtectedLayout'
 import { AuthBridge } from './AuthBridge'
@@ -29,8 +35,24 @@ const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { path: '/', element: <Dashboard /> },
-          { path: '/clients/:id', element: <ClientDetail /> },
-          { path: '/overview', element: <Overview /> }
+          { path: '/overview', element: <Overview /> },
+          {
+            path: '/clients/:id',
+            element: <ClientLayout />,
+            children: [
+              { index: true, element: <ClientHome /> },
+              { path: 'knowledge', element: <KnowledgeSection /> },
+              { path: 'leads', element: <LeadsSection /> },
+              { path: 'connectors', element: <ConnectorsSection /> },
+              { path: 'seo', element: <SeoSection /> },
+              { path: 'visibility', element: <VisibilitySection /> },
+              { path: 'content', element: <ContentSection /> },
+              { path: 'requests', element: <RequestsSection /> },
+              { path: 'reports', element: <ReportsSection /> },
+              { path: 'billing', element: <BillingSection /> },
+              { path: 'config', element: <ConfigSection /> }
+            ]
+          }
         ]
       }
     ]

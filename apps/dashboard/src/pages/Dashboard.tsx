@@ -1,5 +1,5 @@
 import useSWR from 'swr'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { Building2, AlertCircle } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
@@ -9,6 +9,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 export default function Dashboard() {
   const { data: clients, error, isLoading } = useSWR('clients', api.clients.list)
+  const { data: me } = useSWR('me', api.me)
+
+  // A non-superadmin user belongs to exactly one client — their portal is the
+  // client's own sections, not a one-row list. Send them straight there.
+  if (me && !me.isSuperadmin && clients && clients.length === 1) {
+    return <Navigate to={`/clients/${clients[0].id}`} replace />
+  }
 
   return (
     <div className="flex flex-col gap-6">
