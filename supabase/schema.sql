@@ -262,6 +262,39 @@ create table if not exists notification_settings (
   updated_at        timestamptz not null default now()
 );
 
+-- ── blog_posts ───────────────────────────────────────────────────────────────
+-- The `content` add-on service: AI-drafted, keyword-targeted posts with a
+-- review/approve/publish lifecycle (transitions validated in lib/content.ts).
+create table if not exists blog_posts (
+  id               uuid primary key default gen_random_uuid(),
+  client_id        uuid not null references clients(id) on delete cascade,
+  brief            text not null,
+  target_keyword   text not null,
+  title            text,
+  slug             text,
+  meta_description text,
+  content_md       text,
+  status           text not null default 'draft', -- draft | in_review | approved | published | archived
+  model            text,
+  framer_item_id   text,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  published_at     timestamptz
+);
+create index if not exists blog_posts_client_idx on blog_posts (client_id, created_at desc);
+
+-- ── framer_connections ───────────────────────────────────────────────────────
+-- Per-client Framer Server API connection for publishing. API key encrypted
+-- at rest with lib/crypto.ts, same as gmail_tokens.
+create table if not exists framer_connections (
+  client_id     uuid primary key references clients(id) on delete cascade,
+  api_key_enc   text not null,
+  collection_id text not null,
+  field_mapping jsonb not null default '{}', -- { title: fieldId, body: fieldId, slug: fieldId, metaDescription: fieldId }
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
 -- ── notification_log ─────────────────────────────────────────────────────────
 -- Audit trail + daily-cap enforcement for platform-sent emails (lib/notify.ts).
 -- Persisted rather than an in-memory counter — a process restart must not
@@ -299,3 +332,5 @@ alter table visibility_runs    enable row level security;
 alter table change_requests    enable row level security;
 alter table notification_settings enable row level security;
 alter table notification_log   enable row level security;
+alter table blog_posts         enable row level security;
+alter table framer_connections enable row level security;

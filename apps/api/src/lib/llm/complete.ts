@@ -11,21 +11,29 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const CHEAP_OPENAI_MODEL = process.env.OPENAI_CHEAP_MODEL ?? 'gpt-4o-mini'
 const CHEAP_ANTHROPIC_MODEL = process.env.ANTHROPIC_CHEAP_MODEL ?? 'claude-haiku-4-5-20251001'
 
+// Strong models for quality-critical generation (blog content). Separate env
+// overrides from the cheap tier — repricing quality vs. cost is config, not code.
+const STRONG_OPENAI_MODEL = process.env.OPENAI_CONTENT_MODEL ?? 'gpt-4o'
+const STRONG_ANTHROPIC_MODEL = process.env.ANTHROPIC_CONTENT_MODEL ?? 'claude-sonnet-5'
+
 export type CompleteProvider = 'openai' | 'anthropic'
 
 export interface CompleteOptions {
   system?: string
   provider?: CompleteProvider
   maxTokens?: number
+  // 'cheap' (default) for judging/summarizing; 'strong' for client-facing prose.
+  tier?: 'cheap' | 'strong'
 }
 
 export async function complete(prompt: string, opts: CompleteOptions = {}): Promise<string> {
   const provider = opts.provider ?? (process.env.LLM_PROVIDER === 'openai' ? 'openai' : 'anthropic')
   const maxTokens = opts.maxTokens ?? 800
+  const strong = opts.tier === 'strong'
 
   if (provider === 'openai') {
     const res = await openai.chat.completions.create({
-      model: CHEAP_OPENAI_MODEL,
+      model: strong ? STRONG_OPENAI_MODEL : CHEAP_OPENAI_MODEL,
       max_tokens: maxTokens,
       messages: [
         ...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []),
@@ -36,7 +44,7 @@ export async function complete(prompt: string, opts: CompleteOptions = {}): Prom
   }
 
   const res = await anthropic.messages.create({
-    model: CHEAP_ANTHROPIC_MODEL,
+    model: strong ? STRONG_ANTHROPIC_MODEL : CHEAP_ANTHROPIC_MODEL,
     max_tokens: maxTokens,
     ...(opts.system ? { system: opts.system } : {}),
     messages: [{ role: 'user', content: prompt }]
