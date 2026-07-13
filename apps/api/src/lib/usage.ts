@@ -22,7 +22,7 @@ export const DAILY_CONVERSATION_CAP = Number(process.env.DAILY_CONVERSATION_CAP 
 export const GLOBAL_DAILY_LLM_CAP = Number(process.env.GLOBAL_DAILY_LLM_CAP ?? 5000)
 // Fallback monthly cap when no Stripe plan is resolvable (billing not
 // configured on this deployment, or client isn't subscribed yet).
-const DEFAULT_MONTHLY_CAP = Number(process.env.DEFAULT_MONTHLY_CONVERSATION_CAP ?? 1000)
+export const DEFAULT_MONTHLY_CAP = Number(process.env.DEFAULT_MONTHLY_CONVERSATION_CAP ?? 1000)
 
 function startOfUtcDay(): string {
   const d = new Date()

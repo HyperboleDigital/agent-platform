@@ -6,6 +6,7 @@ import { dark } from '@clerk/themes'
 import { Toaster } from 'sonner'
 import Dashboard from './pages/Dashboard'
 import ClientDetail from './pages/ClientDetail'
+import Overview from './pages/Overview'
 import SignInPage from './pages/SignInPage'
 import { ProtectedLayout } from './ProtectedLayout'
 import { AuthBridge } from './AuthBridge'
@@ -28,7 +29,8 @@ const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { path: '/', element: <Dashboard /> },
-          { path: '/clients/:id', element: <ClientDetail /> }
+          { path: '/clients/:id', element: <ClientDetail /> },
+          { path: '/overview', element: <Overview /> }
         ]
       }
     ]

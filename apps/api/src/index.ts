@@ -11,6 +11,7 @@ import { authRouter } from './routes/auth'
 import { clientsRouter } from './routes/clients'
 import { webhookRouter } from './routes/webhooks'
 import { billingRouter, stripeWebhookHandler } from './routes/billing'
+import { overviewRouter } from './routes/overview'
 import { getIdentity } from './lib/authz'
 
 const app = express()
@@ -53,6 +54,7 @@ app.use('/auth', authRouter)                    // Gmail OAuth callback only (pu
 app.use('/clients', requireAuth, clientsRouter) // dashboard CRUD (auth + per-tenant authz)
 app.use('/webhooks', requireAuth, webhookRouter) // external triggers (auth)
 app.use('/billing', requireAuth, billingRouter) // Stripe checkout/portal/status (auth + per-tenant authz)
+app.use('/overview', requireAuth, overviewRouter) // platform-wide rollups (auth + superadmin-only)
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }))
 

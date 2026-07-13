@@ -110,6 +110,23 @@ export interface MonthlyUsage {
   planName: string | null
 }
 
+export interface OverviewSummary {
+  mrrCents: number
+  activeClients: number
+  totalClients: number
+  conversationsThisMonth: number
+  clientsNearCap: number
+}
+
+export interface ClientRollup {
+  clientId: string
+  name: string
+  active: boolean
+  planName: string | null
+  subscriptionStatus: string | null
+  usage: { used: number; cap: number }
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   clients: {
@@ -151,5 +168,9 @@ export const api = {
       request<{ url: string }>(`/billing/${clientId}/checkout`, { method: 'POST', body: JSON.stringify({ priceId }) }),
     portal: (clientId: string) =>
       request<{ url: string }>(`/billing/${clientId}/portal`, { method: 'POST' })
+  },
+  overview: {
+    summary: () => request<OverviewSummary>('/overview/summary'),
+    clients: () => request<ClientRollup[]>('/overview/clients')
   }
 }

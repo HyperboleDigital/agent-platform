@@ -1,6 +1,6 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import useSWR from 'swr'
-import { Users, Sparkles } from 'lucide-react'
+import { Users, Sparkles, LayoutDashboard } from 'lucide-react'
 import { UserButton } from '@clerk/react'
 import { dark } from '@clerk/themes'
 import { api, checkHealth } from '@/lib/api'
@@ -10,10 +10,12 @@ import { useTheme } from 'next-themes'
 import { ServerDownScreen } from '@/components/server-down-screen'
 
 const NAV = [{ label: 'Clients', to: '/', icon: Users }]
+const SUPERADMIN_NAV = [{ label: 'Overview', to: '/overview', icon: LayoutDashboard }]
 
 function Sidebar() {
   const location = useLocation()
   const { data: me } = useSWR('me', api.me)
+  const nav = me?.isSuperadmin ? [...SUPERADMIN_NAV, ...NAV] : NAV
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-card md:flex">
@@ -23,7 +25,7 @@ function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 p-3">
-        {NAV.map(item => {
+        {nav.map(item => {
           const active = location.pathname === item.to
           const Icon = item.icon
           return (
