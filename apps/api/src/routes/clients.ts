@@ -15,6 +15,10 @@ import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportuniti
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
 import { listRequests, createRequest, updateRequestStatus } from '../lib/change-requests'
 import { getNotificationSettings, updateNotificationSettings } from '../lib/notify'
+import { listPosts, getPost, draftPost, updatePost, transitionPost, setFramerItemId, type PostStatus } from '../lib/content'
+import {
+  getFramerConnection, saveFramerConnection, deleteFramerConnection, listCollectionFields, publishToFramer
+} from '../lib/framer'
 import { getIdentity, canAccessClient } from '../lib/authz'
 import type { Identity } from '../lib/authz'
 
@@ -349,5 +353,132 @@ clientsRouter.put('/:id/notification-settings', async (req, res) => {
     res.json(updated)
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to update settings' })
+  }
+})
+
+// ── Content engine (the `content` add-on service) ───────────────────────────
+
+async function requireContentAccess(req: Request, res: import('express').Response): Promise<string | null> {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) {
+    res.status(403).json({ error: 'Forbidden' })
+    return null
+  }
+  if (!(await isEntitled(req.params.id, 'content'))) {
+    res.status(403).json({ error: 'Not entitled', service: 'content' })
+    return null
+  }
+  return req.params.id
+}
+
+clientsRouter.get('/:id/posts', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  res.json(await listPosts(id))
+})
+
+clientsRouter.post('/:id/posts/generate', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  const brief = typeof req.body?.brief === 'string' ? req.body.brief.trim() : ''
+  const targetKeyword = typeof req.body?.targetKeyword === 'string' ? req.body.targetKeyword.trim() : ''
+  try {
+    res.json(await draftPost(id, brief, targetKeyword))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate post' })
+  }
+})
+
+clientsRouter.patch('/:id/posts/:postId', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  const { title, slug, metaDescription, contentMd, brief, targetKeyword, status } = req.body ?? {}
+  try {
+    if (typeof status === 'string') {
+      return res.json(await transitionPost(id, req.params.postId, status as PostStatus))
+    }
+    res.json(await updatePost(id, req.params.postId, {
+      ...(typeof title === 'string' ? { title } : {}),
+      ...(typeof slug === 'string' ? { slug } : {}),
+      ...(typeof metaDescription === 'string' ? { metaDescription } : {}),
+      ...(typeof contentMd === 'string' ? { contentMd } : {}),
+      ...(typeof brief === 'string' ? { brief } : {}),
+      ...(typeof targetKeyword === 'string' ? { targetKeyword } : {})
+    }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update post' })
+  }
+})
+
+clientsRouter.post('/:id/posts/:postId/publish', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  const post = await getPost(id, req.params.postId)
+  if (!post) return res.status(404).json({ error: 'Post not found' })
+  if (post.status !== 'approved') return res.status(400).json({ error: 'Only an approved post can be published' })
+  if (!post.title || !post.slug || !post.metaDescription || !post.contentMd) {
+    return res.status(400).json({ error: 'Post is missing required content' })
+  }
+  try {
+    const result = await publishToFramer(id, {
+      id: post.id, title: post.title, slug: post.slug, metaDescription: post.metaDescription,
+      contentMd: post.contentMd, framerItemId: post.framerItemId
+    })
+    // Store the Framer item ID before transitioning, so a retry after a
+    // status-transition failure updates the same CMS item instead of
+    // creating a duplicate.
+    await setFramerItemId(id, post.id, result.itemId)
+    const published = await transitionPost(id, post.id, 'published')
+    res.json(published)
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to publish to Framer' })
+  }
+})
+
+clientsRouter.get('/:id/posts/:postId/export', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  const post = await getPost(id, req.params.postId)
+  if (!post) return res.status(404).json({ error: 'Post not found' })
+  const body = `# ${post.title ?? 'Untitled'}\n\n${post.contentMd ?? ''}`
+  res.setHeader('Content-Type', 'text/markdown')
+  res.setHeader('Content-Disposition', `attachment; filename="${post.slug || post.id}.md"`)
+  res.send(body)
+})
+
+clientsRouter.get('/:id/framer-connection', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  res.json(await getFramerConnection(id))
+})
+
+clientsRouter.put('/:id/framer-connection', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  const { projectUrl, apiKey, collectionId, fieldMapping } = req.body ?? {}
+  if (typeof projectUrl !== 'string' || typeof collectionId !== 'string') {
+    return res.status(400).json({ error: 'projectUrl and collectionId are required' })
+  }
+  try {
+    res.json(await saveFramerConnection(id, projectUrl, typeof apiKey === 'string' && apiKey ? apiKey : undefined, collectionId, fieldMapping ?? {}))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to save Framer connection' })
+  }
+})
+
+clientsRouter.delete('/:id/framer-connection', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  await deleteFramerConnection(id)
+  res.json({ ok: true })
+})
+
+clientsRouter.get('/:id/framer-connection/fields', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  try {
+    res.json(await listCollectionFields(id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to load Framer collection fields' })
   }
 })

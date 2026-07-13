@@ -261,6 +261,45 @@ export interface NotificationSettings {
   events: Record<string, boolean>
 }
 
+export type PostStatus = 'draft' | 'in_review' | 'approved' | 'published' | 'archived'
+
+export interface BlogPost {
+  id: string
+  clientId: string
+  brief: string
+  targetKeyword: string
+  title: string | null
+  slug: string | null
+  metaDescription: string | null
+  contentMd: string | null
+  status: PostStatus
+  model: string | null
+  framerItemId: string | null
+  createdAt: string
+  updatedAt: string
+  publishedAt: string | null
+}
+
+export interface FramerFieldMapping {
+  title?: string
+  body?: string
+  slug?: string
+  metaDescription?: string
+}
+
+export interface FramerConnection {
+  clientId: string
+  projectUrl: string
+  collectionId: string
+  fieldMapping: FramerFieldMapping
+}
+
+export interface FramerCollectionField {
+  id: string
+  name: string
+  type: string
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   clients: {
@@ -297,6 +336,33 @@ export const api = {
     updateNotificationSettings: (id: string, patch: {
       emailEnabled?: boolean; emailTo?: string; slackEnabled?: boolean; slackWebhookUrl?: string; events?: Record<string, boolean>
     }) => request<NotificationSettings>(`/clients/${id}/notification-settings`, { method: 'PUT', body: JSON.stringify(patch) }),
+    posts: (id: string) => request<BlogPost[]>(`/clients/${id}/posts`),
+    generatePost: (id: string, brief: string, targetKeyword: string) =>
+      request<BlogPost>(`/clients/${id}/posts/generate`, { method: 'POST', body: JSON.stringify({ brief, targetKeyword }) }),
+    updatePost: (id: string, postId: string, patch: Partial<Pick<BlogPost, 'title' | 'slug' | 'metaDescription' | 'contentMd' | 'brief' | 'targetKeyword'>>) =>
+      request<BlogPost>(`/clients/${id}/posts/${postId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    transitionPost: (id: string, postId: string, status: PostStatus) =>
+      request<BlogPost>(`/clients/${id}/posts/${postId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    publishPost: (id: string, postId: string) =>
+      request<BlogPost>(`/clients/${id}/posts/${postId}/publish`, { method: 'POST' }),
+    exportPost: async (id: string, postId: string, filename: string) => {
+      const res = await fetch(`${BASE}/clients/${id}/posts/${postId}/export`, { headers: await authHeaders() })
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+    framerConnection: (id: string) => request<FramerConnection | null>(`/clients/${id}/framer-connection`),
+    saveFramerConnection: (id: string, projectUrl: string, apiKey: string, collectionId: string, fieldMapping: FramerFieldMapping) =>
+      request<FramerConnection>(`/clients/${id}/framer-connection`, {
+        method: 'PUT',
+        body: JSON.stringify({ projectUrl, apiKey, collectionId, fieldMapping })
+      }),
+    deleteFramerConnection: (id: string) => request<{ ok: boolean }>(`/clients/${id}/framer-connection`, { method: 'DELETE' }),
+    framerFields: (id: string) => request<FramerCollectionField[]>(`/clients/${id}/framer-connection/fields`),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
     knowledge: (id: string) => request<KnowledgeDoc[]>(`/clients/${id}/knowledge`),
     addKnowledge: (id: string, title: string, content: string) =>

@@ -288,6 +288,7 @@ create index if not exists blog_posts_client_idx on blog_posts (client_id, creat
 -- at rest with lib/crypto.ts, same as gmail_tokens.
 create table if not exists framer_connections (
   client_id     uuid primary key references clients(id) on delete cascade,
+  project_url   text not null, -- e.g. https://framer.com/projects/Website--aabbccdd1122
   api_key_enc   text not null,
   collection_id text not null,
   field_mapping jsonb not null default '{}', -- { title: fieldId, body: fieldId, slug: fieldId, metaDescription: fieldId }

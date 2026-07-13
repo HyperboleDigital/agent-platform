@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { Sparkles, FileBarChart } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { FileBarChart } from 'lucide-react'
 import type { ServiceKey } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
 import { useClientCtx } from '@/pages/client/ClientLayout'
@@ -20,7 +21,7 @@ export function Gate({ service, children }: { service: ServiceKey; children: Rea
 
 // Placeholder shown for a section whose feature build lands in a later slice.
 // The nav + entitlement wiring is real now; the module UI comes next.
-function ComingInBuild({ icon: Icon, title, blurb }: { icon: typeof Sparkles; title: string; blurb: string }) {
+function ComingInBuild({ icon: Icon, title, blurb }: { icon: LucideIcon; title: string; blurb: string }) {
   return (
     <Card>
       <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
@@ -33,18 +34,6 @@ function ComingInBuild({ icon: Icon, title, blurb }: { icon: typeof Sparkles; ti
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-export function ContentSection() {
-  return (
-    <Gate service="content">
-      <ComingInBuild
-        icon={Sparkles}
-        title="Content Engine"
-        blurb="AI-drafted, keyword-targeted blog posts you review and publish land here in the next build."
-      />
-    </Gate>
   )
 }
 

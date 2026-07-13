@@ -185,9 +185,10 @@ function validateDraft(d: GeneratedDraft, targetKeyword: string, allowedPages: s
   const faqQuestions = (body.match(/^###\s/gm) ?? []).length
   if (faqQuestions < 3) soft.push(`FAQ has ${faqQuestions} questions (want 3-5)`)
 
-  const banned = ['delve', 'unlock', 'game-changer', "in today's", 'look no further', 'in conclusion', 'robust', 'seamless', 'elevate']
+  const banned = ['delve', 'unlock', 'game-changer', "in today's", 'look no further', 'in conclusion', 'robust', 'seamless', 'elevate', 'leverage', 'leveraging']
+  const scannedText = `${d.title ?? ''}\n${d.metaDescription ?? ''}\n${body}`.toLowerCase()
   for (const phrase of banned) {
-    if (body.toLowerCase().includes(phrase)) soft.push(`contains banned phrase "${phrase}"`)
+    if (scannedText.includes(phrase)) soft.push(`contains banned phrase "${phrase}"`)
   }
 
   // Links outside the allowed set are dropped silently rather than failed —
@@ -371,4 +372,16 @@ export async function transitionPost(clientId: string, postId: string, to: PostS
     .single()
   if (error) throw error
   return fromRow(data as Row)
+}
+
+// Records the Framer CMS item ID a post was published as, so a retry after a
+// later failure (e.g. the status transition) updates the same item instead
+// of creating a duplicate. Called before transitionPost(..., 'published').
+export async function setFramerItemId(clientId: string, postId: string, framerItemId: string): Promise<void> {
+  const { error } = await supabase
+    .from('blog_posts')
+    .update({ framer_item_id: framerItemId, updated_at: new Date().toISOString() })
+    .eq('client_id', clientId)
+    .eq('id', postId)
+  if (error) throw error
 }
