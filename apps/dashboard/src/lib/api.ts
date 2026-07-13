@@ -127,6 +127,29 @@ export interface ClientRollup {
   usage: { used: number; cap: number }
 }
 
+export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social'
+
+export interface ServiceInfo {
+  key: ServiceKey
+  priceId: string
+  name: string
+  monthlyPriceCents: number
+  description: string
+  status: 'available' | 'coming_soon'
+}
+
+export interface ServiceEntitlement {
+  entitled: boolean
+  source: 'addon' | 'comp' | null
+  status: 'available' | 'coming_soon'
+}
+
+export interface Entitlements {
+  active: boolean
+  planKey: string | null
+  services: Record<ServiceKey, ServiceEntitlement>
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   clients: {
@@ -137,6 +160,7 @@ export const api = {
     stats: (id: string) => request<DashboardStats>(`/clients/${id}/stats`),
     statsTimeseries: (id: string, days = 14) => request<DailyCount[]>(`/clients/${id}/stats/timeseries?days=${days}`),
     statsUsage: (id: string) => request<MonthlyUsage>(`/clients/${id}/stats/usage`),
+    entitlements: (id: string) => request<Entitlements>(`/clients/${id}/entitlements`),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
     knowledge: (id: string) => request<KnowledgeDoc[]>(`/clients/${id}/knowledge`),
     addKnowledge: (id: string, title: string, content: string) =>
@@ -163,11 +187,22 @@ export const api = {
   },
   billing: {
     plans: () => request<PlanInfo[]>('/billing/plans'),
+    services: () => request<ServiceInfo[]>('/billing/services'),
     get: (clientId: string) => request<{ subscription: SubscriptionInfo | null; plan: PlanInfo | null }>(`/billing/${clientId}`),
     checkout: (clientId: string, priceId: string) =>
       request<{ url: string }>(`/billing/${clientId}/checkout`, { method: 'POST', body: JSON.stringify({ priceId }) }),
     portal: (clientId: string) =>
-      request<{ url: string }>(`/billing/${clientId}/portal`, { method: 'POST' })
+      request<{ url: string }>(`/billing/${clientId}/portal`, { method: 'POST' }),
+    addon: (clientId: string, serviceKey: ServiceKey, action: 'add' | 'remove') =>
+      request<{ ok: boolean; entitlements: Entitlements }>(`/billing/${clientId}/addons`, {
+        method: 'POST',
+        body: JSON.stringify({ serviceKey, action })
+      }),
+    compService: (clientId: string, serviceKey: ServiceKey, revoke = false) =>
+      request<{ ok: boolean; entitlements: Entitlements }>(`/billing/${clientId}/services/comp`, {
+        method: 'POST',
+        body: JSON.stringify({ serviceKey, revoke })
+      })
   },
   overview: {
     summary: () => request<OverviewSummary>('/overview/summary'),

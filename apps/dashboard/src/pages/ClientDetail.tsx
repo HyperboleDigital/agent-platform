@@ -7,7 +7,8 @@ import {
   Mail, MessageSquare, CheckCircle2, XCircle
 } from 'lucide-react'
 import { api } from '@/lib/api'
-import type { ConnectorStatus } from '@/lib/api'
+import type { ConnectorStatus, ServiceKey } from '@/lib/api'
+import { useEntitlements } from '@/hooks/use-entitlements'
 import { StatTile } from '@/components/stat-tile'
 import { EmptyState } from '@/components/empty-state'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -413,6 +414,7 @@ function BillingTab({ clientId }: { clientId: string }) {
       </Card>
 
       {isActive && <UsageCard clientId={clientId} />}
+      {isActive && <ServicesCard clientId={clientId} comped={sub?.stripeCustomerId === 'comped'} />}
 
       {!isActive && (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -433,6 +435,106 @@ function BillingTab({ clientId }: { clientId: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+// Add-on service marketplace on the billing tab: each service with its
+// entitlement state and an add/remove toggle. For comped base plans (no card
+// on file) Stripe add-ons can't be charged, so we show the superadmin comp
+// toggle instead.
+function ServicesCard({ clientId, comped }: { clientId: string; comped: boolean }) {
+  const { data: services } = useSWR('services', api.billing.services)
+  const { data: me } = useSWR('me', api.me)
+  const { entitlements, mutate: mutateEntitlements } = useEntitlements(clientId)
+  const [busy, setBusy] = useState<ServiceKey | null>(null)
+
+  if (!services) return <Skeleton className="h-24 w-full" />
+
+  async function toggleAddon(key: ServiceKey, entitled: boolean) {
+    setBusy(key)
+    try {
+      await api.billing.addon(clientId, key, entitled ? 'remove' : 'add')
+      await mutateEntitlements()
+      toast.success(entitled ? 'Service removed' : 'Service added')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update service')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function toggleComp(key: ServiceKey, entitled: boolean) {
+    setBusy(key)
+    try {
+      await api.billing.compService(clientId, key, entitled)
+      await mutateEntitlements()
+      toast.success(entitled ? 'Service grant revoked' : 'Service comped')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update grant')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Services</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-2 pt-0">
+        {services.map(svc => {
+          const ent = entitlements?.services[svc.key]
+          const entitled = ent?.entitled ?? false
+          const comingSoon = svc.status === 'coming_soon'
+          const isBusy = busy === svc.key
+          return (
+            <div key={svc.key} className="flex items-start justify-between gap-4 rounded-md border border-border p-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{svc.name}</span>
+                  {entitled && (
+                    <Badge variant="success">
+                      <StatusDot variant="success" />
+                      {ent?.source === 'comp' ? 'Comped' : 'Active'}
+                    </Badge>
+                  )}
+                  {comingSoon && !entitled && <Badge variant="secondary">Coming soon</Badge>}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{svc.description}</p>
+                {!comingSoon && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    ${(svc.monthlyPriceCents / 100).toFixed(0)}/mo
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                {/* Comped base plans can't run Stripe add-ons; superadmin comps the service instead. */}
+                {!comped && !comingSoon && (
+                  <Button
+                    variant={entitled ? 'outline' : 'default'}
+                    size="sm"
+                    disabled={isBusy}
+                    onClick={() => toggleAddon(svc.key, entitled)}
+                  >
+                    {isBusy ? '…' : entitled ? 'Remove' : 'Add'}
+                  </Button>
+                )}
+                {me?.isSuperadmin && (comped || comingSoon || ent?.source === 'comp') && (
+                  <Button
+                    variant={entitled ? 'outline' : 'secondary'}
+                    size="sm"
+                    disabled={isBusy}
+                    onClick={() => toggleComp(svc.key, entitled)}
+                  >
+                    {isBusy ? '…' : entitled ? 'Revoke comp' : 'Comp'}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
   )
 }
 

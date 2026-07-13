@@ -9,6 +9,7 @@ import { getStats, getDailyMessageCounts } from '../lib/logs'
 import { getConnectorStatus } from '../lib/connectors'
 import { gmailConfigured, getAuthUrl } from '../lib/gmail'
 import { getMonthlyUsage } from '../lib/usage'
+import { getEntitlements } from '../lib/entitlements'
 import { getIdentity, canAccessClient } from '../lib/authz'
 import type { Identity } from '../lib/authz'
 
@@ -83,6 +84,13 @@ clientsRouter.get('/:id/stats/usage', async (req, res) => {
   const identity = identityOf(req)
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
   res.json(await getMonthlyUsage(req.params.id))
+})
+
+// Resolved service entitlements — drives the dashboard's locked sections.
+clientsRouter.get('/:id/entitlements', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await getEntitlements(req.params.id))
 })
 
 // Leads captured for a client

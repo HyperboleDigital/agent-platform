@@ -144,6 +144,39 @@ create table if not exists subscriptions (
 create index if not exists subscriptions_customer_idx on subscriptions (stripe_customer_id);
 create index if not exists subscriptions_stripe_sub_idx on subscriptions (stripe_subscription_id);
 
+-- ── subscription_items ───────────────────────────────────────────────────────
+-- Mirror of ALL line items on a client's Stripe subscription (base plan + any
+-- add-on services). subscriptions.stripe_price_id keeps meaning "the base plan
+-- item"; add-on service entitlements resolve from the rows here whose price ID
+-- maps to a SERVICES entry (lib/services.ts). Kept in sync by the subscription
+-- webhook (lib/billing.ts syncSubscriptionFromStripe).
+create table if not exists subscription_items (
+  id                              uuid primary key default gen_random_uuid(),
+  client_id                       uuid not null references clients(id) on delete cascade,
+  stripe_subscription_item_id     text not null unique,
+  stripe_price_id                 text not null,
+  quantity                        int not null default 1,
+  created_at                      timestamptz not null default now(),
+  updated_at                      timestamptz not null default now()
+);
+create index if not exists subscription_items_client_idx on subscription_items (client_id);
+
+-- ── service_grants ───────────────────────────────────────────────────────────
+-- Superadmin-granted service access without a Stripe purchase (comps, internal
+-- test clients). Soft-revoked via revoked_at so grants keep an audit trail; a
+-- unique (client_id, service_key) means re-granting updates the same row.
+create table if not exists service_grants (
+  id          uuid primary key default gen_random_uuid(),
+  client_id   uuid not null references clients(id) on delete cascade,
+  service_key text not null,
+  source      text not null default 'comp',
+  granted_by  text,                                 -- clerk user id of the superadmin
+  created_at  timestamptz not null default now(),
+  revoked_at  timestamptz,
+  unique (client_id, service_key)
+);
+create index if not exists service_grants_client_idx on service_grants (client_id);
+
 -- ── Row-level security (defense-in-depth) ────────────────────────────────────
 -- The API exclusively uses the Supabase service_role key, which bypasses RLS
 -- entirely — this does NOT change app behavior. It exists so that a leaked
@@ -158,3 +191,5 @@ alter table escalations    enable row level security;
 alter table message_logs   enable row level security;
 alter table gmail_tokens   enable row level security;
 alter table subscriptions  enable row level security;
+alter table subscription_items enable row level security;
+alter table service_grants     enable row level security;
