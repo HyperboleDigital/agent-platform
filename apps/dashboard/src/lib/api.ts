@@ -28,6 +28,21 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// Raw, unauthenticated connectivity check — used by the app shell to
+// distinguish "API is down" from "user is logged out" (Clerk is a separate
+// service, so it stays up even when our backend doesn't).
+export async function checkHealth(): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 4000)
+    const res = await fetch(`${BASE}/health`, { signal: controller.signal })
+    clearTimeout(timeout)
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export interface DashboardStats {
   messagesThisWeek: number
   leadsThisWeek: number
@@ -59,13 +74,52 @@ export interface ConnectorStatus {
   calendly: { configured: boolean }
 }
 
+export interface PlanInfo {
+  key: string
+  priceId: string
+  name: string
+  monthlyPriceCents: number
+  conversationCap: number
+}
+
+export interface SubscriptionInfo {
+  id: string
+  clientId: string
+  stripeCustomerId: string
+  stripeSubscriptionId: string | null
+  stripePriceId: string | null
+  status: string
+  currentPeriodEnd: string | null
+}
+
+export interface Identity {
+  userId: string
+  orgId: string | null
+  isSuperadmin: boolean
+}
+
+export interface DailyCount {
+  date: string
+  count: number
+  resolved: number
+}
+
+export interface MonthlyUsage {
+  used: number
+  cap: number
+  planName: string | null
+}
+
 export const api = {
+  me: () => request<Identity>('/me'),
   clients: {
     list: () => request<Client[]>('/clients'),
     get: (id: string) => request<Client>(`/clients/${id}`),
     upsert: (data: Partial<Client>) =>
       request<Client>('/clients', { method: 'POST', body: JSON.stringify(data) }),
     stats: (id: string) => request<DashboardStats>(`/clients/${id}/stats`),
+    statsTimeseries: (id: string, days = 14) => request<DailyCount[]>(`/clients/${id}/stats/timeseries?days=${days}`),
+    statsUsage: (id: string) => request<MonthlyUsage>(`/clients/${id}/stats/usage`),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
     knowledge: (id: string) => request<KnowledgeDoc[]>(`/clients/${id}/knowledge`),
     addKnowledge: (id: string, title: string, content: string) =>
@@ -89,5 +143,13 @@ export const api = {
     },
     connectors: (id: string) => request<ConnectorStatus>(`/clients/${id}/connectors`),
     gmailAuthUrl: (id: string) => request<{ url: string }>(`/clients/${id}/gmail/auth-url`)
+  },
+  billing: {
+    plans: () => request<PlanInfo[]>('/billing/plans'),
+    get: (clientId: string) => request<{ subscription: SubscriptionInfo | null; plan: PlanInfo | null }>(`/billing/${clientId}`),
+    checkout: (clientId: string, priceId: string) =>
+      request<{ url: string }>(`/billing/${clientId}/checkout`, { method: 'POST', body: JSON.stringify({ priceId }) }),
+    portal: (clientId: string) =>
+      request<{ url: string }>(`/billing/${clientId}/portal`, { method: 'POST' })
   }
 }

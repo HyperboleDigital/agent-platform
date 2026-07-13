@@ -2,11 +2,16 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { ClerkProvider } from '@clerk/react'
+import { dark } from '@clerk/themes'
+import { Toaster } from 'sonner'
 import Dashboard from './pages/Dashboard'
 import ClientDetail from './pages/ClientDetail'
 import SignInPage from './pages/SignInPage'
 import { ProtectedLayout } from './ProtectedLayout'
 import { AuthBridge } from './AuthBridge'
+import { AppShell } from './components/app-shell'
+import { ThemeProvider } from './components/theme-provider'
+import './index.css'
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
 
@@ -19,17 +24,25 @@ const router = createBrowserRouter([
   {
     element: <ProtectedLayout />,
     children: [
-      { path: '/', element: <Dashboard /> },
-      { path: '/clients/:id', element: <ClientDetail /> }
+      {
+        element: <AppShell />,
+        children: [
+          { path: '/', element: <Dashboard /> },
+          { path: '/clients/:id', element: <ClientDetail /> }
+        ]
+      }
     ]
   }
 ])
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} signInUrl="/sign-in">
-      <AuthBridge />
-      <RouterProvider router={router} />
-    </ClerkProvider>
+    <ThemeProvider>
+      <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} signInUrl="/sign-in" appearance={{ baseTheme: dark } as never}>
+        <AuthBridge />
+        <RouterProvider router={router} />
+        <Toaster theme="dark" richColors position="top-right" />
+      </ClerkProvider>
+    </ThemeProvider>
   </StrictMode>
 )

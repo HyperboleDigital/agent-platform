@@ -56,4 +56,11 @@ app.use('/billing', requireAuth, billingRouter) // Stripe checkout/portal/status
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }))
 
+// Signed-in identity, for the dashboard to render role-aware nav (superadmin
+// console vs. scoped client view).
+app.get('/me', requireAuth, (req, res) => {
+  const identity = getIdentity(req)!
+  res.json({ userId: identity.userId, orgId: identity.orgId, isSuperadmin: identity.isSuperadmin })
+})
+
 app.listen(PORT, () => console.log(`API running on :${PORT}`))

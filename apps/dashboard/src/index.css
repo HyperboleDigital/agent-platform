@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark is the default/primary theme (data-theme unset or "dark"); .light overrides. */
+  :root,
+  .dark {
+    --background: 30 8% 7%;
+    --foreground: 30 10% 92%;
+
+    --card: 30 8% 10%;
+    --card-foreground: 30 10% 92%;
+    --popover: 30 8% 9%;
+    --popover-foreground: 30 10% 92%;
+
+    --muted: 30 6% 16%;
+    --muted-foreground: 30 6% 62%;
+
+    --border: 30 6% 18%;
+    --input: 30 6% 18%;
+
+    /* Brand accent — #BA9E66 */
+    --primary: 40 38% 56%;
+    --primary-foreground: 30 15% 10%;
+
+    --secondary: 30 6% 16%;
+    --secondary-foreground: 30 10% 92%;
+
+    /* Subtle hover/interactive surface, brand-tinted */
+    --accent: 40 20% 18%;
+    --accent-foreground: 30 10% 92%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 55% 45%;
+    --success-foreground: 0 0% 98%;
+    --warning: 25 90% 55%;
+    --warning-foreground: 30 15% 10%;
+
+    --ring: 40 38% 56%;
+    --radius: 0.5rem;
+  }
+
+  .light {
+    --background: 40 20% 98%;
+    --foreground: 30 15% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 30 15% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 30 15% 12%;
+
+    --muted: 40 15% 94%;
+    --muted-foreground: 30 8% 40%;
+
+    --border: 40 15% 88%;
+    --input: 40 15% 88%;
+
+    --primary: 40 38% 56%;
+    --primary-foreground: 30 15% 10%;
+
+    --secondary: 40 15% 94%;
+    --secondary-foreground: 30 15% 12%;
+
+    --accent: 40 30% 92%;
+    --accent-foreground: 30 15% 12%;
+
+    --destructive: 0 70% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 65% 35%;
+    --success-foreground: 0 0% 98%;
+    --warning: 25 90% 48%;
+    --warning-foreground: 0 0% 98%;
+
+    --ring: 40 38% 56%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Tabular figures for data tables and metric tiles */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

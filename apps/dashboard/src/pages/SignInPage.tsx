@@ -2,7 +2,7 @@ import { SignIn } from '@clerk/react'
 
 export default function SignInPage() {
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', fontFamily: 'system-ui' }}>
+    <div className="flex min-h-screen items-center justify-center bg-background">
       <SignIn routing="path" path="/sign-in" />
     </div>
   )

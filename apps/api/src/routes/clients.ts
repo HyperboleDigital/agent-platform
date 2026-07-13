@@ -70,6 +70,14 @@ clientsRouter.get('/:id/stats', async (req, res) => {
   res.json(await getStats(req.params.id))
 })
 
+// Daily message counts for the trend chart (last N days, default 14)
+clientsRouter.get('/:id/stats/timeseries', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 14))
+  res.json(await getDailyMessageCounts(req.params.id, days))
+})
+
 // Conversations used this calendar month vs. the client's plan cap
 clientsRouter.get('/:id/stats/usage', async (req, res) => {
   const identity = identityOf(req)

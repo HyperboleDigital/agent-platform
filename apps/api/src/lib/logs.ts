@@ -34,6 +34,42 @@ export interface DashboardStats {
   estimatedHoursSaved: number
 }
 
+export interface DailyCount {
+  date: string // YYYY-MM-DD (UTC)
+  count: number
+  resolved: number
+}
+
+// Day-by-day message counts for the trend chart. Zero-fills days with no
+// activity so the chart has no gaps.
+export async function getDailyMessageCounts(clientId: string, days = 14): Promise<DailyCount[]> {
+  const now = new Date()
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1)))
+
+  const { data, error } = await supabase
+    .from('message_logs')
+    .select('created_at, resolved')
+    .eq('client_id', clientId)
+    .gte('created_at', start.toISOString())
+    .order('created_at', { ascending: true })
+  if (error) console.error('[logs] getDailyMessageCounts error', error.message)
+
+  const buckets = new Map<string, DailyCount>()
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start.getTime() + i * 24 * 60 * 60 * 1000)
+    const key = d.toISOString().slice(0, 10)
+    buckets.set(key, { date: key, count: 0, resolved: 0 })
+  }
+  for (const row of data ?? []) {
+    const key = (row.created_at as string).slice(0, 10)
+    const bucket = buckets.get(key)
+    if (!bucket) continue
+    bucket.count++
+    if (row.resolved) bucket.resolved++
+  }
+  return Array.from(buckets.values())
+}
+
 // Rough estimate of how long a human would take to handle one conversation
 // the bot resolved on its own (read the message, look something up, reply).
 // Shown to clients as an approximation, not a precise figure.
