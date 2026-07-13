@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Sparkles, Search, Bot, MessageSquarePlus, FileBarChart } from 'lucide-react'
+import { Sparkles, MessageSquarePlus, FileBarChart } from 'lucide-react'
 import type { ServiceKey } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
 import { useClientCtx } from '@/pages/client/ClientLayout'
@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 // Renders children only when the client is entitled to `service`; otherwise
 // shows the upgrade gate. API routes enforce the same entitlement server-side,
 // so this is purely presentational.
-function Gate({ service, children }: { service: ServiceKey; children: ReactNode }) {
+export function Gate({ service, children }: { service: ServiceKey; children: ReactNode }) {
   const { clientId } = useClientCtx()
   const { entitlements, isLoading } = useEntitlements(clientId)
   if (isLoading && !entitlements) return <Skeleton className="h-64 w-full" />
@@ -33,30 +33,6 @@ function ComingInBuild({ icon: Icon, title, blurb }: { icon: typeof Sparkles; ti
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-export function SeoSection() {
-  return (
-    <Gate service="seo">
-      <ComingInBuild
-        icon={Search}
-        title="SEO"
-        blurb="Keyword rankings from Google Search Console and technical site audits land here in the next build."
-      />
-    </Gate>
-  )
-}
-
-export function VisibilitySection() {
-  return (
-    <Gate service="seo">
-      <ComingInBuild
-        icon={Bot}
-        title="AI Visibility"
-        blurb="Tracking of how your brand shows up in ChatGPT and other AI search lands here in the next build."
-      />
-    </Gate>
   )
 }
 

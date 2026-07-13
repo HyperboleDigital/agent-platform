@@ -10,6 +10,7 @@ interface ClientRow {
   agent_config: Client['agentConfig']
   created_at: string
   clerk_org_id: string | null
+  portal_config: Client['portalConfig']
 }
 
 function fromRow(row: ClientRow): Client {
@@ -21,7 +22,8 @@ function fromRow(row: ClientRow): Client {
     active: row.active,
     agentConfig: row.agent_config ?? ({} as Client['agentConfig']),
     createdAt: row.created_at,
-    clerkOrgId: row.clerk_org_id ?? null
+    clerkOrgId: row.clerk_org_id ?? null,
+    portalConfig: row.portal_config ?? {}
   }
 }
 
@@ -34,6 +36,7 @@ function toRow(client: Partial<Client>): Partial<ClientRow> {
   if (client.active !== undefined) row.active = client.active
   if (client.agentConfig !== undefined) row.agent_config = client.agentConfig
   if (client.clerkOrgId !== undefined) row.clerk_org_id = client.clerkOrgId
+  if (client.portalConfig !== undefined) row.portal_config = client.portalConfig
   return row
 }
 

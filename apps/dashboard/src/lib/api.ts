@@ -150,6 +150,90 @@ export interface Entitlements {
   services: Record<ServiceKey, ServiceEntitlement>
 }
 
+export interface AuditScores {
+  performance: number
+  seo: number
+  accessibility: number
+  bestPractices: number
+}
+
+export interface AuditMetrics {
+  lcpMs?: number
+  cls?: number
+  inpMs?: number
+  tbtMs?: number
+}
+
+export interface SeoAudit {
+  id: string
+  clientId: string
+  url: string
+  strategy: 'mobile' | 'desktop'
+  scores: AuditScores
+  metrics: AuditMetrics
+  recommendations: string
+  createdAt: string
+}
+
+export interface PortalConfig {
+  seoPages?: string[]
+  brandTerms?: string[]
+  gscProperty?: string
+}
+
+export interface GscQueryRow {
+  query: string
+  clicks: number
+  impressions: number
+  ctr: number
+  position: number
+}
+
+export interface GscTotals {
+  clicks: number
+  impressions: number
+  ctr: number
+  position: number
+}
+
+export interface GscSnapshot {
+  date: string
+  queries: GscQueryRow[]
+  totals: GscTotals
+}
+
+export interface GscRankings {
+  connected: boolean
+  trend: GscSnapshot[]
+  latest: { rows: GscQueryRow[]; totals: GscTotals } | null
+}
+
+export interface VisibilityQuery {
+  id: string
+  clientId: string
+  query: string
+  active: boolean
+  createdAt: string
+}
+
+export interface VisibilityRun {
+  id: string
+  clientId: string
+  queryId: string
+  provider: 'openai' | 'anthropic'
+  model: string | null
+  mentioned: boolean
+  domainCited: boolean
+  snippet: string | null
+  createdAt: string
+}
+
+export interface VisibilityTrendPoint {
+  date: string
+  mentionRate: number
+  total: number
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   clients: {
@@ -161,6 +245,22 @@ export const api = {
     statsTimeseries: (id: string, days = 14) => request<DailyCount[]>(`/clients/${id}/stats/timeseries?days=${days}`),
     statsUsage: (id: string) => request<MonthlyUsage>(`/clients/${id}/stats/usage`),
     entitlements: (id: string) => request<Entitlements>(`/clients/${id}/entitlements`),
+    seoConfig: (id: string) => request<PortalConfig>(`/clients/${id}/seo/config`),
+    updateSeoConfig: (id: string, config: Partial<PortalConfig>) =>
+      request<PortalConfig>(`/clients/${id}/seo/config`, { method: 'PUT', body: JSON.stringify(config) }),
+    seoAudits: (id: string, days = 90) => request<SeoAudit[]>(`/clients/${id}/seo/audits?days=${days}`),
+    runSeoAudit: (id: string) => request<SeoAudit[]>(`/clients/${id}/seo/audits`, { method: 'POST' }),
+    seoRankings: (id: string, days = 28) => request<GscRankings>(`/clients/${id}/seo/rankings?days=${days}`),
+    seoOpportunities: (id: string) => request<GscQueryRow[]>(`/clients/${id}/seo/opportunities`),
+    visibilityQueries: (id: string) => request<VisibilityQuery[]>(`/clients/${id}/visibility/queries`),
+    addVisibilityQuery: (id: string, query: string) =>
+      request<VisibilityQuery>(`/clients/${id}/visibility/queries`, { method: 'POST', body: JSON.stringify({ query }) }),
+    removeVisibilityQuery: (id: string, queryId: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/visibility/queries/${queryId}`, { method: 'DELETE' }),
+    runVisibilityCheck: (id: string, queryId?: string) =>
+      request<VisibilityRun[]>(`/clients/${id}/visibility/run`, { method: 'POST', body: JSON.stringify({ queryId }) }),
+    visibilityRuns: (id: string, days = 30) =>
+      request<{ runs: VisibilityRun[]; trend: VisibilityTrendPoint[] }>(`/clients/${id}/visibility/runs?days=${days}`),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
     knowledge: (id: string) => request<KnowledgeDoc[]>(`/clients/${id}/knowledge`),
     addKnowledge: (id: string, title: string, content: string) =>

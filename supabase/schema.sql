@@ -16,7 +16,10 @@ create table if not exists clients (
   created_at    timestamptz not null default now(),
   -- Clerk Organization that owns this client — the tenant boundary. Null until
   -- a client is onboarded into Clerk (superadmin-only access until then).
-  clerk_org_id  text unique
+  clerk_org_id  text unique,
+  -- SEO/portal soft config (audit pages, brand terms, connected GSC property).
+  -- jsonb rather than columns since this shape keeps growing across slices.
+  portal_config jsonb not null default '{}'::jsonb
 );
 
 -- ── knowledge_base ───────────────────────────────────────────────────────────
@@ -177,6 +180,60 @@ create table if not exists service_grants (
 );
 create index if not exists service_grants_client_idx on service_grants (client_id);
 
+-- ── seo_audits ────────────────────────────────────────────────────────────────
+-- One row per PageSpeed Insights run against one URL (the `seo` add-on service).
+create table if not exists seo_audits (
+  id              uuid primary key default gen_random_uuid(),
+  client_id       uuid not null references clients(id) on delete cascade,
+  url             text not null,
+  strategy        text not null default 'mobile', -- 'mobile' | 'desktop'
+  scores          jsonb not null,                  -- { performance, seo, accessibility, bestPractices } 0-100
+  metrics         jsonb,                            -- core web vitals: LCP, CLS, INP, TBT
+  recommendations text,                              -- LLM plain-English summary (markdown)
+  created_at      timestamptz not null default now()
+);
+create index if not exists seo_audits_client_idx on seo_audits (client_id, created_at desc);
+
+-- ── gsc_snapshots ─────────────────────────────────────────────────────────────
+-- Daily cache of Google Search Console query performance, so trends survive
+-- GSC's data window and dashboard loads don't hit Google live.
+create table if not exists gsc_snapshots (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references clients(id) on delete cascade,
+  date       date not null,
+  queries    jsonb not null, -- [{ query, clicks, impressions, ctr, position }]
+  totals     jsonb not null, -- { clicks, impressions, ctr, position }
+  created_at timestamptz not null default now(),
+  unique (client_id, date)
+);
+create index if not exists gsc_snapshots_client_idx on gsc_snapshots (client_id, date desc);
+
+-- ── visibility_queries / visibility_runs ────────────────────────────────────
+-- AI-search (ChatGPT/Claude) brand-mention tracking, also part of the `seo`
+-- add-on service.
+create table if not exists visibility_queries (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references clients(id) on delete cascade,
+  query      text not null,
+  active     boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists visibility_queries_client_idx on visibility_queries (client_id);
+
+create table if not exists visibility_runs (
+  id            uuid primary key default gen_random_uuid(),
+  client_id     uuid not null references clients(id) on delete cascade,
+  query_id      uuid not null references visibility_queries(id) on delete cascade,
+  provider      text not null, -- 'openai' | 'anthropic'
+  model         text,
+  mentioned     boolean not null,
+  domain_cited  boolean not null default false,
+  snippet       text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists visibility_runs_client_idx on visibility_runs (client_id, created_at desc);
+create index if not exists visibility_runs_query_idx on visibility_runs (query_id, created_at desc);
+
 -- ── Row-level security (defense-in-depth) ────────────────────────────────────
 -- The API exclusively uses the Supabase service_role key, which bypasses RLS
 -- entirely — this does NOT change app behavior. It exists so that a leaked
@@ -193,3 +250,7 @@ alter table gmail_tokens   enable row level security;
 alter table subscriptions  enable row level security;
 alter table subscription_items enable row level security;
 alter table service_grants     enable row level security;
+alter table seo_audits         enable row level security;
+alter table gsc_snapshots      enable row level security;
+alter table visibility_queries enable row level security;
+alter table visibility_runs    enable row level security;
