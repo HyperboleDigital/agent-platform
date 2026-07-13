@@ -1,21 +1,37 @@
 import { supabase } from './supabase'
+import { getSubscription, planForPriceId } from './billing'
 
 // DB-backed usage caps. These catch SUSTAINED abuse (a public clientId driving
 // paid LLM calls all day) and act as a hard cost backstop — the lesson from
 // the email-loop incident: nothing runs up unbounded spend without a ceiling.
 // Counts come from message_logs (one row per chat), which also makes these the
 // natural enforcement point for Stripe plan limits in Phase 2.
+//
+// Two separate caps, on purpose:
+// - Daily abuse ceiling (DAILY_CONVERSATION_CAP): a generic technical safety
+//   net independent of plan, high enough that no legitimate paying client
+//   should ever hit it in a single day.
+// - Monthly plan cap (plan.conversationCap): the actual business limit sold on
+//   the pricing page ("Up to 500 conversations/month") — checked against a
+//   calendar-month window, not a daily one.
 
-// Env-tunable; per-client caps become plan-based in Phase 2.
 export const CHAT_BURST_PER_MIN = Number(process.env.CHAT_BURST_PER_MIN ?? 20)
 export const CONTACT_PER_HOUR = Number(process.env.CONTACT_PER_HOUR ?? 15)
 export const DAILY_CONVERSATION_CAP = Number(process.env.DAILY_CONVERSATION_CAP ?? 1000)
 // Platform-wide hard ceiling across ALL clients — the circuit breaker.
 export const GLOBAL_DAILY_LLM_CAP = Number(process.env.GLOBAL_DAILY_LLM_CAP ?? 5000)
+// Fallback monthly cap when no Stripe plan is resolvable (billing not
+// configured on this deployment, or client isn't subscribed yet).
+const DEFAULT_MONTHLY_CAP = Number(process.env.DEFAULT_MONTHLY_CONVERSATION_CAP ?? 1000)
 
 function startOfUtcDay(): string {
   const d = new Date()
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString()
+}
+
+function startOfUtcMonth(): string {
+  const d = new Date()
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString()
 }
 
 async function countSince(sinceIso: string, clientId?: string): Promise<number> {
@@ -34,17 +50,38 @@ async function countSince(sinceIso: string, clientId?: string): Promise<number> 
 
 export interface CapStatus {
   allowed: boolean
-  reason?: 'client_daily_cap' | 'global_daily_cap'
+  reason?: 'client_daily_cap' | 'client_monthly_cap' | 'global_daily_cap'
 }
 
 // Checked at the START of a chat request, before any LLM call.
 export async function checkChatCaps(clientId: string): Promise<CapStatus> {
-  const since = startOfUtcDay()
-  const [globalToday, clientToday] = await Promise.all([
-    countSince(since),
-    countSince(since, clientId)
+  const [globalToday, clientToday, clientThisMonth, sub] = await Promise.all([
+    countSince(startOfUtcDay()),
+    countSince(startOfUtcDay(), clientId),
+    countSince(startOfUtcMonth(), clientId),
+    getSubscription(clientId)
   ])
+  const plan = sub ? planForPriceId(sub.stripePriceId) : null
+  const monthlyCap = plan?.conversationCap ?? DEFAULT_MONTHLY_CAP
+
   if (globalToday >= GLOBAL_DAILY_LLM_CAP) return { allowed: false, reason: 'global_daily_cap' }
   if (clientToday >= DAILY_CONVERSATION_CAP) return { allowed: false, reason: 'client_daily_cap' }
+  if (clientThisMonth >= monthlyCap) return { allowed: false, reason: 'client_monthly_cap' }
   return { allowed: true }
+}
+
+// For the dashboard's usage-vs-plan-cap indicator.
+export interface MonthlyUsage {
+  used: number
+  cap: number
+  planName: string | null
+}
+
+export async function getMonthlyUsage(clientId: string): Promise<MonthlyUsage> {
+  const [used, sub] = await Promise.all([
+    countSince(startOfUtcMonth(), clientId),
+    getSubscription(clientId)
+  ])
+  const plan = sub ? planForPriceId(sub.stripePriceId) : null
+  return { used, cap: plan?.conversationCap ?? DEFAULT_MONTHLY_CAP, planName: plan?.name ?? null }
 }

@@ -5,9 +5,10 @@ import { getAllClients, upsertClient, getClientById } from '../lib/clients'
 import { addDocument, listDocuments } from '../tools/knowledge-base'
 import { extractText, isSupportedFile, SUPPORTED_EXTENSIONS } from '../lib/file-extract'
 import { getLeads } from '../tools/crm'
-import { getStats } from '../lib/logs'
+import { getStats, getDailyMessageCounts } from '../lib/logs'
 import { getConnectorStatus } from '../lib/connectors'
 import { gmailConfigured, getAuthUrl } from '../lib/gmail'
+import { getMonthlyUsage } from '../lib/usage'
 import { getIdentity, canAccessClient } from '../lib/authz'
 import type { Identity } from '../lib/authz'
 
@@ -67,6 +68,13 @@ clientsRouter.get('/:id/stats', async (req, res) => {
   const identity = identityOf(req)
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
   res.json(await getStats(req.params.id))
+})
+
+// Conversations used this calendar month vs. the client's plan cap
+clientsRouter.get('/:id/stats/usage', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await getMonthlyUsage(req.params.id))
 })
 
 // Leads captured for a client

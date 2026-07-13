@@ -122,6 +122,28 @@ as $$
   limit match_count;
 $$;
 
+-- ── subscriptions ────────────────────────────────────────────────────────────
+-- One row per client. We store the Stripe price ID rather than a hardcoded
+-- "plan" enum — plan metadata (name, conversation cap) is resolved from a
+-- code-level config keyed by price ID (lib/billing.ts), so adding tiers,
+-- repricing, or adding a metered component to a plan later is a config
+-- change, not a schema migration. A subscription's `stripe_subscription_id`
+-- covers the whole Stripe subscription regardless of how many line items it
+-- has, so future hybrid (flat + metered) pricing needs no new columns here.
+create table if not exists subscriptions (
+  id                    uuid primary key default gen_random_uuid(),
+  client_id             uuid not null unique references clients(id) on delete cascade,
+  stripe_customer_id    text not null,
+  stripe_subscription_id text unique,
+  stripe_price_id       text,
+  status                text not null default 'incomplete', -- Stripe subscription status
+  current_period_end    timestamptz,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+create index if not exists subscriptions_customer_idx on subscriptions (stripe_customer_id);
+create index if not exists subscriptions_stripe_sub_idx on subscriptions (stripe_subscription_id);
+
 -- ── Row-level security (defense-in-depth) ────────────────────────────────────
 -- The API exclusively uses the Supabase service_role key, which bypasses RLS
 -- entirely — this does NOT change app behavior. It exists so that a leaked
@@ -135,3 +157,4 @@ alter table leads          enable row level security;
 alter table escalations    enable row level security;
 alter table message_logs   enable row level security;
 alter table gmail_tokens   enable row level security;
+alter table subscriptions  enable row level security;

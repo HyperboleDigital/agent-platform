@@ -10,6 +10,7 @@ import { contactRouter } from './routes/contact'
 import { authRouter } from './routes/auth'
 import { clientsRouter } from './routes/clients'
 import { webhookRouter } from './routes/webhooks'
+import { billingRouter, stripeWebhookHandler } from './routes/billing'
 import { getIdentity } from './lib/authz'
 
 const app = express()
@@ -25,6 +26,11 @@ if (!allowedOrigins?.length) {
   console.warn('[cors] ALLOWED_ORIGINS is not set — cross-origin requests will be rejected. Set it for the dashboard/widget origins that need access.')
 }
 app.use(cors({ origin: allowedOrigins ?? [] }))
+
+// Stripe webhook signature verification needs the exact raw bytes Stripe
+// signed — must be registered with express.raw() BEFORE the global
+// express.json() below, or the body would already be parsed/mutated.
+app.post('/billing/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler)
 
 app.use(express.json({ limit: '1mb' }))
 app.use(clerkMiddleware()) // attaches req.auth when a Clerk session is present; doesn't block anonymous requests
@@ -46,6 +52,7 @@ app.use('/contact', contactRouter)              // widget contact form → human
 app.use('/auth', authRouter)                    // Gmail OAuth callback only (public — Google redirects here)
 app.use('/clients', requireAuth, clientsRouter) // dashboard CRUD (auth + per-tenant authz)
 app.use('/webhooks', requireAuth, webhookRouter) // external triggers (auth)
+app.use('/billing', requireAuth, billingRouter) // Stripe checkout/portal/status (auth + per-tenant authz)
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }))
 

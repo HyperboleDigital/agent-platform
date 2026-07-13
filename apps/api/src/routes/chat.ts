@@ -4,6 +4,7 @@ import { runAgent } from '../lib/orchestrator'
 import { logMessage } from '../lib/logs'
 import { overLimit } from '../lib/rate-limit'
 import { checkChatCaps, CHAT_BURST_PER_MIN } from '../lib/usage'
+import { billingConfigured, getSubscription, isActive } from '../lib/billing'
 import type { IncomingMessage } from '@agent-platform/shared'
 
 export const chatRouter = Router()
@@ -28,7 +29,13 @@ chatRouter.post('/', async (req, res) => {
   if (overLimit(`chat:${message.clientId}`, CHAT_BURST_PER_MIN, 60_000)) {
     return res.status(429).json({ error: 'Too many messages — please slow down.' })
   }
-  // 2. Per-client daily cap + global circuit breaker (DB-backed).
+  // 2. Subscription must be active (paid, trialing, or superadmin-comped) —
+  // only enforced when this deployment has billing configured at all, so
+  // local/dev without Stripe keys isn't locked out.
+  if (billingConfigured() && !isActive(await getSubscription(message.clientId))) {
+    return res.status(402).json({ error: 'This assistant is currently unavailable.' })
+  }
+  // 3. Per-client daily cap + global circuit breaker (DB-backed).
   const caps = await checkChatCaps(message.clientId)
   if (!caps.allowed) {
     if (caps.reason === 'global_daily_cap') console.warn('[chat] GLOBAL daily LLM cap hit — circuit breaker open')
