@@ -137,6 +137,43 @@ existing rows with `pnpm --filter api backfill`.
 - **Knowledge base** — full: scraper + hybrid search.
 - **Calendly** — link-only (builds a prefilled scheduling URL; not the Calendly API).
 - **Webhooks** (`routes/webhooks.ts`) — stub: logs and acks. Add handlers per integration.
+- **Google Search Console** — code complete (`lib/gsc.ts`), gated behind
+  `GSC_SERVICE_ACCOUNT_JSON` — not yet configured in any environment. Needs a
+  Google Cloud service account added as a restricted user on each client's
+  GSC property. See `TODO.md`.
+- **PageSpeed Insights** — full, `PAGESPEED_API_KEY` set and live-verified.
+- **AI-search visibility** (ChatGPT/Claude) — full for OpenAI; Anthropic leg
+  degrades gracefully due to account credit balance (see `TODO.md`).
+- **Framer publishing** — full, official `framer-api` Server API,
+  live-verified end-to-end. Each client needs their own connection configured
+  (project URL, API key, collection ID, field mapping) before their Content
+  service can publish.
+- **Stripe billing** — full: base plans (Starter/Pro) + add-on services
+  (SEO, Content) via `subscriptionItems`, webhook-synced.
+
+## Client portal services (Phase 4)
+
+On top of the chatbot, the dashboard is a modular add-on marketplace — see
+`apps/api/src/lib/services.ts` for the catalog. A client's base plan grants
+the chatbot; add-on services unlock further dashboard sections (shown locked
+with an upgrade CTA until purchased or comped):
+
+- **SEO** (`seo`) — PageSpeed audits + AI-visibility tracking +
+  (once configured) Google Search Console rankings.
+- **Content** (`content`) — AI-drafted, keyword-targeted blog posts with a
+  review lifecycle (draft → in_review → approved → published), publishing to
+  the client's Framer CMS.
+- **Change requests** — free with any active base plan (not gated). Clients
+  submit; a superadmin triages via status transitions, notified over
+  Slack/email.
+- **Reports** — performance snapshots aggregating the above, with a
+  superadmin-triggered guarded email send (see the email guardrail note in
+  `HANDOFF.md` if you're touching anything email-related).
+- **Superadmin Overview** (`/overview`) — platform-wide MRR/usage rollups and
+  a cross-client change-request queue.
+
+Not yet built: a scheduler for automated (vs. on-demand) audits/checks, and
+paid SERP-based rank tracking. See `TODO.md`.
 
 ## Deploying
 
