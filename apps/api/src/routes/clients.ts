@@ -19,6 +19,7 @@ import { listPosts, getPost, draftPost, updatePost, transitionPost, setFramerIte
 import {
   getFramerConnection, saveFramerConnection, deleteFramerConnection, listCollectionFields, publishToFramer
 } from '../lib/framer'
+import { listReports, getReport, buildReport, sendReport } from '../lib/reports'
 import { getIdentity, canAccessClient } from '../lib/authz'
 import type { Identity } from '../lib/authz'
 
@@ -480,5 +481,52 @@ clientsRouter.get('/:id/framer-connection/fields', async (req, res) => {
     res.json(await listCollectionFields(id))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to load Framer collection fields' })
+  }
+})
+
+// ── Client reports ───────────────────────────────────────────────────────────
+// Reports are available to any client with dashboard access (not gated behind
+// an add-on). Generation and viewing are open to the client; SENDING email is
+// superadmin-only in v1 (deliberate, guardrailed — see lib/reports.ts).
+
+clientsRouter.get('/:id/reports', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await listReports(req.params.id))
+})
+
+clientsRouter.post('/:id/reports/generate', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const { periodStart, periodEnd } = req.body ?? {}
+  try {
+    res.json(await buildReport(
+      req.params.id,
+      typeof periodStart === 'string' ? periodStart : undefined,
+      typeof periodEnd === 'string' ? periodEnd : undefined
+    ))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate report' })
+  }
+})
+
+clientsRouter.get('/:id/reports/:reportId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const report = await getReport(req.params.id, req.params.reportId)
+  if (!report) return res.status(404).json({ error: 'Not found' })
+  res.json(report)
+})
+
+// Manual email send — superadmin only, recipient explicit in the body.
+clientsRouter.post('/:id/reports/:reportId/send', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const to = typeof req.body?.to === 'string' ? req.body.to : ''
+  if (!to.trim()) return res.status(400).json({ error: 'A recipient (to) is required' })
+  try {
+    res.json(await sendReport(req.params.id, req.params.reportId, to))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to send report' })
   }
 })

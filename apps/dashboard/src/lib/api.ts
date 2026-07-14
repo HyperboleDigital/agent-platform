@@ -300,6 +300,39 @@ export interface FramerCollectionField {
   type: string
 }
 
+export interface ReportData {
+  clientName: string
+  seo: { firstScore: number; lastScore: number; delta: number; auditsInPeriod: number } | null
+  visibility: { mentionRate: number; totalChecks: number } | null
+  chat: {
+    conversationsThisMonth: number
+    monthlyCap: number
+    resolvedRate: number
+    estimatedHoursSaved: number
+    questionsAnswered: number
+    totalLeadsCaptured: number
+  }
+  requestsClosed: number
+}
+
+export interface Report {
+  id: string
+  clientId: string
+  periodStart: string
+  periodEnd: string
+  data: ReportData
+  createdAt: string
+  sentAt: string | null
+  sentTo: string | null
+}
+
+export interface SendReportResult {
+  sent: boolean
+  recipient: string | null
+  testMode: boolean
+  reason?: 'no_sender_configured' | 'sender_not_connected' | 'daily_cap_reached'
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   clients: {
@@ -363,6 +396,10 @@ export const api = {
       }),
     deleteFramerConnection: (id: string) => request<{ ok: boolean }>(`/clients/${id}/framer-connection`, { method: 'DELETE' }),
     framerFields: (id: string) => request<FramerCollectionField[]>(`/clients/${id}/framer-connection/fields`),
+    reports: (id: string) => request<Report[]>(`/clients/${id}/reports`),
+    generateReport: (id: string) => request<Report>(`/clients/${id}/reports/generate`, { method: 'POST', body: JSON.stringify({}) }),
+    sendReport: (id: string, reportId: string, to: string) =>
+      request<SendReportResult>(`/clients/${id}/reports/${reportId}/send`, { method: 'POST', body: JSON.stringify({ to }) }),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
     knowledge: (id: string) => request<KnowledgeDoc[]>(`/clients/${id}/knowledge`),
     addKnowledge: (id: string, title: string, content: string) =>

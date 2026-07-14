@@ -10,9 +10,21 @@ import { encryptSecret, decryptSecret } from './crypto'
 // framer-api ships ESM with top-level await, which tsx's CJS transform
 // pipeline can't statically import in this CommonJS project — loaded via
 // dynamic import() instead, which goes through Node's native ESM loader.
+//
+// It also opens its session over a hard-coded `new WebSocket(...)` with no
+// injectable transport (unlike @supabase/supabase-js's `realtime.transport`
+// option in lib/supabase.ts) — it requires a global WebSocket constructor,
+// which this Node version doesn't provide by default. Polyfilled here, and
+// only here, so the rest of the app is unaffected.
 let connectFn: typeof ConnectFn | null = null
 async function getConnect(): Promise<typeof ConnectFn> {
-  if (!connectFn) connectFn = (await import('framer-api')).connect
+  if (!connectFn) {
+    if (typeof globalThis.WebSocket === 'undefined') {
+      const { WebSocket } = await import('ws')
+      ;(globalThis as { WebSocket?: unknown }).WebSocket = WebSocket
+    }
+    connectFn = (await import('framer-api')).connect
+  }
   return connectFn
 }
 
@@ -42,15 +54,26 @@ function fromRow(r: ConnectionRow): FramerConnection {
   return { clientId: r.client_id, projectUrl: r.project_url, collectionId: r.collection_id, fieldMapping: r.field_mapping ?? {} }
 }
 
+async function getRawConnection(clientId: string): Promise<ConnectionRow | null> {
+  const { data } = await supabase.from('framer_connections').select('*').eq('client_id', clientId).maybeSingle()
+  return data as ConnectionRow | null
+}
+
 // Public info only — never returns the decrypted API key to a caller outside
 // this module.
 export async function getFramerConnection(clientId: string): Promise<FramerConnection | null> {
-  const { data } = await supabase.from('framer_connections').select('*').eq('client_id', clientId).maybeSingle()
-  return data ? fromRow(data as ConnectionRow) : null
+  const row = await getRawConnection(clientId)
+  return row ? fromRow(row) : null
 }
 
 // apiKey is optional on update — omit it (or pass empty string) to keep the
 // currently stored key unchanged. Required when there's no existing row.
+//
+// api_key_enc is NOT NULL with no default, and Postgres validates the INSERT
+// branch of an upsert's VALUES row before the ON CONFLICT check even applies
+// — so simply omitting the column (relying on "upsert only touches columns
+// you pass") fails with a not-null violation even when updating an existing
+// row. The existing encrypted value must be re-supplied explicitly.
 export async function saveFramerConnection(
   clientId: string,
   projectUrl: string,
@@ -58,9 +81,13 @@ export async function saveFramerConnection(
   collectionId: string,
   fieldMapping: FramerFieldMapping
 ): Promise<FramerConnection> {
-  if (!apiKey) {
-    const existing = await getFramerConnection(clientId)
+  let apiKeyEnc: string
+  if (apiKey) {
+    apiKeyEnc = encryptSecret(apiKey)
+  } else {
+    const existing = await getRawConnection(clientId)
     if (!existing) throw new Error('An API key is required for a new Framer connection')
+    apiKeyEnc = existing.api_key_enc
   }
 
   const { data, error } = await supabase
@@ -68,7 +95,7 @@ export async function saveFramerConnection(
     .upsert({
       client_id: clientId,
       project_url: projectUrl,
-      ...(apiKey ? { api_key_enc: encryptSecret(apiKey) } : {}),
+      api_key_enc: apiKeyEnc,
       collection_id: collectionId,
       field_mapping: fieldMapping,
       updated_at: new Date().toISOString()
@@ -88,9 +115,8 @@ export async function deleteFramerConnection(clientId: string): Promise<void> {
 // session is per-call rather than pooled — publishes are infrequent (human
 // review gates every one), so connection reuse isn't worth the complexity.
 async function withFramer<T>(clientId: string, fn: (framer: Awaited<ReturnType<typeof ConnectFn>>) => Promise<T>): Promise<T> {
-  const { data } = await supabase.from('framer_connections').select('*').eq('client_id', clientId).maybeSingle()
-  if (!data) throw new Error('No Framer connection configured for this client')
-  const row = data as ConnectionRow
+  const row = await getRawConnection(clientId)
+  if (!row) throw new Error('No Framer connection configured for this client')
   const apiKey = decryptSecret(row.api_key_enc)
 
   const connect = await getConnect()

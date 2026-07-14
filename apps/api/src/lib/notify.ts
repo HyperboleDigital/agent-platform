@@ -88,29 +88,50 @@ async function emailsSentToday(): Promise<number> {
   return count ?? 0
 }
 
-async function logSend(clientId: string | null, event: NotifyEvent, channel: 'email' | 'slack', recipient: string | null): Promise<void> {
+async function logSend(clientId: string | null, event: string, channel: 'email' | 'slack', recipient: string | null): Promise<void> {
   const { error } = await supabase.from('notification_log').insert({ client_id: clientId, event, channel, recipient })
   if (error) console.error('[notify] failed to log send', error.message)
 }
 
-// Sends one email through the guardrail: test-mode redirect + daily cap.
-// PLATFORM_SENDER_CLIENT_ID must point at a client with Gmail connected —
-// notifications are sent from the platform's own inbox, not a client's.
-async function sendPlatformEmail(clientId: string | null, event: NotifyEvent, to: string, subject: string, body: string): Promise<void> {
+export interface GuardedEmailResult {
+  sent: boolean
+  recipient: string | null // the address actually sent to (test-mode may redirect it)
+  testMode: boolean
+  reason?: 'no_sender_configured' | 'sender_not_connected' | 'daily_cap_reached'
+}
+
+// The single guardrailed email path for the whole platform. Every
+// platform-sent email — change-request notifications AND reports — goes
+// through here so the guardrails can't be bypassed:
+//   - sends from PLATFORM_SENDER_CLIENT_ID's Gmail, never a client's own
+//   - REPORT_EMAIL_TEST_MODE (default on) redirects to REPORT_TEST_INBOX
+//   - a persisted daily cap across ALL platform email (notification_log)
+//   - never called from any scheduler (see module header)
+// Returns a result so a caller triggering a deliberate send (report send)
+// can surface exactly what happened; notify() ignores it (best-effort).
+export async function sendGuardedEmail(opts: {
+  clientId: string | null
+  event: string
+  to: string
+  subject: string
+  body: string
+}): Promise<GuardedEmailResult> {
+  const testMode = EMAIL_TEST_MODE
   const senderClientId = process.env.PLATFORM_SENDER_CLIENT_ID
-  if (!senderClientId) { console.warn('[notify] PLATFORM_SENDER_CLIENT_ID not set — email skipped'); return }
-  if (!(await gmailConnected(senderClientId))) { console.warn('[notify] platform sender Gmail not connected — email skipped'); return }
+  if (!senderClientId) { console.warn('[notify] PLATFORM_SENDER_CLIENT_ID not set — email skipped'); return { sent: false, recipient: null, testMode, reason: 'no_sender_configured' } }
+  if (!(await gmailConnected(senderClientId))) { console.warn('[notify] platform sender Gmail not connected — email skipped'); return { sent: false, recipient: null, testMode, reason: 'sender_not_connected' } }
 
   if ((await emailsSentToday()) >= NOTIFY_EMAIL_DAILY_CAP) {
     console.warn(`[notify] daily email cap (${NOTIFY_EMAIL_DAILY_CAP}) reached — skipping`)
-    return
+    return { sent: false, recipient: null, testMode, reason: 'daily_cap_reached' }
   }
 
-  const recipient = EMAIL_TEST_MODE ? (TEST_INBOX ?? to) : to
-  if (EMAIL_TEST_MODE && !TEST_INBOX) console.warn('[notify] REPORT_EMAIL_TEST_MODE is on but REPORT_TEST_INBOX is unset — sending to the real recipient anyway')
+  const recipient = testMode ? (TEST_INBOX ?? opts.to) : opts.to
+  if (testMode && !TEST_INBOX) console.warn('[notify] REPORT_EMAIL_TEST_MODE is on but REPORT_TEST_INBOX is unset — sending to the real recipient anyway')
 
-  await sendPlainEmail(senderClientId, recipient, subject, body)
-  await logSend(clientId, event, 'email', recipient)
+  await sendPlainEmail(senderClientId, recipient, opts.subject, opts.body)
+  await logSend(opts.clientId, opts.event, 'email', recipient)
+  return { sent: true, recipient, testMode }
 }
 
 // Fans an event out to a client's configured channels and the superadmin's
@@ -131,7 +152,7 @@ export async function notify(clientId: string, event: NotifyEvent, payload: Noti
 
   if (settings?.email_enabled && settings.email_to && eventEnabled) {
     try {
-      await sendPlatformEmail(clientId, event, settings.email_to, payload.title, payload.body)
+      await sendGuardedEmail({ clientId, event, to: settings.email_to, subject: payload.title, body: payload.body })
     } catch (err) {
       console.error('[notify] client email failed', err)
     }
@@ -150,7 +171,7 @@ export async function notify(clientId: string, event: NotifyEvent, payload: Noti
   const superadminEmail = process.env.SUPERADMIN_NOTIFY_EMAIL
   if (superadminEmail) {
     try {
-      await sendPlatformEmail(null, event, superadminEmail, payload.title, payload.body)
+      await sendGuardedEmail({ clientId: null, event, to: superadminEmail, subject: payload.title, body: payload.body })
     } catch (err) {
       console.error('[notify] superadmin email failed', err)
     }

@@ -296,6 +296,22 @@ create table if not exists framer_connections (
   updated_at    timestamptz not null default now()
 );
 
+-- ── reports ──────────────────────────────────────────────────────────────────
+-- A persisted metrics SNAPSHOT (data jsonb) so historical reports don't drift.
+-- sent_at/sent_to record the one manual send (email is never auto/scheduled —
+-- see lib/reports.ts + lib/notify.ts guardrails).
+create table if not exists reports (
+  id            uuid primary key default gen_random_uuid(),
+  client_id     uuid not null references clients(id) on delete cascade,
+  period_start  date not null,
+  period_end    date not null,
+  data          jsonb not null,
+  created_at    timestamptz not null default now(),
+  sent_at       timestamptz,
+  sent_to       text
+);
+create index if not exists reports_client_idx on reports (client_id, created_at desc);
+
 -- ── notification_log ─────────────────────────────────────────────────────────
 -- Audit trail + daily-cap enforcement for platform-sent emails (lib/notify.ts).
 -- Persisted rather than an in-memory counter — a process restart must not
@@ -335,3 +351,4 @@ alter table notification_settings enable row level security;
 alter table notification_log   enable row level security;
 alter table blog_posts         enable row level security;
 alter table framer_connections enable row level security;
+alter table reports            enable row level security;

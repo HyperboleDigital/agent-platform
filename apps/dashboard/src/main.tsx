@@ -10,11 +10,12 @@ import ClientLayout from './pages/client/ClientLayout'
 import {
   ClientHome, KnowledgeSection, LeadsSection, ConnectorsSection, BillingSection, ConfigSection
 } from './pages/ClientDetail'
-import { Gate, ReportsSection } from './pages/client/gated-sections'
+import { Gate } from './components/gate'
 import Seo from './pages/client/Seo'
 import Visibility from './pages/client/Visibility'
 import Content from './pages/client/Content'
 import Requests from './pages/client/Requests'
+import Reports from './pages/client/Reports'
 import SignInPage from './pages/SignInPage'
 import { ProtectedLayout } from './ProtectedLayout'
 import { AuthBridge } from './AuthBridge'
@@ -50,7 +51,7 @@ const router = createBrowserRouter([
               { path: 'visibility', element: <Gate service="seo"><Visibility /></Gate> },
               { path: 'content', element: <Gate service="content"><Content /></Gate> },
               { path: 'requests', element: <Requests /> },
-              { path: 'reports', element: <ReportsSection /> },
+              { path: 'reports', element: <Reports /> },
               { path: 'billing', element: <BillingSection /> },
               { path: 'config', element: <ConfigSection /> }
             ]
