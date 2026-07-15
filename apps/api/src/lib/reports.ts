@@ -3,6 +3,7 @@ import { getClientById } from './clients'
 import { getStats } from './logs'
 import { getMonthlyUsage } from './usage'
 import { getAuditHistory } from './seo'
+import { getLatestCrawl } from './dataforseo'
 import { getRuns } from './visibility'
 import { sendGuardedEmail, type GuardedEmailResult } from './notify'
 
@@ -25,6 +26,10 @@ export interface ReportData {
   visibility: {
     mentionRate: number // 0..1
     totalChecks: number
+  } | null
+  siteHealth: {
+    score: number // 0..100 DataForSEO onpage_score
+    topIssues: { title: string; severity: string; count: number }[]
   } | null
   chat: {
     conversationsThisMonth: number
@@ -86,11 +91,12 @@ export async function buildReport(clientId: string, periodStart?: string, period
   const start = periodStart ?? isoDate(new Date(now.getFullYear(), now.getMonth(), 1))
   const end = periodEnd ?? isoDate(now)
 
-  const [stats, usage, audits, visRuns, closedRes] = await Promise.all([
+  const [stats, usage, audits, visRuns, latestCrawl, closedRes] = await Promise.all([
     getStats(clientId),
     getMonthlyUsage(clientId),
     getAuditHistory(clientId, 400),
     getRuns(clientId, 400),
+    getLatestCrawl(clientId),
     supabase
       .from('change_requests')
       .select('id', { count: 'exact', head: true })
@@ -118,10 +124,20 @@ export async function buildReport(clientId: string, periodStart?: string, period
     ? { mentionRate: periodRuns.filter(r => r.mentioned).length / periodRuns.length, totalChecks: periodRuns.length }
     : null
 
+  // Site health: current crawl-based health score + top issues (point-in-time,
+  // from the latest finished crawl — not period-bounded).
+  const siteHealth = latestCrawl && latestCrawl.status === 'finished' && latestCrawl.onpageScore != null
+    ? {
+        score: Math.round(latestCrawl.onpageScore),
+        topIssues: (latestCrawl.issues ?? []).slice(0, 3).map(i => ({ title: i.title, severity: i.severity, count: i.count }))
+      }
+    : null
+
   const data: ReportData = {
     clientName: client.name,
     seo,
     visibility,
+    siteHealth,
     chat: {
       conversationsThisMonth: usage.used,
       monthlyCap: usage.cap,
@@ -180,6 +196,11 @@ export function renderReportEmail(report: Report): { subject: string; body: stri
       `  Site SEO score: ${d.seo.lastScore}/100 (${d.seo.delta >= 0 ? '+' : ''}${d.seo.delta} over the period)`,
       ``
     )
+  }
+  if (d.siteHealth) {
+    lines.push(`SITE HEALTH`, `  Overall health score: ${d.siteHealth.score}/100`)
+    for (const iss of d.siteHealth.topIssues) lines.push(`  • [${iss.severity}] ${iss.title}`)
+    lines.push(``)
   }
   if (d.visibility) {
     lines.push(

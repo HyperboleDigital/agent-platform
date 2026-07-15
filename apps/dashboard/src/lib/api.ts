@@ -377,6 +377,7 @@ export interface ReportData {
   clientName: string
   seo: { firstScore: number; lastScore: number; delta: number; auditsInPeriod: number } | null
   visibility: { mentionRate: number; totalChecks: number } | null
+  siteHealth: { score: number; topIssues: { title: string; severity: string; count: number }[] } | null
   chat: {
     conversationsThisMonth: number
     monthlyCap: number

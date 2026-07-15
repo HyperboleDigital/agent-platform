@@ -202,6 +202,15 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Reports integration — VERIFIED)** — Client monthly Reports now
+  include a **Site Health** section (crawl `onpage_score` + top 3 issues by
+  severity), sourced from the client's latest finished crawl via `getLatestCrawl`
+  in `buildReport`. Added to `ReportData`, the report email body, and the Reports
+  page UI. Verified cost-free by injecting a fake finished crawl → the section
+  populated in both the data and rendered email, then cleaned up. Manual
+  (superadmin builds/sends reports) — no automation. Note: report now shows both
+  a PageSpeed "SEO score" and the crawl "Site Health score" — different metrics,
+  minor future cleanup candidate.
 - **2026-07-15 (Admin Audit Tool — LIVE-VERIFIED)** — Migration applied.
   Verified the client-less path end-to-end on example.com (score 95.24, issues
   synthesized w/ severity + affected URL, listAdhocCrawls returned it, test row
