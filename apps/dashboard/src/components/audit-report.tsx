@@ -8,18 +8,28 @@ import { Badge, StatusDot } from '@/components/ui/badge'
 // affected URLs). Separate from the simpler client-facing CrawlResults card.
 
 const CATEGORY_BY_KEY: Record<string, string> = {
+  // Titles & meta
   no_title: 'Titles & meta', duplicate_title_tag: 'Titles & meta', title_too_long: 'Titles & meta',
   title_too_short: 'Titles & meta', irrelevant_title: 'Titles & meta', no_description: 'Titles & meta',
-  duplicate_description: 'Titles & meta', irrelevant_description: 'Titles & meta',
-  low_content_rate: 'Content', duplicate_content: 'Content', low_readability_rate: 'Content', lorem_ipsum: 'Content',
+  duplicate_meta_tags: 'Titles & meta', irrelevant_description: 'Titles & meta', irrelevant_meta_keywords: 'Titles & meta',
+  // Content
+  low_content_rate: 'Content', low_character_count: 'Content', low_readability_rate: 'Content', lorem_ipsum: 'Content',
+  // Images
   no_image_alt: 'Images', no_image_title: 'Images',
+  // Security
   is_http: 'Security', https_to_http_links: 'Security',
-  broken_links: 'Links', broken_resources: 'Links', is_4xx_code: 'Links', is_5xx_code: 'Links',
-  is_broken: 'Links', canonical_to_broken: 'Links', redirect_loop: 'Links',
-  large_page_size: 'Performance', high_loading_time: 'Performance', high_waiting_time: 'Performance',
-  has_render_blocking_resources: 'Performance', no_content_encoding: 'Performance',
-  no_h1_tag: 'Structure', duplicate_h1_tag: 'Structure', no_doctype: 'Structure',
-  deprecated_html_tags: 'Structure', no_favicon: 'Structure', seo_friendly_url_characters_check: 'Structure',
+  // Links & crawl
+  is_4xx_code: 'Links', is_5xx_code: 'Links', is_broken: 'Links', is_orphan_page: 'Links', has_links_to_redirects: 'Links',
+  // Canonicals & redirects
+  canonical_to_broken: 'Canonicals & redirects', canonical_to_redirect: 'Canonicals & redirects',
+  canonical_chain: 'Canonicals & redirects', recursive_canonical: 'Canonicals & redirects',
+  redirect_chain: 'Canonicals & redirects', has_meta_refresh_redirect: 'Canonicals & redirects',
+  // Performance
+  large_page_size: 'Performance', size_greater_than_3mb: 'Performance', high_loading_time: 'Performance',
+  high_waiting_time: 'Performance', has_render_blocking_resources: 'Performance', no_content_encoding: 'Performance',
+  // Structure & markup
+  no_h1_tag: 'Structure', no_doctype: 'Structure', no_encoding_meta_tag: 'Structure',
+  deprecated_html_tags: 'Structure', flash: 'Structure', no_favicon: 'Structure',
 }
 
 type Severity = 'high' | 'medium' | 'low'
@@ -42,13 +52,24 @@ function scoreColor(score: number): string {
   if (score >= 50) return 'text-warning'
   return 'text-destructive'
 }
+function barColor(score: number): string {
+  if (score >= 90) return 'bg-success'
+  if (score >= 50) return 'bg-warning'
+  return 'bg-destructive'
+}
 
 function ScoreCard({ label, score }: { label: string; score: number }) {
+  const s = Math.round(score)
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card px-6 py-4">
-      <span className={`text-4xl font-semibold ${scoreColor(score)}`}>{Math.round(score)}</span>
-      <span className="text-xs text-muted-foreground">/ 100</span>
-      <span className="mt-1 text-sm font-medium">{label}</span>
+    <div className="min-w-[190px] rounded-lg border border-border bg-card px-5 py-4">
+      <div className="text-sm font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 flex items-baseline gap-1">
+        <span className={`text-4xl font-semibold leading-none ${scoreColor(score)}`}>{s}</span>
+        <span className="text-sm text-muted-foreground">/100</span>
+      </div>
+      <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div className={`h-full rounded-full ${barColor(score)}`} style={{ width: `${s}%` }} />
+      </div>
     </div>
   )
 }

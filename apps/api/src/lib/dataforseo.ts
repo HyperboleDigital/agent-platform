@@ -46,41 +46,59 @@ function toTarget(input: string): string {
 // TRUE, and "true" can mean good OR bad depending on the check. We only surface
 // the ones where true = a problem, with a plain-English label. This is what
 // keeps us from reporting "10 pages have a canonical tag" as an issue.
+// Only checks where `true` = a real problem (DataForSEO also returns many
+// positive/neutral checks like seo_friendly_url, is_https, canonical — those are
+// NOT problems and must be excluded). Keys verified against DataForSEO's actual
+// On-Page vocabulary (57 checks). Grouped for readability.
 const PROBLEM_CHECKS: Record<string, string> = {
-  no_h1_tag: 'Pages missing an H1 heading',
-  duplicate_h1_tag: 'Pages with duplicate or multiple H1 tags',
+  // Titles & meta
   no_title: 'Pages missing a title tag',
   duplicate_title_tag: 'Pages with duplicate title tags',
   title_too_long: 'Title tags that are too long',
   title_too_short: 'Title tags that are too short',
-  no_description: 'Pages missing a meta description',
-  duplicate_description: 'Pages with duplicate meta descriptions',
-  irrelevant_description: 'Meta descriptions that don’t match the page content',
   irrelevant_title: 'Title tags that don’t match the page content',
+  no_description: 'Pages missing a meta description',
+  duplicate_meta_tags: 'Pages with duplicate meta descriptions',
+  irrelevant_description: 'Meta descriptions that don’t match the page content',
+  irrelevant_meta_keywords: 'Irrelevant meta keywords',
+  // Structure & markup
+  no_h1_tag: 'Pages missing an H1 heading',
+  no_doctype: 'Pages missing an HTML doctype',
+  no_encoding_meta_tag: 'Pages missing a charset meta tag',
+  deprecated_html_tags: 'Deprecated HTML tags in use',
+  flash: 'Obsolete Flash content',
+  no_favicon: 'Missing favicon',
+  // Content
+  low_content_rate: 'Pages with very little text content',
+  low_character_count: 'Pages with a very low word count',
+  low_readability_rate: 'Content that’s hard to read',
+  lorem_ipsum: 'Placeholder “Lorem Ipsum” text left on the page',
+  // Images
   no_image_alt: 'Images missing alt text',
   no_image_title: 'Images missing a title attribute',
+  // Security
+  is_http: 'Pages served over insecure HTTP',
   https_to_http_links: 'Secure pages linking to insecure HTTP URLs',
-  is_http: 'Pages still served over insecure HTTP',
-  broken_links: 'Broken links',
-  broken_resources: 'Broken resources (images, scripts, or CSS)',
-  duplicate_content: 'Pages with duplicate content',
-  low_content_rate: 'Pages with very little text content',
-  large_page_size: 'Pages with a heavy HTML size (slow to load)',
-  high_loading_time: 'Pages with slow load times',
-  high_waiting_time: 'Pages slow to respond (time to first byte)',
+  // Links & crawlability
   is_4xx_code: 'Pages returning “not found” (4xx) errors',
   is_5xx_code: 'Pages returning server (5xx) errors',
   is_broken: 'Broken pages',
+  is_orphan_page: 'Orphan pages (no internal links point to them)',
+  has_links_to_redirects: 'Internal links that point to redirects',
+  // Canonicals & redirects
   canonical_to_broken: 'Canonical tags pointing to broken pages',
-  redirect_loop: 'Redirect loops',
-  no_favicon: 'Missing favicon',
-  no_doctype: 'Pages missing an HTML doctype',
-  deprecated_html_tags: 'Deprecated HTML tags in use',
-  low_readability_rate: 'Content that’s hard to read',
-  lorem_ipsum: 'Placeholder “Lorem Ipsum” text left on the page',
+  canonical_to_redirect: 'Canonical tags pointing to redirects',
+  canonical_chain: 'Canonical chains',
+  recursive_canonical: 'Recursive (looping) canonical tags',
+  redirect_chain: 'Redirect chains',
+  has_meta_refresh_redirect: 'Pages using a meta-refresh redirect',
+  // Performance
+  large_page_size: 'Pages with a heavy HTML size',
+  size_greater_than_3mb: 'Pages larger than 3MB',
+  high_loading_time: 'Pages with slow load times',
+  high_waiting_time: 'Pages slow to respond (time to first byte)',
   has_render_blocking_resources: 'Render-blocking scripts or styles',
   no_content_encoding: 'Pages served without compression',
-  seo_friendly_url_characters_check: 'URLs with unfriendly characters',
 }
 
 export interface CrawlIssue {

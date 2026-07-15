@@ -202,6 +202,23 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Check-list overhaul + score-card redesign)** — Dumped DataForSEO's
+  full On-Page vocabulary (57 checks) and rebuilt `PROBLEM_CHECKS` (~40 real
+  problem checks). Fixed two real bugs the audit surfaced: (1) a FALSE POSITIVE —
+  we flagged `seo_friendly_url_characters_check` as "unfriendly URLs" but that key
+  is `true` when the URL PASSES, so we were reporting good URLs as broken;
+  (2) several MADE-UP keys that never fired — `duplicate_description` (real key is
+  `duplicate_meta_tags` — this is why we missed the duplicate-meta-descriptions
+  SEMrush caught), `duplicate_h1_tag`, `broken_links`, `broken_resources`,
+  `duplicate_content`, `redirect_loop`. Added ~15 real checks (duplicate_meta_tags,
+  canonical_chain/to_redirect/recursive, redirect_chain, has_meta_refresh_redirect,
+  is_orphan_page, low_character_count, no_encoding_meta_tag, size_greater_than_3mb,
+  flash, etc.). Updated TITLE_DESC_KEYS (both files) to duplicate_meta_tags. Score
+  cards redesigned (label on top, `NN /100` inline, progress bar — the stacked
+  "/100 under the number" looked odd). **Known gaps DataForSEO On-Page can't cover
+  (SEMrush does):** hreflang/international SEO, SSL cert details, sitemap.xml
+  validation, mobile viewport. Some (viewport, sitemap presence) are cheap to add
+  ourselves later — see next.
 - **2026-07-15 (Audit Tool UI — SEMrush-style redesign, draft)** — New
   `components/audit-report.tsx` used by the Audit Tool: score gauges (Site Health
   + AI Search Health, color-coded), a category-breakdown chip row (Titles & meta,

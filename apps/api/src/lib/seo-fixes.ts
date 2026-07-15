@@ -15,7 +15,7 @@ import { createRequest, type ChangeRequest } from './change-requests'
 // Problem keys whose fix is a rewritten title and/or meta description.
 const TITLE_DESC_KEYS = [
   'no_title', 'title_too_short', 'title_too_long', 'irrelevant_title',
-  'no_description', 'duplicate_description', 'irrelevant_description',
+  'no_description', 'duplicate_meta_tags', 'irrelevant_description',
 ]
 const MAX_FIX_PAGES = 8
 

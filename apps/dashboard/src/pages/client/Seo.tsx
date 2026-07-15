@@ -222,7 +222,7 @@ function RankingsCard({ clientId }: { clientId: string }) {
 // Superadmin-only beta: full-site crawl audit via DataForSEO (costs real money
 // per run), producing the SEMrush-style score + a prioritized issue tracker.
 // Phase 0 of the SEO-automation plan — see docs/plans/seo-automation.md.
-const TITLE_DESC_KEYS = ['no_title', 'title_too_short', 'title_too_long', 'irrelevant_title', 'no_description', 'duplicate_description', 'irrelevant_description']
+const TITLE_DESC_KEYS = ['no_title', 'title_too_short', 'title_too_long', 'irrelevant_title', 'no_description', 'duplicate_meta_tags', 'irrelevant_description']
 
 function CrawlCard({ clientId }: { clientId: string }) {
   const { data: me } = useSWR('me', api.me)
