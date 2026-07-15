@@ -202,6 +202,11 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (AI Search Health — LIVE-VERIFIED end-to-end)** — Migration
+  applied. Full ad-hoc crawl of hyperboledigital.com returned site health 92.72
+  AND ai_search {score 90, blockedBots [], hasLlmsTxt false} in the finalized
+  row. GEO check is DONE. Natural follow-on: an llms.txt generator fix type
+  (we now detect it's missing).
 - **2026-07-15 (AI Search Health / GEO check — BUILT, verified standalone)** —
   Compared our audit to a real SEMrush Site Audit of hyperboledigital.com: health
   89% (SEMrush) vs 92.7 (ours) = validated. SEMrush's paid "AI Search Health"
