@@ -32,13 +32,20 @@ function AffectedUrls({ urls }: { urls: string[] }) {
 // fallback). Shared by the client Site Health card and the superadmin Audit Tool.
 export function CrawlResults({ crawl }: { crawl: SeoCrawl }) {
   const issues = crawl.issues ?? null
+  const ai = crawl.aiSearch
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-4">
+      <div className="flex flex-wrap items-center gap-6">
         {crawl.onpageScore != null && (
           <div className="flex items-baseline gap-1.5">
             <span className="text-3xl font-semibold">{Math.round(crawl.onpageScore)}</span>
-            <span className="text-sm text-muted-foreground">/ 100 health score</span>
+            <span className="text-sm text-muted-foreground">/ 100 site health</span>
+          </div>
+        )}
+        {ai && (
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-3xl font-semibold">{ai.score}</span>
+            <span className="text-sm text-muted-foreground">/ 100 AI search health</span>
           </div>
         )}
         <div className="text-xs text-muted-foreground">
@@ -46,6 +53,23 @@ export function CrawlResults({ crawl }: { crawl: SeoCrawl }) {
           {crawl.cost != null && <> · ${crawl.cost.toFixed(3)} crawl cost</>}
         </div>
       </div>
+
+      {ai && ai.issues.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">AI Search / GEO</div>
+          {ai.issues.map((iss, i) => (
+            <div key={i} className="flex items-start gap-3">
+              <Badge variant={severityVariant(iss.severity)}>
+                <StatusDot variant={severityVariant(iss.severity)} />{iss.severity}
+              </Badge>
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{iss.title}</div>
+                <div className="text-xs text-muted-foreground">{iss.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {issues && issues.length > 0 ? (
         <div className="flex flex-col gap-2">

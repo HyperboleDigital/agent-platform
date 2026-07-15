@@ -97,7 +97,7 @@ function Sidebar() {
         <span className="text-sm font-semibold">Agent Platform</span>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-1 p-3">
+      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
         {clientId ? (
           <>
             {/* Superadmins keep a way back to the platform-level views. */}
@@ -193,7 +193,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />

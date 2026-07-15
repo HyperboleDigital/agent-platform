@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { getClientById } from './clients'
 import { complete } from './llm/complete'
+import { checkAiSearch, type AiSearchResult } from './ai-search'
 
 // Phase 0 of the SEO-automation plan (docs/plans/seo-automation.md).
 // Crawls a client's site via DataForSEO's On-Page API (~$0.002/page), stores
@@ -105,6 +106,7 @@ export interface SeoCrawl {
   pagesCrawled: number | null
   checks: ProblemCount[] | null
   issues: CrawlIssue[] | null
+  aiSearch: AiSearchResult | null
   cost: number | null
   error: string | null
   createdAt: string
@@ -121,6 +123,7 @@ interface CrawlRow {
   pages_crawled: number | null
   checks: ProblemCount[] | null
   issues: CrawlIssue[] | null
+  ai_search: AiSearchResult | null
   cost: number | null
   error: string | null
   created_at: string
@@ -138,6 +141,7 @@ function fromRow(r: CrawlRow): SeoCrawl {
     pagesCrawled: r.pages_crawled,
     checks: r.checks,
     issues: r.issues,
+    aiSearch: r.ai_search,
     cost: r.cost,
     error: r.error,
     createdAt: r.created_at,
@@ -298,6 +302,14 @@ async function finalizeIfNeeded(crawl: CrawlRow): Promise<SeoCrawl> {
     urls: i.key ? (urlsByCheck[i.key] ?? []).slice(0, MAX_URLS_PER_ISSUE) : undefined,
   })) ?? null
 
+  // AI Search Health (GEO) — cheap robots.txt/llms.txt check. Non-fatal.
+  let aiSearch: AiSearchResult | null = null
+  try {
+    aiSearch = await checkAiSearch(crawl.url)
+  } catch (err) {
+    console.error('[dataforseo] AI search check failed', err instanceof Error ? err.message : err)
+  }
+
   const { data, error } = await supabase
     .from('seo_crawls')
     .update({
@@ -306,6 +318,7 @@ async function finalizeIfNeeded(crawl: CrawlRow): Promise<SeoCrawl> {
       pages_crawled: pagesCrawled,
       checks: problems,
       issues,
+      ai_search: aiSearch,
       updated_at: new Date().toISOString(),
     })
     .eq('id', crawl.id)

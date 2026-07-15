@@ -202,6 +202,19 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (AI Search Health / GEO check — BUILT, verified standalone)** —
+  Compared our audit to a real SEMrush Site Audit of hyperboledigital.com: health
+  89% (SEMrush) vs 92.7 (ours) = validated. SEMrush's paid "AI Search Health"
+  revealed the GEO recipe, which we built ourselves for free: `lib/ai-search.ts`
+  `checkAiSearch()` fetches robots.txt (detects blocking of 15 AI crawlers —
+  GPTBot, ChatGPT-User, PerplexityBot, ClaudeBot, Google-Extended, etc.) + checks
+  for llms.txt, producing a 0-100 AI-search score + issues. Wired into the crawl
+  finalize (`ai_search` jsonb column, `migrate_2026-07-20_ai-search.sql`) and
+  shown in `CrawlResults` as a second score + a GEO issues block. Verified
+  standalone: hyperbole 90/100 (0 blocked, no llms.txt — matches SEMrush's
+  finding), nytimes.com 6/100 (correctly caught its 14 blocked AI bots). **Full
+  crawl integration needs `migrate_2026-07-20_ai-search.sql` applied.** This is
+  the GEO differentiator — SEMrush charges for it; we do it for pennies.
 - **2026-07-15 (Reports integration — VERIFIED)** — Client monthly Reports now
   include a **Site Health** section (crawl `onpage_score` + top 3 issues by
   severity), sourced from the client's latest finished crawl via `getLatestCrawl`

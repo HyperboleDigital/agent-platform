@@ -211,6 +211,12 @@ export interface SeoCrawl {
   pagesCrawled: number | null
   checks: { key: string; label: string; count: number; urls: string[] }[] | null
   issues: CrawlIssue[] | null
+  aiSearch: {
+    score: number
+    hasLlmsTxt: boolean
+    blockedBots: string[]
+    issues: { severity: 'high' | 'medium' | 'low'; title: string; detail: string }[]
+  } | null
   cost: number | null
   error: string | null
   createdAt: string
