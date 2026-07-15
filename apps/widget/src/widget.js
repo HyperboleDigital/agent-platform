@@ -9,7 +9,26 @@
   const WELCOME = script?.getAttribute('data-welcome') || "How can I help you today?";
   const LOGO = script?.getAttribute('data-logo') || '';
   const AVATAR_EMOJI = script?.getAttribute('data-avatar-emoji') || '';
-  const PROMPT_LABEL = script?.getAttribute('data-prompt') || 'Questions?';
+  const INPUT_PLACEHOLDER = script?.getAttribute('data-placeholder') || 'Type a message...';
+
+  // ─── Teaser bubble prompts (rotate above the closed bubble) ──────────────
+  // `data-prompts` takes precedence — pipe-separated short questions, e.g.
+  // data-prompts="What's your pricing?|How does Acme work?|Can I book a call?"
+  // Falls back to the older single-string `data-prompt`, then to a generic
+  // default set (client-branded via TITLE) so every install has at least 5.
+  const promptsAttr = script?.getAttribute('data-prompts')
+  const singlePromptAttr = script?.getAttribute('data-prompt')
+  const PROMPT_LABELS = promptsAttr
+    ? promptsAttr.split('|').map(s => s.trim()).filter(Boolean)
+    : singlePromptAttr
+      ? [singlePromptAttr]
+      : [
+          'Questions?',
+          "What's your pricing?",
+          `How does ${TITLE} work?`,
+          'Can I book a call?',
+          'Need support?'
+        ]
 
   // ─── Theme colors (override via data-color / data-color-2) ───────────────
   // data-color    → primary brand color (e.g. data-color="#C05B28")
@@ -53,6 +72,8 @@
     windowDuration: 400,
     // Fade duration when bubble swaps to real header avatar at end of morph (ms)
     swapFade: 150,
+    // Fade duration for the prompt bubble showing/hiding (ms)
+    bubbleFade: 200,
     // ── Position fine-tuning (as % of header avatar size, scales with layout) ──
     // Expressed as fractions: 0.1 = 10% of avatar width/height.
     // If swap skips left, make landingOffsetX more positive. If skips up, more positive Y.
@@ -92,6 +113,8 @@
     #ap-widget button:focus-visible { outline: 2px solid var(--p); outline-offset: 2px; }
 
     /* ─── Prompt label (small chip above the bubble) ────────────────────── */
+    /* transform-origin bottom-right = the corner nearest the icon, so scale
+       animations read as the chip emerging from / retracting into the icon. */
     #ap-prompt {
       position: fixed; bottom: 100px; right: 30px; z-index: 99998;
       background: var(--p);
@@ -99,13 +122,14 @@
       padding: 8px 14px;
       border-radius: 999px;
       font-size: 13px; font-weight: 600;
+      white-space: nowrap;
       box-shadow: 0 8px 24px var(--p-shadow), 0 2px 6px rgba(0,0,0,0.08);
       pointer-events: none;
       user-select: none;
-      transform: translateY(0);
-      animation: ap-prompt-in 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s backwards;
-      transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+      transform-origin: bottom right;
     }
+    /* Start collapsed into the icon; JS pops it out shortly after mount. */
+    #ap-prompt.ap-prompt-initial { opacity: 0; transform: scale(0.2) translate(10px, 22px); }
     #ap-prompt::after {
       content: '';
       position: absolute;
@@ -115,12 +139,24 @@
       background: var(--p);
       transform: rotate(45deg);
     }
-    #ap-prompt.hidden { opacity: 0; transform: translateY(8px); pointer-events: none; }
+    /* Retract: shrink + slide down-right into the icon, then fade. Ease-in so
+       it accelerates as it "goes in". */
+    #ap-prompt.ap-prompt-retract {
+      opacity: 0;
+      transform: scale(0.2) translate(10px, 22px);
+      transition: opacity 0.24s ease-in, transform 0.26s cubic-bezier(0.5, 0, 0.75, 0);
+    }
+    /* Pop: spring back out of the icon, like a new message surfacing. */
+    #ap-prompt.ap-prompt-pop {
+      animation: ap-prompt-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    #ap-prompt.hidden { opacity: 0; transform: scale(0.2) translate(10px, 22px); pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; }
+    #ap-prompt-text { display: inline-block; }
 
-
-    @keyframes ap-prompt-in {
-      from { opacity: 0; transform: translateY(8px) scale(0.9); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
+    @keyframes ap-prompt-pop {
+      0%   { opacity: 0; transform: scale(0.2) translate(10px, 22px); }
+      55%  { opacity: 1; transform: scale(1.06) translate(0, 0); }
+      100% { opacity: 1; transform: scale(1) translate(0, 0); }
     }
 
     /* ─── Bubble (the FAB that opens the chat) ───────────────────────────── */
@@ -455,7 +491,7 @@
   root.id = 'ap-widget';
   root.innerHTML = `
     <button id="ap-bubble" aria-label="Open chat">${avatarHTML()}</button>
-    <div id="ap-prompt" aria-hidden="true">${PROMPT_LABEL}</div>
+    <div id="ap-prompt" class="ap-prompt-initial" aria-hidden="true"><span id="ap-prompt-text">${PROMPT_LABELS[0]}</span></div>
     <div id="ap-window" role="dialog">
       <div id="ap-header">
         <div class="ap-h-row">
@@ -479,7 +515,7 @@
         <div id="ap-chips"></div>
         <div id="ap-input-wrap">
           <div id="ap-input-row">
-            <textarea id="ap-input" rows="1" placeholder="Type a message..."></textarea>
+            <textarea id="ap-input" rows="1" placeholder="${INPUT_PLACEHOLDER}"></textarea>
             <button id="ap-send" disabled aria-label="Send">
               <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
@@ -522,6 +558,7 @@
 
   const bubble = document.getElementById('ap-bubble');
   const promptLabel = document.getElementById('ap-prompt');
+  const promptTextEl = document.getElementById('ap-prompt-text');
   const win = document.getElementById('ap-window');
   const closeBtn = document.getElementById('ap-close-btn');
   const contactTrigger = document.getElementById('ap-contact-trigger');
@@ -581,6 +618,38 @@
       isAnimating = false;
     }, ANIM.windowDuration);
   }
+
+  // ─── Rotate the teaser bubble through PROMPT_LABELS while closed ─────────
+  // The current chip retracts INTO the icon, then the next question pops back
+  // OUT of it — imitating an incoming chat message surfacing.
+  let promptIndex = 0;
+  function rotatePrompt() {
+    if (isOpen || PROMPT_LABELS.length < 2) return;
+    promptLabel.classList.remove('ap-prompt-pop');
+    promptLabel.classList.add('ap-prompt-retract');
+    setTimeout(() => {
+      promptIndex = (promptIndex + 1) % PROMPT_LABELS.length;
+      promptTextEl.textContent = PROMPT_LABELS[promptIndex];
+      promptLabel.classList.remove('ap-prompt-retract');
+      // Force a reflow so removing retract + adding pop restarts the animation
+      // cleanly rather than the browser collapsing them into no change.
+      void promptLabel.offsetWidth;
+      promptLabel.classList.add('ap-prompt-pop');
+    }, 280);
+  }
+  // Clear the pop class once it finishes so a later re-add re-triggers it.
+  promptLabel.addEventListener('animationend', e => {
+    if (e.animationName === 'ap-prompt-pop') promptLabel.classList.remove('ap-prompt-pop');
+  });
+  // Initial entrance: pop out of the icon a beat after mount (once the window
+  // open/settle animation has calmed down).
+  setTimeout(() => {
+    if (isOpen) return;
+    promptLabel.classList.remove('ap-prompt-initial');
+    void promptLabel.offsetWidth;
+    promptLabel.classList.add('ap-prompt-pop');
+  }, 600);
+  if (PROMPT_LABELS.length > 1) setInterval(rotatePrompt, 3500);
 
   function formatTimeDivider(ts) {
     const d = new Date(ts);
@@ -663,6 +732,8 @@
   function openChat() {
     if (isOpen || isAnimating) return;
     isOpen = true;
+    // Drop any in-flight rotation state so .hidden's transform wins cleanly.
+    promptLabel.classList.remove('ap-prompt-retract', 'ap-prompt-pop');
     promptLabel.classList.add('hidden');
     renderMessages();
     morphBubbleToHeader();
@@ -673,8 +744,13 @@
     if (!isOpen || isAnimating) return;
     isOpen = false;
     morphHeaderToBubble();
-    // Fade prompt back in once the bubble is settled
-    setTimeout(() => promptLabel.classList.remove('hidden'), 400);
+    // Pop the prompt back out of the icon once the bubble has settled.
+    setTimeout(() => {
+      if (isOpen) return;
+      promptLabel.classList.remove('hidden', 'ap-prompt-initial', 'ap-prompt-retract');
+      void promptLabel.offsetWidth;
+      promptLabel.classList.add('ap-prompt-pop');
+    }, 400);
   }
 
   async function sendMessage() {
@@ -708,12 +784,10 @@
     if (!email || !message) { alert('Please add your email and message.'); return; }
     cfSubmit.textContent = 'Sending...'; cfSubmit.disabled = true;
     try {
-      await fetch(`${API_URL}/chat`, {
+      // Explicit "I want a human" — goes to the escalation endpoint, not the agent.
+      await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientId: CLIENT_ID, from: email,
-          body: `[Contact form] Name: ${name || 'Unknown'} | Email: ${email} | Message: ${message}`
-        })
+        body: JSON.stringify({ clientId: CLIENT_ID, name: name || undefined, email, message })
       });
     } catch {}
     setView('success');

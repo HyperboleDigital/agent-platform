@@ -6,16 +6,12 @@
   "scripts": {
     "dev": "concurrently \"pnpm --filter api dev\" \"pnpm --filter dashboard dev\"",
     "build": "pnpm --filter api build && pnpm --filter dashboard build",
-    "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
     "typescript": "^5.4.5"
   },
-  "packageManager": "pnpm@9.1.0",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ]
+  "packageManager": "pnpm@9.1.0"
 }

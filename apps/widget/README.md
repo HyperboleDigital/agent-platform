@@ -37,3 +37,4 @@ Make sure your API is running on localhost:3001 first.
 | data-color | #1D9E75 | Primary brand color |
 | data-welcome | Hi! How can I help? | First message shown |
 | data-placeholder | Ask us anything... | Input placeholder |
+| data-prompts | (generic 5-question set) | Pipe-separated short questions that rotate above the closed bubble, e.g. `data-prompts="What's your pricing?\|How does it work?\|Can I book a call?"` |

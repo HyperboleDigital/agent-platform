@@ -15,7 +15,7 @@ export interface IncomingMessage {
 export interface AgentResponse {
   intent: Intent
   reply: string
-  action: 'send_reply' | 'book_call' | 'escalate' | 'capture_lead' | 'none'
+  action: 'send_reply' | 'book_call' | 'escalate' | 'capture_lead' | 'show_contact_form' | 'none'
   escalate: boolean
   captureLead: boolean
   confidence: number
@@ -30,6 +30,16 @@ export interface Client {
   active: boolean
   agentConfig: AgentConfig
   createdAt: string
+  clerkOrgId?: string | null   // Clerk Organization that owns this client (tenant boundary)
+  portalConfig: PortalConfig
+}
+
+// SEO/portal soft config — audit target pages, brand terms for AI-visibility
+// mention matching, and the connected Google Search Console property.
+export interface PortalConfig {
+  seoPages?: string[]
+  brandTerms?: string[]
+  gscProperty?: string // e.g. "sc-domain:example.com" or "https://example.com/"
 }
 
 export interface AgentConfig {
@@ -37,9 +47,12 @@ export interface AgentConfig {
   knowledgeBaseIds: string[]
   calendlyLink?: string
   slackWebhook?: string
+  escalationEmail?: string   // where human-needed items (escalations, contact form) are sent
   autoSendThreshold: number
   emailDraft: boolean
 }
+
+export type LeadStatus = 'new' | 'followed_up'
 
 export interface Lead {
   id: string
@@ -49,6 +62,7 @@ export interface Lead {
   intent: string
   summary: string
   channel: Channel
+  status: LeadStatus
   createdAt: string
 }
 
