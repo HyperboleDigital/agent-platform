@@ -117,6 +117,13 @@ engine.
 - [Webflow Designer API: Create page](https://developers.webflow.com/designer/reference/create-page)
 - [Webflow: Create Site (enterprise, template)](https://developers.webflow.com/data/reference/enterprise/workspace-management/create)
 
+## Control benefits (why owning the site compounds)
+- **Native alt text** — Framer's built-in/AI alt-text means rebuilt clients get
+  image alt text handled by the platform, so the SEO pipeline doesn't need a
+  custom vision build for them (see seo-automation.md decision, 2026-07-15).
+- (Add more as they surface — every platform feature we inherit is a fix we
+  don't have to build or apply manually.)
+
 ## Checkpoint log
 - **2026-07-15** — Plan approved. Framer chosen (Webflow fallback), custom $10–15k
   premium kept as "no AI slop." Desk-research feasibility spike done (findings

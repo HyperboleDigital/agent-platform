@@ -162,6 +162,11 @@ automatically from GSC data.
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (decision: defer alt-text fix)** — Do NOT build a custom
+  vision-based alt-text pipeline. Solve it via the platform instead: Framer has
+  native/AI alt-text (so rebuilt-on-Framer clients get it free — reinforces the
+  ownership thesis, see [website-rebuild.md]), and cheap third-party plugins/tools
+  cover non-Framer clients. Revisit when relevant; not a build item for now.
 - **2026-07-15 (Phase 2 — schema fix type, LIVE-VERIFIED)** — Second fix type:
   schema.org JSON-LD (`draftSchemaFixes`/`createSchemaFixRequest`), operates on
   the client's key pages (no paid crawl needed → free to verify), directly serves
