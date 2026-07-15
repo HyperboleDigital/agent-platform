@@ -83,13 +83,17 @@ const PROBLEM_CHECKS: Record<string, string> = {
 }
 
 export interface CrawlIssue {
+  key?: string
   severity: 'high' | 'medium' | 'low'
   title: string
   count: number
   explanation: string
+  urls?: string[]
 }
 
-interface ProblemCount { key: string; label: string; count: number }
+interface ProblemCount { key: string; label: string; count: number; urls: string[] }
+
+const MAX_URLS_PER_ISSUE = 25
 
 export interface SeoCrawl {
   id: string
@@ -146,17 +150,17 @@ function fromRow(r: CrawlRow): SeoCrawl {
 // still saves with its score + raw problem list — the tracker just stays null.
 async function synthesize(target: string, score: number | null, problems: ProblemCount[]): Promise<CrawlIssue[] | null> {
   if (problems.length === 0) return []
-  const lines = problems.map(p => `- ${p.label} (${p.key}): ${p.count}`).join('\n')
+  const lines = problems.map(p => `- ${p.label} (key: ${p.key}): ${p.count}`).join('\n')
   const prompt = `You are triaging a technical SEO crawl of ${target} for a non-technical small-business owner.
 Overall on-page health score: ${score ?? 'n/a'}/100.
-The crawler flagged these problems (label, internal key, and number of pages/items affected):
+The crawler flagged these problems (label, internal key, number of pages/items affected):
 ${lines}
 
-Return ONLY a JSON array (no prose, no code fences), most severe first, of the problems worth acting on.
-Each element: {"severity": "high"|"medium"|"low", "title": short human label, "count": number affected, "explanation": one plain-English sentence on why it matters for search rankings or visitors — no jargon}.
-Rank by real SEO impact (broken pages, missing/duplicate titles & H1s, insecure links, and duplicate content are usually high; missing alt text and cosmetic items are usually low). Keep at most 12.`
+Return ONLY a JSON array (no prose, no code fences), most severe first, with exactly ONE object per problem above (do not merge or drop any).
+Each element: {"key": the exact internal key given, "severity": "high"|"medium"|"low", "title": short human label, "count": number affected, "explanation": one plain-English sentence on why it matters for search rankings or visitors — no jargon}.
+Rank by real SEO impact: broken pages, missing/duplicate titles & H1s, insecure links, and duplicate content are usually high; missing alt text and cosmetic items are usually low.`
   try {
-    const raw = await complete(prompt, { maxTokens: 900, tier: 'cheap' })
+    const raw = await complete(prompt, { maxTokens: 1000, tier: 'cheap' })
     const match = raw.match(/\[[\s\S]*\]/)
     if (!match) return null
     const parsed = JSON.parse(match[0])
@@ -164,6 +168,7 @@ Rank by real SEO impact (broken pages, missing/duplicate titles & H1s, insecure 
     return parsed
       .filter((i: any) => i && typeof i.title === 'string')
       .map((i: any) => ({
+        key: typeof i.key === 'string' ? i.key : undefined,
         severity: ['high', 'medium', 'low'].includes(i.severity) ? i.severity : 'medium',
         title: String(i.title),
         count: Number(i.count) || 0,
@@ -173,6 +178,28 @@ Rank by real SEO impact (broken pages, missing/duplicate titles & H1s, insecure 
     console.error('[dataforseo] issue synthesis failed', err instanceof Error ? err.message : err)
     return null
   }
+}
+
+// Fetch per-page data and map each problem check to the exact URLs affected.
+// Retrieval is free (the crawl was already billed at task_post), so this adds
+// the agency-spreadsheet "which pages" column at no extra cost.
+async function fetchAffectedUrls(taskId: string): Promise<Record<string, string[]>> {
+  const byCheck: Record<string, string[]> = {}
+  try {
+    const res = await dfs('/on_page/pages', [{ id: taskId, limit: 1000 }])
+    const items: any[] = res.tasks?.[0]?.result?.[0]?.items ?? []
+    for (const item of items) {
+      const url: string | undefined = item?.url
+      const checks: Record<string, boolean> = item?.checks ?? {}
+      if (!url) continue
+      for (const key of Object.keys(PROBLEM_CHECKS)) {
+        if (checks[key]) (byCheck[key] ??= []).push(url)
+      }
+    }
+  } catch (err) {
+    console.error('[dataforseo] fetchAffectedUrls failed', err instanceof Error ? err.message : err)
+  }
+  return byCheck
 }
 
 // Kick off a crawl: post the On-Page task and record a 'running' row. If a crawl
@@ -252,12 +279,18 @@ export async function refreshCrawl(clientId: string, crawlId: string): Promise<S
 
   const onpageScore = result?.page_metrics?.onpage_score ?? null
   const rawChecks: Record<string, number> = result?.page_metrics?.checks ?? {}
+  const urlsByCheck = await fetchAffectedUrls(crawl.task_id)
   const problems: ProblemCount[] = Object.entries(PROBLEM_CHECKS)
     .filter(([key]) => Number(rawChecks[key]) > 0)
-    .map(([key, label]) => ({ key, label, count: Number(rawChecks[key]) }))
+    .map(([key, label]) => ({ key, label, count: Number(rawChecks[key]), urls: (urlsByCheck[key] ?? []).slice(0, MAX_URLS_PER_ISSUE) }))
     .sort((a, b) => b.count - a.count)
 
-  const issues = await synthesize(crawl.url, onpageScore, problems)
+  const synthesized = await synthesize(crawl.url, onpageScore, problems)
+  // Attach the affected URLs to each synthesized issue via its check key.
+  const issues: CrawlIssue[] | null = synthesized?.map(i => ({
+    ...i,
+    urls: i.key ? (urlsByCheck[i.key] ?? []).slice(0, MAX_URLS_PER_ISSUE) : undefined,
+  })) ?? null
 
   const { data, error } = await supabase
     .from('seo_crawls')

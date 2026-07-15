@@ -222,6 +222,28 @@ function severityVariant(s: 'high' | 'medium' | 'low'): 'destructive' | 'warning
   return s === 'high' ? 'destructive' : s === 'medium' ? 'warning' : 'success'
 }
 
+// Shows the exact pages an issue affects (the agency-spreadsheet "which pages"
+// column), truncated with an expander so a 10-page issue doesn't flood the card.
+function AffectedUrls({ urls }: { urls: string[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? urls : urls.slice(0, 5)
+  const path = (u: string) => { try { return new URL(u).pathname || '/' } catch { return u } }
+  return (
+    <div className="mt-1.5 flex flex-col gap-0.5">
+      {shown.map(u => (
+        <a key={u} href={u} target="_blank" rel="noreferrer" className="truncate text-xs text-muted-foreground hover:text-foreground hover:underline">
+          {path(u)}
+        </a>
+      ))}
+      {urls.length > 5 && (
+        <button type="button" onClick={() => setExpanded(v => !v)} className="self-start text-xs text-muted-foreground hover:text-foreground">
+          {expanded ? 'Show less' : `+${urls.length - 5} more`}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Superadmin-only beta: full-site crawl audit via DataForSEO (costs real money
 // per run), producing the SEMrush-style score + a prioritized issue tracker.
 // Phase 0 of the SEO-automation plan — see docs/plans/seo-automation.md.
@@ -304,6 +326,7 @@ function CrawlCard({ clientId }: { clientId: string }) {
                         {iss.title}{iss.count ? <span className="text-muted-foreground"> · {iss.count}</span> : null}
                       </div>
                       <div className="text-xs text-muted-foreground">{iss.explanation}</div>
+                      {iss.urls && iss.urls.length > 0 && <AffectedUrls urls={iss.urls} />}
                     </div>
                   </div>
                 ))}

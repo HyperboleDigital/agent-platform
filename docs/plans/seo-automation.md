@@ -162,6 +162,15 @@ automatically from GSC data.
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Phase 1 — per-issue URL mapping, LIVE-VERIFIED)** — Each issue
+  now lists the exact affected page URLs (the agency-spreadsheet "which pages"
+  column). `fetchAffectedUrls` pulls `/on_page/pages` (free retrieval, no extra
+  cost), maps each PROBLEM_CHECK → URLs; synthesis now echoes the check `key` so
+  URLs attach 1:1 to each synthesized issue; dashboard `AffectedUrls` renders a
+  truncated, expandable list of page paths per issue. Verified live against
+  hyperboledigital.com (e.g. "Title tags too short → /projects/fyul, …"),
+  cleaned up. Typechecks clean. Next: client-facing audit view + free-audit lead
+  magnet; then fix generation (Phase 2).
 - **2026-07-15 (Phase 0 LIVE-VERIFIED)** — Ran the full pipeline end-to-end
   against Spec-ID temporarily pointed at hyperboledigital.com (migration applied
   by Owen): DB write → DataForSEO crawl → problem curation → Haiku synthesis →

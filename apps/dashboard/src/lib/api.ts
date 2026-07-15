@@ -193,10 +193,12 @@ export interface PortalConfig {
 }
 
 export interface CrawlIssue {
+  key?: string
   severity: 'high' | 'medium' | 'low'
   title: string
   count: number
   explanation: string
+  urls?: string[]
 }
 
 export interface SeoCrawl {
@@ -207,7 +209,7 @@ export interface SeoCrawl {
   taskId: string | null
   onpageScore: number | null
   pagesCrawled: number | null
-  checks: { key: string; label: string; count: number }[] | null
+  checks: { key: string; label: string; count: number; urls: string[] }[] | null
   issues: CrawlIssue[] | null
   cost: number | null
   error: string | null
