@@ -155,6 +155,40 @@ automatically from GSC data.
   `apps/api/.env` yourself (same pattern as GSC) — don't paste it in chat.
   (Exact env var name + signup steps: TBD in first Phase 0 message.)
 
+## Product surface: client view + free-audit lead magnet (design)
+
+Turns the superadmin-beta engine into the actual two-tier product. Two parts:
+
+### Part A — Client-facing audit view (safe; build first)
+- Entitled `seo` clients see their **latest crawl**, read-only: the /100 health
+  score as the hero metric, the severity-ranked issues with affected pages, all
+  in plain language (results-ladder framing — lead with score + wins so progress
+  is felt early).
+- **Running crawls and generating fixes stay superadmin-only** — they spend
+  money/tokens, and fix volume is the paid lever (see Pricing). Clients view the
+  results their account manager produces; they don't burn our balance by clicking.
+- Route change: `GET /:id/seo/crawl` (latest, pure read) allowed for entitled
+  clients; `POST /crawl`, the poll/finalize `GET /crawl/:crawlId`, and all fix
+  routes stay superadmin-only.
+
+### Part B — Free-audit lead magnet (design; build next, needs guardrails + top-up)
+Public "audit any URL" page: prospect enters **URL + email** → sees their score +
+top 3 issues → CTA to sign up / book a call. The email is the lead capture (the
+whole point) and doubles as a throttle. It works on *prospects'* sites, so
+"input any URL" becomes an acquisition channel.
+
+**Mandatory guardrails before it can go live (each spends ~$0.02+ per hit):**
+- Feature flag `ENABLE_PUBLIC_AUDIT` (default OFF) — dormant until deliberately enabled.
+- **Global daily cap** on public audits (protects the DataForSEO balance, e.g.
+  20/day ≈ ≤ $0.40/day worst case), persisted (survives restarts).
+- Per-IP + per-email rate limit (reuse `lib/rate-limit.ts`).
+- Store captured leads (email + url + score + timestamp) in a `public_audit_leads`
+  table for follow-up.
+- Show only a **teaser** (score + top 3 issues); the full report requires signup —
+  keeps the free audit a conversion tool, not a giveaway.
+- Never scheduled; always a live user action. Never touches the email path.
+- Prereq: DataForSEO balance top-up before enabling.
+
 ## Open questions / deferred
 - Direct CMS write-back (Framer/Webflow) for fixes — deferred to post-Phase-2.
 - Blog content engine as a client service — content-generation already exists
@@ -162,6 +196,16 @@ automatically from GSC data.
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Part A — client-facing audit view, BUILT)** — Crawl audit now
+  visible read-only to entitled seo clients (was superadmin-only). `GET
+  /:id/seo/crawl` (latest, pure read) opened to entitled clients; `POST /crawl`,
+  poll/finalize `GET /crawl/:crawlId`, and all fix routes stay superadmin-only
+  (they spend money/tokens). `CrawlCard` renders the /100 score + issues for
+  everyone, gates the Run + Generate-fixes buttons behind `me.isSuperadmin`, and
+  shows a client-friendly empty state; title is now "Site Health Audit" (beta
+  badge admin-only). Typechecks clean; gating reviewed (not browser-verified —
+  pure auth/render change). **Part B (public free-audit lead magnet) is designed
+  above, not built — needs the guardrails + a DataForSEO balance top-up.**
 - **2026-07-15 (decision: defer alt-text fix)** — Do NOT build a custom
   vision-based alt-text pipeline. Solve it via the platform instead: Framer has
   native/AI alt-text (so rebuilt-on-Framer clients get it free — reinforces the

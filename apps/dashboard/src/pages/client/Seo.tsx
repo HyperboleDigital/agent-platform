@@ -250,6 +250,8 @@ function AffectedUrls({ urls }: { urls: string[] }) {
 const TITLE_DESC_KEYS = ['no_title', 'title_too_short', 'title_too_long', 'irrelevant_title', 'no_description', 'duplicate_description', 'irrelevant_description']
 
 function CrawlCard({ clientId }: { clientId: string }) {
+  const { data: me } = useSWR('me', api.me)
+  const isAdmin = !!me?.isSuperadmin
   const { data: crawl, mutate: mutateCrawl } = useSWR(['seo-crawl', clientId], () => api.clients.latestCrawl(clientId))
   const [running, setRunning] = useState(false)
   const [fixing, setFixing] = useState<null | 'meta' | 'schema'>(null)
@@ -279,8 +281,8 @@ function CrawlCard({ clientId }: { clientId: string }) {
     }
   }
 
-  const canFixMeta = crawl?.status === 'finished' && (crawl.checks ?? []).some(c => TITLE_DESC_KEYS.includes(c.key))
-  const canFix = crawl?.status === 'finished'
+  const canFixMeta = isAdmin && crawl?.status === 'finished' && (crawl.checks ?? []).some(c => TITLE_DESC_KEYS.includes(c.key))
+  const canFix = isAdmin && crawl?.status === 'finished'
 
   async function run() {
     setRunning(true)
@@ -308,18 +310,21 @@ function CrawlCard({ clientId }: { clientId: string }) {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
-          AI Site Crawl <Badge variant="warning">beta</Badge>
+          Site Health Audit {isAdmin && <Badge variant="warning">beta</Badge>}
         </CardTitle>
-        <Button size="sm" onClick={run} disabled={busy}>
-          <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
-          {busy ? 'Crawling…' : 'Run crawl audit'}
-        </Button>
+        {isAdmin && (
+          <Button size="sm" onClick={run} disabled={busy}>
+            <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
+            {busy ? 'Crawling…' : 'Run crawl audit'}
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
         {!crawl && !busy && (
           <p className="text-sm text-muted-foreground">
-            Crawl the whole site to generate an overall health score and a prioritized,
-            plain-English list of what to fix. Superadmin-only while in beta (each run costs a few cents).
+            {isAdmin
+              ? 'Crawl the whole site to generate an overall health score and a prioritized, plain-English list of what to fix. (Superadmin beta — each run costs a few cents.)'
+              : 'Your first site health audit will appear here once your account manager runs it — an overall health score plus a prioritized, plain-English list of what to improve.'}
           </p>
         )}
 
@@ -399,7 +404,6 @@ function CrawlCard({ clientId }: { clientId: string }) {
 
 export function SiteHealthTab() {
   const { clientId } = useClientCtx()
-  const { data: me } = useSWR('me', api.me)
   const { data: audits, isLoading } = useSWR(['seo-audits', clientId], () => api.clients.seoAudits(clientId))
   const [running, setRunning] = useState(false)
 
@@ -438,7 +442,7 @@ export function SiteHealthTab() {
       )}
       {latest && <AuditCard latest={latest} prev={prev} />}
 
-      {me?.isSuperadmin && <CrawlCard clientId={clientId} />}
+      <CrawlCard clientId={clientId} />
 
       <ConfigCard clientId={clientId} />
 

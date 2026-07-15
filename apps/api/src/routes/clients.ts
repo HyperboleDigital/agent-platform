@@ -383,9 +383,9 @@ clientsRouter.post('/:id/seo/crawl', async (req, res) => {
   }
 })
 
+// Read-only latest crawl — visible to any entitled seo client (Part A). Running
+// crawls + generating fixes stay superadmin-only (they spend money/tokens).
 clientsRouter.get('/:id/seo/crawl', async (req, res) => {
-  const identity = identityOf(req)
-  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   const id = await requireSeoAccess(req, res)
   if (!id) return
   res.json(await getLatestCrawl(id))
