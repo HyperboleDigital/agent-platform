@@ -188,7 +188,7 @@ function RankingsCard({ clientId }: { clientId: string }) {
   )
 }
 
-export default function Seo() {
+export function SiteHealthTab() {
   const { clientId } = useClientCtx()
   const { data: audits, isLoading } = useSWR(['seo-audits', clientId], () => api.clients.seoAudits(clientId))
   const [running, setRunning] = useState(false)
@@ -211,10 +211,7 @@ export default function Seo() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Site health</h2>
-          <p className="text-sm text-muted-foreground">Technical audits via Google PageSpeed Insights.</p>
-        </div>
+        <p className="text-sm text-muted-foreground">Technical audits via Google PageSpeed Insights.</p>
         <Button onClick={runAudit} disabled={running} size="sm">
           <RefreshCw className={`h-3.5 w-3.5 ${running ? 'animate-spin' : ''}`} />
           {running ? 'Running…' : 'Run audit'}

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -7,11 +8,11 @@ import type { RequestStatus } from '@/lib/api'
 import { StatTile } from '@/components/stat-tile'
 import { UsageBar } from '@/components/usage-bar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Badge, StatusDot } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/empty-state'
+import { RequestsTable } from '@/components/requests-table'
 
 // Same status → badge-color mapping as ClientDetail.tsx's billing tab, kept
 // separate since this table needs a "no subscription" (null) case too.
@@ -25,19 +26,20 @@ function formatCents(cents: number): string {
   return (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 }
 
-function requestStatusVariant(status: RequestStatus): 'warning' | 'secondary' {
-  return status === 'in_progress' ? 'warning' : 'secondary'
-}
-
 const REQUEST_KEY = 'overview-requests'
 
+// Same expandable-detail / comment / attach / status-change actions as the
+// per-client Requests page and the client Home card — just with a Client
+// column since this queue spans every tenant.
 function OpenRequestsCard() {
   const { data: requests, isLoading } = useSWR(REQUEST_KEY, api.overview.requests)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  async function setStatus(clientId: string, reqId: string, status: RequestStatus) {
+  async function changeStatus(clientId: string, reqId: string, status: RequestStatus) {
     try {
       await api.overview.updateRequestStatus(clientId, reqId, status)
       mutate(REQUEST_KEY)
+      mutate(['request-detail', clientId, reqId])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update status')
     }
@@ -57,47 +59,17 @@ function OpenRequestsCard() {
   if (!requests) return null
 
   return (
-    <Card className="overflow-hidden p-0">
-      <div className="p-5 pb-0"><h2 className="text-sm font-medium">Open change requests</h2></div>
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead>Client</TableHead>
-            <TableHead>Request</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Submitted</TableHead>
-            <TableHead>Update</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {requests.map(r => (
-            <TableRow key={r.id}>
-              <TableCell>
-                <Link to={`/clients/${r.clientId}/requests`} className="font-medium text-primary hover:underline">
-                  {r.clientName}
-                </Link>
-              </TableCell>
-              <TableCell>{r.title}</TableCell>
-              <TableCell>
-                <Badge variant={requestStatusVariant(r.status)}>
-                  <StatusDot variant={requestStatusVariant(r.status)} />
-                  {r.status === 'in_progress' ? 'In progress' : 'Open'}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</TableCell>
-              <TableCell>
-                <div className="flex gap-1">
-                  {r.status !== 'in_progress' && (
-                    <Button variant="outline" size="sm" onClick={() => setStatus(r.clientId, r.id, 'in_progress')}>Start</Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={() => setStatus(r.clientId, r.id, 'done')}>Done</Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </Card>
+    <div>
+      <h2 className="mb-2 text-sm font-medium">Open change requests</h2>
+      <RequestsTable
+        requests={requests}
+        isSuperadmin
+        expandedId={expandedId}
+        onToggle={id => setExpandedId(prev => (prev === id ? null : id))}
+        onChangeStatus={changeStatus}
+        showClient
+      />
+    </div>
   )
 }
 

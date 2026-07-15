@@ -47,6 +47,37 @@ create index if not exists knowledge_base_client_idx
 create index if not exists knowledge_base_embedding_idx
   on knowledge_base using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 
+-- Original bytes of an uploaded knowledge-base file (knowledge_base above only
+-- keeps extracted/chunked text) — lets the dashboard show a preview thumbnail.
+-- Bytes live in the 'knowledge-files' Storage bucket, see the insert below.
+create table if not exists knowledge_files (
+  id           uuid primary key default gen_random_uuid(),
+  client_id    uuid not null references clients(id) on delete cascade,
+  filename     text not null,
+  content_type text not null,
+  size_bytes   integer not null,
+  storage_path text not null,
+  uploaded_by  text,
+  created_at   timestamptz not null default now()
+);
+create index if not exists knowledge_files_client_idx on knowledge_files (client_id, created_at desc);
+
+-- Groups knowledge_base chunk rows into one document (a single upload/paste
+-- can span several chunk rows) so the dashboard can list/delete/replace a
+-- whole document as one unit instead of chunk-by-chunk. file_id links a
+-- document's chunks back to its original file (null for pasted-text docs).
+-- Added bare + backfilled + constrained after, rather than in one shot, to
+-- avoid forcing a full table rewrite (a volatile default can't use the fast-
+-- default optimization, and rewriting means rebuilding every index on the
+-- table too — including the ivfflat vector index, which is memory-heavy).
+alter table knowledge_base add column if not exists document_id uuid;
+alter table knowledge_base add column if not exists file_id uuid references knowledge_files(id) on delete set null;
+alter table knowledge_base add column if not exists description text;
+update knowledge_base set document_id = gen_random_uuid() where document_id is null;
+alter table knowledge_base alter column document_id set not null;
+alter table knowledge_base alter column document_id set default gen_random_uuid();
+create index if not exists knowledge_base_document_idx on knowledge_base (document_id);
+
 -- ── leads ────────────────────────────────────────────────────────────────────
 create table if not exists leads (
   id         uuid primary key default gen_random_uuid(),
@@ -56,6 +87,7 @@ create table if not exists leads (
   intent     text,
   summary    text,
   channel    text not null default 'chat',
+  status     text not null default 'new', -- 'new' | 'followed_up'
   created_at timestamptz not null default now()
 );
 create index if not exists leads_client_idx on leads (client_id);
@@ -84,6 +116,7 @@ create table if not exists message_logs (
 );
 create index if not exists message_logs_client_idx on message_logs (client_id);
 create index if not exists message_logs_created_idx on message_logs (created_at);
+create index if not exists message_logs_client_created_idx on message_logs (client_id, created_at desc);
 
 -- ── gmail_tokens ─────────────────────────────────────────────────────────────
 -- Per-client Gmail OAuth refresh tokens (Phase 4 — replaces the n8n dependency).
@@ -240,14 +273,54 @@ create table if not exists change_requests (
   client_id    uuid not null references clients(id) on delete cascade,
   title        text not null,
   description  text not null default '',
-  status       text not null default 'open', -- open | in_progress | done | declined
+  status       text not null default 'open', -- open | in_progress | done | declined | cancelled
   created_by   text,                          -- clerk user id
+  cancel_reason text,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
   completed_at timestamptz
 );
 create index if not exists change_requests_client_idx on change_requests (client_id, created_at desc);
 create index if not exists change_requests_status_idx on change_requests (status);
+
+-- Append-only status-change audit trail, one row per transition (including
+-- the initial creation and client-initiated cancels).
+create table if not exists change_request_events (
+  id           uuid primary key default gen_random_uuid(),
+  request_id   uuid not null references change_requests(id) on delete cascade,
+  from_status  text,
+  to_status    text not null,
+  changed_by   text,        -- clerk user id, or 'system'
+  note         text,        -- e.g. cancel reason
+  created_at   timestamptz not null default now()
+);
+create index if not exists change_request_events_request_idx on change_request_events (request_id, created_at);
+
+-- Comment thread on a request — either party (client or superadmin) can post.
+create table if not exists change_request_comments (
+  id            uuid primary key default gen_random_uuid(),
+  request_id    uuid not null references change_requests(id) on delete cascade,
+  author_id     text not null,
+  is_superadmin boolean not null default false,
+  body          text not null,
+  created_at    timestamptz not null default now()
+);
+create index if not exists change_request_comments_request_idx on change_request_comments (request_id, created_at);
+
+-- File metadata only — bytes live in the 'request-attachments' Storage
+-- bucket (see storage.buckets insert below), accessed via short-lived signed
+-- URLs the API mints on demand.
+create table if not exists change_request_attachments (
+  id           uuid primary key default gen_random_uuid(),
+  request_id   uuid not null references change_requests(id) on delete cascade,
+  filename     text not null,
+  content_type text not null,
+  size_bytes   integer not null,
+  storage_path text not null,
+  uploaded_by  text,
+  created_at   timestamptz not null default now()
+);
+create index if not exists change_request_attachments_request_idx on change_request_attachments (request_id, created_at);
 
 -- ── notification_settings ────────────────────────────────────────────────────
 -- One row per client. Per-event toggles for which channels fire on which
@@ -335,6 +408,7 @@ create index if not exists notification_log_channel_created_idx on notification_
 -- get zero access to any row unless a policy is explicitly added later.
 alter table clients        enable row level security;
 alter table knowledge_base enable row level security;
+alter table knowledge_files enable row level security;
 alter table leads          enable row level security;
 alter table escalations    enable row level security;
 alter table message_logs   enable row level security;
@@ -347,8 +421,22 @@ alter table gsc_snapshots      enable row level security;
 alter table visibility_queries enable row level security;
 alter table visibility_runs    enable row level security;
 alter table change_requests    enable row level security;
+alter table change_request_events      enable row level security;
+alter table change_request_comments    enable row level security;
+alter table change_request_attachments enable row level security;
 alter table notification_settings enable row level security;
 alter table notification_log   enable row level security;
 alter table blog_posts         enable row level security;
 alter table framer_connections enable row level security;
 alter table reports            enable row level security;
+
+-- Private bucket for change-request attachments — the API is the only thing
+-- that touches it, always via short-lived signed URLs it mints itself
+-- (service-role key bypasses RLS, same convention as every table above).
+insert into storage.buckets (id, name, public)
+values ('request-attachments', 'request-attachments', false)
+on conflict (id) do nothing;
+
+insert into storage.buckets (id, name, public)
+values ('knowledge-files', 'knowledge-files', false)
+on conflict (id) do nothing;

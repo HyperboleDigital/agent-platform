@@ -160,12 +160,11 @@ function RunsCard({ clientId }: { clientId: string }) {
   )
 }
 
-export default function Visibility() {
+export function AiVisibilityTab() {
   const { clientId } = useClientCtx()
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-lg font-semibold">AI Visibility</h2>
         <p className="text-sm text-muted-foreground">Track how your brand shows up when people ask ChatGPT and Claude.</p>
       </div>
       <QueriesCard clientId={clientId} />

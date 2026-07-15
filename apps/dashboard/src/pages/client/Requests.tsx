@@ -1,35 +1,16 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { MessageSquarePlus, Plus } from 'lucide-react'
+import { MessageSquarePlus, Plus, Paperclip } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { RequestStatus } from '@/lib/api'
 import { useClientCtx } from '@/pages/client/ClientLayout'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea, Label } from '@/components/ui/input'
-import { Badge, StatusDot } from '@/components/ui/badge'
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { EmptyState } from '@/components/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
-
-function statusVariant(status: RequestStatus): 'success' | 'warning' | 'secondary' | 'destructive' {
-  if (status === 'done') return 'success'
-  if (status === 'in_progress') return 'warning'
-  if (status === 'declined') return 'destructive'
-  return 'secondary'
-}
-
-function statusLabel(status: RequestStatus): string {
-  switch (status) {
-    case 'in_progress': return 'In progress'
-    case 'done': return 'Done'
-    case 'declined': return 'Declined'
-    default: return 'Open'
-  }
-}
-
-const STATUSES: RequestStatus[] = ['open', 'in_progress', 'done', 'declined']
+import { RequestsTable, ACTIVE_STATUSES, HISTORY_STATUSES } from '@/components/requests-table'
 
 export default function Requests() {
   const { clientId } = useClientCtx()
@@ -39,13 +20,20 @@ export default function Requests() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function submit() {
     if (!title.trim()) return
     setSaving(true)
     try {
-      await api.clients.createRequest(clientId, title.trim(), description.trim())
-      setTitle(''); setDescription('')
+      const created = await api.clients.createRequest(clientId, title.trim(), description.trim())
+      if (pendingFile) {
+        await api.clients.uploadRequestAttachment(clientId, created.id, pendingFile)
+      }
+      setTitle(''); setDescription(''); setPendingFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       mutate(key)
       toast.success('Request submitted')
     } catch (err) {
@@ -55,14 +43,22 @@ export default function Requests() {
     }
   }
 
-  async function changeStatus(reqId: string, status: RequestStatus) {
+  async function changeStatus(reqClientId: string, reqId: string, status: RequestStatus) {
     try {
-      await api.clients.updateRequestStatus(clientId, reqId, status)
+      await api.clients.updateRequestStatus(reqClientId, reqId, status)
       mutate(key)
+      mutate(['request-detail', reqClientId, reqId])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update status')
     }
   }
+
+  function toggle(id: string) {
+    setExpandedId(prev => (prev === id ? null : id))
+  }
+
+  const active = requests?.filter(r => ACTIVE_STATUSES.has(r.status)) ?? []
+  const history = requests?.filter(r => HISTORY_STATUSES.has(r.status)) ?? []
 
   return (
     <div className="flex flex-col gap-6">
@@ -81,6 +77,17 @@ export default function Requests() {
             <Label>Details (optional)</Label>
             <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="Any specifics — link to the new image, exact wording, etc." />
           </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
+              <Paperclip className="h-3.5 w-3.5" /> {pendingFile ? pendingFile.name : 'Attach a file (optional)'}
+            </Button>
+            <input ref={fileInputRef} type="file" className="hidden" onChange={e => setPendingFile(e.target.files?.[0] ?? null)} />
+            {pendingFile && (
+              <Button variant="ghost" size="sm" onClick={() => { setPendingFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}>
+                Remove
+              </Button>
+            )}
+          </div>
           <Button onClick={submit} disabled={saving || !title.trim()} className="justify-self-start">
             <Plus className="h-4 w-4" />
             {saving ? 'Submitting…' : 'Submit request'}
@@ -98,47 +105,30 @@ export default function Requests() {
         </Card>
       )}
 
-      {!!requests?.length && (
-        <Card className="overflow-hidden p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Title</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Submitted</TableHead>
-                {me?.isSuperadmin && <TableHead>Update</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {requests.map(r => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                    <div className="font-medium">{r.title}</div>
-                    {r.description && <div className="text-xs text-muted-foreground">{r.description}</div>}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={statusVariant(r.status)}>
-                      <StatusDot variant={statusVariant(r.status)} />
-                      {statusLabel(r.status)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</TableCell>
-                  {me?.isSuperadmin && (
-                    <TableCell>
-                      <div className="flex gap-1">
-                        {STATUSES.filter(s => s !== r.status).map(s => (
-                          <Button key={s} variant="outline" size="sm" onClick={() => changeStatus(r.id, s)}>
-                            {statusLabel(s)}
-                          </Button>
-                        ))}
-                      </div>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+      {!!active.length && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Active</h3>
+          <RequestsTable
+            requests={active}
+            isSuperadmin={!!me?.isSuperadmin}
+            expandedId={expandedId}
+            onToggle={toggle}
+            onChangeStatus={changeStatus}
+          />
+        </div>
+      )}
+
+      {!!history.length && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-muted-foreground">History</h3>
+          <RequestsTable
+            requests={history}
+            isSuperadmin={!!me?.isSuperadmin}
+            expandedId={expandedId}
+            onToggle={toggle}
+            onChangeStatus={changeStatus}
+          />
+        </div>
       )}
     </div>
   )

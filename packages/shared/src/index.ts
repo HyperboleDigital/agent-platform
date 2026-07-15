@@ -52,6 +52,8 @@ export interface AgentConfig {
   emailDraft: boolean
 }
 
+export type LeadStatus = 'new' | 'followed_up'
+
 export interface Lead {
   id: string
   clientId: string
@@ -60,6 +62,7 @@ export interface Lead {
   intent: string
   summary: string
   channel: Channel
+  status: LeadStatus
   createdAt: string
 }
 

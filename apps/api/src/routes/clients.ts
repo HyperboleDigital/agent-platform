@@ -2,18 +2,24 @@ import { Router } from 'express'
 import type { Request } from 'express'
 import multer from 'multer'
 import { getAllClients, upsertClient, getClientById } from '../lib/clients'
-import { addDocument, listDocuments } from '../tools/knowledge-base'
+import { addDocument, listDocuments, deleteDocument, updateDocumentDescription } from '../tools/knowledge-base'
 import { extractText, isSupportedFile, SUPPORTED_EXTENSIONS } from '../lib/file-extract'
-import { getLeads } from '../tools/crm'
+import { getLeads, updateLeadStatus, deleteLead } from '../tools/crm'
 import { getStats, getDailyMessageCounts } from '../lib/logs'
 import { getConnectorStatus } from '../lib/connectors'
-import { gmailConfigured, getAuthUrl } from '../lib/gmail'
+import { gmailConfigured, getAuthUrl, disconnectGmail } from '../lib/gmail'
 import { getMonthlyUsage } from '../lib/usage'
 import { getEntitlements, isEntitled } from '../lib/entitlements'
 import { runAudits, getAuditHistory } from '../lib/seo'
 import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities } from '../lib/gsc'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
-import { listRequests, createRequest, updateRequestStatus } from '../lib/change-requests'
+import {
+  listRequests, createRequest, updateRequestStatus, cancelRequest, getRequestDetail, addComment
+} from '../lib/change-requests'
+import { listAttachments, uploadAttachment, getAttachment, getSignedUrl } from '../lib/attachments'
+import {
+  listKnowledgeFiles, uploadKnowledgeFile, getKnowledgeFile, getSignedUrl as getKnowledgeFileSignedUrl
+} from '../lib/knowledge-files'
 import { getNotificationSettings, updateNotificationSettings } from '../lib/notify'
 import { listPosts, getPost, draftPost, updatePost, transitionPost, setFramerItemId, type PostStatus } from '../lib/content'
 import {
@@ -110,6 +116,33 @@ clientsRouter.get('/:id/leads', async (req, res) => {
   res.json(await getLeads(req.params.id))
 })
 
+// Mark a lead as followed up (or back to new) — any authorized user for
+// this client, not just a superadmin.
+clientsRouter.patch('/:id/leads/:leadId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const status = req.body?.status
+  if (typeof status !== 'string') return res.status(400).json({ error: 'status is required' })
+  try {
+    res.json(await updateLeadStatus(req.params.id, req.params.leadId, status as never))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update lead' })
+  }
+})
+
+// Deleting a lead outright is superadmin-only — clients only get the
+// followed-up toggle above, by design.
+clientsRouter.delete('/:id/leads/:leadId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await deleteLead(req.params.id, req.params.leadId)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to delete lead' })
+  }
+})
+
 // List knowledge base documents for a client
 clientsRouter.get('/:id/knowledge', async (req, res) => {
   const identity = identityOf(req)
@@ -121,13 +154,13 @@ clientsRouter.get('/:id/knowledge', async (req, res) => {
 clientsRouter.post('/:id/knowledge', async (req, res) => {
   const identity = identityOf(req)
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
-  const { title, content, url } = req.body as { title: string; content: string; url?: string }
+  const { title, content, url, description } = req.body as { title: string; content: string; url?: string; description?: string }
   if (!title || !content) return res.status(400).json({ error: 'title and content required' })
-  const ids = await addDocument(req.params.id, title, content, url)
-  res.json({ ids, chunks: ids.length })
+  const { documentId, ids } = await addDocument(req.params.id, title, content, { url, description })
+  res.json({ documentId, ids, chunks: ids.length })
 })
 
-// Upload a document file (PDF, Word, txt, md) to a client's knowledge base
+// Upload a document file to a client's knowledge base
 clientsRouter.post('/:id/knowledge/upload', upload.single('file'), async (req, res) => {
   const identity = identityOf(req)
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
@@ -137,15 +170,76 @@ clientsRouter.post('/:id/knowledge/upload', upload.single('file'), async (req, r
   if (!isSupportedFile(file.originalname)) {
     return res.status(400).json({ error: `Unsupported file type. Allowed: ${SUPPORTED_EXTENSIONS.join(', ')}` })
   }
+  const description = typeof req.body?.description === 'string' ? req.body.description : undefined
 
   try {
     const text = await extractText(file.originalname, file.buffer)
     if (!text.trim()) return res.status(400).json({ error: 'No extractable text found in file' })
-    const ids = await addDocument(req.params.id, file.originalname, text)
-    res.json({ ids, chunks: ids.length })
+
+    // Keep the original bytes too (knowledge_base only has extracted text) so
+    // the dashboard can show a Drive-style preview thumbnail, and so the
+    // document can later be deleted/replaced as a whole file. Best-effort —
+    // a storage hiccup here shouldn't block the document from being searchable.
+    let fileId: string | undefined
+    try {
+      const knowledgeFile = await uploadKnowledgeFile(req.params.id, file.originalname, file.mimetype, file.buffer, identity.userId)
+      fileId = knowledgeFile.id
+    } catch (fileErr) {
+      console.error('[knowledge upload] failed to store original file', fileErr)
+    }
+
+    const { documentId, ids } = await addDocument(req.params.id, file.originalname, text, { fileId, description })
+    res.json({ documentId, ids, chunks: ids.length })
   } catch (err) {
     console.error('[knowledge upload] extraction error', err)
     res.status(400).json({ error: 'Failed to process file' })
+  }
+})
+
+// Delete a whole document (all its chunks, plus its original file if any).
+clientsRouter.delete('/:id/knowledge/:documentId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await deleteDocument(req.params.id, req.params.documentId)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to delete document' })
+  }
+})
+
+// Edit a document's description — the only field editable after the fact.
+clientsRouter.patch('/:id/knowledge/:documentId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const description = typeof req.body?.description === 'string' ? req.body.description : ''
+  try {
+    await updateDocumentDescription(req.params.id, req.params.documentId, description)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update description' })
+  }
+})
+
+// List uploaded knowledge files (for preview thumbnails) — separate from the
+// chunked text rows in /knowledge, which are for search, not display.
+clientsRouter.get('/:id/knowledge/files', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await listKnowledgeFiles(req.params.id))
+})
+
+// Short-lived signed URL for previewing/downloading a knowledge file —
+// minted fresh per request, same pattern as request attachments.
+clientsRouter.get('/:id/knowledge/files/:fileId/url', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const file = await getKnowledgeFile(req.params.fileId)
+  if (!file || file.clientId !== req.params.id) return res.status(404).json({ error: 'File not found' })
+  try {
+    res.json({ url: await getKnowledgeFileSignedUrl(file.storagePath) })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to mint signed URL' })
   }
 })
 
@@ -160,6 +254,19 @@ clientsRouter.get('/:id/gmail/auth-url', async (req, res) => {
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
   if (!gmailConfigured()) return res.status(500).json({ error: 'Gmail OAuth not configured' })
   res.json({ url: getAuthUrl(req.params.id) })
+})
+
+// Disconnect the client's Gmail account — escalations fall back to
+// Slack-only until reconnected (or a different account is connected).
+clientsRouter.delete('/:id/gmail', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await disconnectGmail(req.params.id)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to disconnect Gmail' })
+  }
 })
 
 // Connector status (Gmail, Slack, Calendly) for a client
@@ -325,9 +432,76 @@ clientsRouter.patch('/:id/requests/:reqId', async (req, res) => {
   const status = req.body?.status
   if (typeof status !== 'string') return res.status(400).json({ error: 'status is required' })
   try {
-    res.json(await updateRequestStatus(req.params.id, req.params.reqId, status as never))
+    res.json(await updateRequestStatus(req.params.id, req.params.reqId, status as never, identity.userId))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update status' })
+  }
+})
+
+// Full detail (events + comments) backing the expandable row in the dashboard.
+clientsRouter.get('/:id/requests/:reqId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const [detail, attachments] = await Promise.all([
+    getRequestDetail(req.params.id, req.params.reqId),
+    listAttachments(req.params.reqId)
+  ])
+  if (!detail) return res.status(404).json({ error: 'Request not found' })
+  res.json({ ...detail, attachments })
+})
+
+// Client-initiated cancel — a required reason, only while still open/in_progress.
+clientsRouter.post('/:id/requests/:reqId/cancel', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : ''
+  if (!reason) return res.status(400).json({ error: 'reason is required' })
+  try {
+    res.json(await cancelRequest(req.params.id, req.params.reqId, identity.userId, reason))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to cancel request' })
+  }
+})
+
+// Either party (client or superadmin) can comment on a request.
+clientsRouter.post('/:id/requests/:reqId/comments', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : ''
+  if (!body) return res.status(400).json({ error: 'body is required' })
+  try {
+    res.json(await addComment(req.params.reqId, identity.userId, !!identity.isSuperadmin, body))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to add comment' })
+  }
+})
+
+// Attach a file to a request — on submit or any time after, per either party.
+clientsRouter.post('/:id/requests/:reqId/attachments', upload.single('file'), async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const file = req.file
+  if (!file) return res.status(400).json({ error: 'file required (multipart field "file")' })
+  try {
+    const attachment = await uploadAttachment(req.params.reqId, file.originalname, file.mimetype, file.buffer, identity.userId)
+    res.json(attachment)
+  } catch (err) {
+    console.error('[attachments] upload error', err)
+    res.status(500).json({ error: 'Failed to upload attachment' })
+  }
+})
+
+// Short-lived signed URL for previewing/downloading an attachment on demand
+// — never returned embedded in the list response, minted fresh per request.
+clientsRouter.get('/:id/requests/:reqId/attachments/:attachmentId/url', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const attachment = await getAttachment(req.params.attachmentId)
+  if (!attachment || attachment.requestId !== req.params.reqId) return res.status(404).json({ error: 'Attachment not found' })
+  try {
+    res.json({ url: await getSignedUrl(attachment.storagePath) })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to mint signed URL' })
   }
 })
 

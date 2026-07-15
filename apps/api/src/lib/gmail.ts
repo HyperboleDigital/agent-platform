@@ -125,6 +125,13 @@ export async function checkGmailStatus(clientId: string): Promise<GmailStatus> {
   }
 }
 
+// Removes the stored refresh token — escalations fall back to Slack-only
+// until the client reconnects (or connects a different account).
+export async function disconnectGmail(clientId: string): Promise<void> {
+  const { error } = await supabase.from('gmail_tokens').delete().eq('client_id', clientId)
+  if (error) throw error
+}
+
 // Sends a standalone email from the client's connected Gmail. Used for
 // escalation notices to a human. No-op-safe: throws if not connected, callers
 // decide how to degrade.

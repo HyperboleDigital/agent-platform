@@ -1,4 +1,4 @@
-import type { Client, Lead } from '@agent-platform/shared'
+import type { Client, Lead, LeadStatus } from '@agent-platform/shared'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
 
@@ -55,10 +55,21 @@ export interface DashboardStats {
 }
 
 export interface KnowledgeDoc {
-  id: string
+  id: string // document_id — groups every chunk from one upload/paste
   title: string
   url: string | null
+  description: string | null
+  fileId: string | null
   created_at: string
+}
+
+export interface KnowledgeFile {
+  id: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+  uploadedBy: string | null
+  createdAt: string
 }
 
 export interface ConnectorStatus {
@@ -234,7 +245,7 @@ export interface VisibilityTrendPoint {
   total: number
 }
 
-export type RequestStatus = 'open' | 'in_progress' | 'done' | 'declined'
+export type RequestStatus = 'open' | 'in_progress' | 'done' | 'declined' | 'cancelled'
 
 export interface ChangeRequest {
   id: string
@@ -243,6 +254,7 @@ export interface ChangeRequest {
   description: string
   status: RequestStatus
   createdBy: string | null
+  cancelReason: string | null
   createdAt: string
   updatedAt: string
   completedAt: string | null
@@ -250,6 +262,42 @@ export interface ChangeRequest {
 
 export interface ChangeRequestWithClient extends ChangeRequest {
   clientName: string
+}
+
+export interface RequestEvent {
+  id: string
+  requestId: string
+  fromStatus: RequestStatus | null
+  toStatus: RequestStatus
+  changedBy: string | null
+  note: string | null
+  createdAt: string
+}
+
+export interface RequestComment {
+  id: string
+  requestId: string
+  authorId: string
+  isSuperadmin: boolean
+  body: string
+  createdAt: string
+}
+
+export interface RequestAttachment {
+  id: string
+  requestId: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+  uploadedBy: string | null
+  createdAt: string
+}
+
+export interface RequestDetail {
+  request: ChangeRequest
+  events: RequestEvent[]
+  comments: RequestComment[]
+  attachments: RequestAttachment[]
 }
 
 export interface NotificationSettings {
@@ -365,6 +413,27 @@ export const api = {
       request<ChangeRequest>(`/clients/${id}/requests`, { method: 'POST', body: JSON.stringify({ title, description }) }),
     updateRequestStatus: (id: string, reqId: string, status: RequestStatus) =>
       request<ChangeRequest>(`/clients/${id}/requests/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    requestDetail: (id: string, reqId: string) => request<RequestDetail>(`/clients/${id}/requests/${reqId}`),
+    cancelRequest: (id: string, reqId: string, reason: string) =>
+      request<ChangeRequest>(`/clients/${id}/requests/${reqId}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    addRequestComment: (id: string, reqId: string, body: string) =>
+      request<RequestComment>(`/clients/${id}/requests/${reqId}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+    uploadRequestAttachment: async (id: string, reqId: string, file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch(`${BASE}/clients/${id}/requests/${reqId}/attachments`, {
+        method: 'POST',
+        headers: await authHeaders(),
+        body: form
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `Upload failed: ${res.status}`)
+      }
+      return res.json() as Promise<RequestAttachment>
+    },
+    requestAttachmentUrl: (id: string, reqId: string, attachmentId: string) =>
+      request<{ url: string }>(`/clients/${id}/requests/${reqId}/attachments/${attachmentId}/url`),
     notificationSettings: (id: string) => request<NotificationSettings>(`/clients/${id}/notification-settings`),
     updateNotificationSettings: (id: string, patch: {
       emailEnabled?: boolean; emailTo?: string; slackEnabled?: boolean; slackWebhookUrl?: string; events?: Record<string, boolean>
@@ -401,15 +470,20 @@ export const api = {
     sendReport: (id: string, reportId: string, to: string) =>
       request<SendReportResult>(`/clients/${id}/reports/${reportId}/send`, { method: 'POST', body: JSON.stringify({ to }) }),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
+    updateLeadStatus: (id: string, leadId: string, status: LeadStatus) =>
+      request<Lead>(`/clients/${id}/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    deleteLead: (id: string, leadId: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/leads/${leadId}`, { method: 'DELETE' }),
     knowledge: (id: string) => request<KnowledgeDoc[]>(`/clients/${id}/knowledge`),
-    addKnowledge: (id: string, title: string, content: string) =>
-      request<{ ids: string[]; chunks: number }>(`/clients/${id}/knowledge`, {
+    addKnowledge: (id: string, title: string, content: string, description?: string) =>
+      request<{ documentId: string; ids: string[]; chunks: number }>(`/clients/${id}/knowledge`, {
         method: 'POST',
-        body: JSON.stringify({ title, content })
+        body: JSON.stringify({ title, content, description })
       }),
-    uploadKnowledge: async (id: string, file: File) => {
+    uploadKnowledge: async (id: string, file: File, description?: string) => {
       const form = new FormData()
       form.append('file', file)
+      if (description) form.append('description', description)
       const res = await fetch(`${BASE}/clients/${id}/knowledge/upload`, {
         method: 'POST',
         headers: await authHeaders(),
@@ -419,10 +493,18 @@ export const api = {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error ?? `Upload failed: ${res.status}`)
       }
-      return res.json() as Promise<{ ids: string[]; chunks: number }>
+      return res.json() as Promise<{ documentId: string; ids: string[]; chunks: number }>
     },
+    deleteKnowledgeDocument: (id: string, documentId: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/knowledge/${documentId}`, { method: 'DELETE' }),
+    updateKnowledgeDescription: (id: string, documentId: string, description: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/knowledge/${documentId}`, { method: 'PATCH', body: JSON.stringify({ description }) }),
+    knowledgeFiles: (id: string) => request<KnowledgeFile[]>(`/clients/${id}/knowledge/files`),
+    knowledgeFileUrl: (id: string, fileId: string) =>
+      request<{ url: string }>(`/clients/${id}/knowledge/files/${fileId}/url`),
     connectors: (id: string) => request<ConnectorStatus>(`/clients/${id}/connectors`),
-    gmailAuthUrl: (id: string) => request<{ url: string }>(`/clients/${id}/gmail/auth-url`)
+    gmailAuthUrl: (id: string) => request<{ url: string }>(`/clients/${id}/gmail/auth-url`),
+    disconnectGmail: (id: string) => request<{ ok: boolean }>(`/clients/${id}/gmail`, { method: 'DELETE' })
   },
   billing: {
     plans: () => request<PlanInfo[]>('/billing/plans'),

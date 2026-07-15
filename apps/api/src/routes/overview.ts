@@ -30,7 +30,8 @@ overviewRouter.patch('/requests/:clientId/:requestId', async (req, res) => {
   const status = req.body?.status
   if (typeof status !== 'string') return res.status(400).json({ error: 'status is required' })
   try {
-    res.json(await updateRequestStatus(req.params.clientId, req.params.requestId, status as never))
+    const identity = getIdentity(req)
+    res.json(await updateRequestStatus(req.params.clientId, req.params.requestId, status as never, identity?.userId ?? null))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update status' })
   }

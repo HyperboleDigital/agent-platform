@@ -8,11 +8,11 @@ import Dashboard from './pages/Dashboard'
 import Overview from './pages/Overview'
 import ClientLayout from './pages/client/ClientLayout'
 import {
-  ClientHome, KnowledgeSection, LeadsSection, ConnectorsSection, BillingSection, ConfigSection
+  ClientHome, LeadsSection, ConnectorsSection, BillingSection, ConfigSection
 } from './pages/ClientDetail'
 import { Gate } from './components/gate'
-import Seo from './pages/client/Seo'
-import Visibility from './pages/client/Visibility'
+import Assistant from './pages/client/Assistant'
+import SeoVisibility from './pages/client/SeoVisibility'
 import Content from './pages/client/Content'
 import Requests from './pages/client/Requests'
 import Reports from './pages/client/Reports'
@@ -44,11 +44,10 @@ const router = createBrowserRouter([
             element: <ClientLayout />,
             children: [
               { index: true, element: <ClientHome /> },
-              { path: 'knowledge', element: <KnowledgeSection /> },
+              { path: 'assistant', element: <Assistant /> },
               { path: 'leads', element: <LeadsSection /> },
               { path: 'connectors', element: <ConnectorsSection /> },
-              { path: 'seo', element: <Gate service="seo"><Seo /></Gate> },
-              { path: 'visibility', element: <Gate service="seo"><Visibility /></Gate> },
+              { path: 'seo', element: <Gate service="seo"><SeoVisibility /></Gate> },
               { path: 'content', element: <Gate service="content"><Content /></Gate> },
               { path: 'requests', element: <Requests /> },
               { path: 'reports', element: <Reports /> },

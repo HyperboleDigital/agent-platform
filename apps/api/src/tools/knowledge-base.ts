@@ -1,5 +1,7 @@
+import { randomUUID } from 'crypto'
 import { supabase } from '../lib/supabase'
 import { embeddingsEnabled, embedQuery, embedDocuments, chunkText } from '../lib/embeddings'
+import { deleteKnowledgeFile } from '../lib/knowledge-files'
 
 interface DocRow {
   title: string
@@ -56,34 +58,95 @@ export async function searchDocs(query: string, clientId: string): Promise<strin
 }
 
 export interface KnowledgeDoc {
-  id: string
+  id: string          // document_id — groups every chunk from one upload/paste
   title: string
   url: string | null
+  description: string | null
+  fileId: string | null
   created_at: string
 }
 
+interface DocumentGroupRow {
+  document_id: string
+  title: string
+  url: string | null
+  description: string | null
+  file_id: string | null
+  created_at: string
+}
+
+// Whether migrate_2026-07-16_knowledge-delete.sql has been applied yet
+// (document_id, file_id, description all land together in that one
+// migration). Probed once and cached — until it runs, we transparently fall
+// back to the pre-migration behavior (one row per chunk, no per-document
+// grouping/delete/description) rather than erroring, so listing/uploading
+// never breaks on migration lag.
+let documentColumnsSupported: boolean | null = null
+async function hasDocumentColumns(): Promise<boolean> {
+  if (documentColumnsSupported !== null) return documentColumnsSupported
+  const { error } = await supabase.from('knowledge_base').select('document_id, file_id, description').limit(1)
+  documentColumnsSupported = !error
+  if (!documentColumnsSupported) {
+    console.warn('[knowledge-base] document_id/file_id/description columns not found — run supabase/migrate_2026-07-16_knowledge-delete.sql to enable per-document delete/replace/description. Falling back to legacy per-chunk listing for now.')
+  }
+  return documentColumnsSupported
+}
+
+// knowledge_base stores one row per CHUNK (chunkText splits ingested
+// content) — group by document_id so the dashboard lists/deletes a whole
+// upload as one unit, not chunk-by-chunk.
 export async function listDocuments(clientId: string): Promise<KnowledgeDoc[]> {
-  const { data } = await supabase
+  if (await hasDocumentColumns()) {
+    const { data, error } = await supabase
+      .from('knowledge_base')
+      .select('document_id, title, url, description, file_id, created_at')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: true })
+    if (error) { console.error('[knowledge-base] listDocuments error', error.message); return [] }
+
+    const byDocument = new Map<string, DocumentGroupRow>()
+    for (const row of (data ?? []) as DocumentGroupRow[]) {
+      if (!byDocument.has(row.document_id)) byDocument.set(row.document_id, row)
+    }
+    return Array.from(byDocument.values())
+      .map(r => ({ id: r.document_id, title: r.title, url: r.url, description: r.description, fileId: r.file_id, created_at: r.created_at }))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+  }
+
+  // Legacy fallback: one row per chunk, each listed as its own "document".
+  const { data, error } = await supabase
     .from('knowledge_base')
     .select('id, title, url, created_at')
     .eq('client_id', clientId)
     .order('created_at', { ascending: false })
-  return (data ?? []) as KnowledgeDoc[]
+  if (error) { console.error('[knowledge-base] listDocuments (legacy) error', error.message); return [] }
+  return (data ?? []).map(r => ({ id: r.id, title: r.title, url: r.url, description: null, fileId: null, created_at: r.created_at }))
 }
 
-// Chunks content and stores one row per chunk, embedding each when Voyage is
-// configured. Returns the ids of the inserted rows.
+export interface AddDocumentOptions {
+  url?: string
+  fileId?: string
+  description?: string
+}
+
+// Chunks content and stores one row per chunk (all sharing one document_id),
+// embedding each when Voyage is configured. `fileId` links the chunks back
+// to the original uploaded file (omit for pasted-text documents).
 export async function addDocument(
   clientId: string,
   title: string,
   content: string,
-  url?: string
-): Promise<string[]> {
+  options: AddDocumentOptions = {}
+): Promise<{ documentId: string; ids: string[] }> {
+  const { url, fileId, description } = options
   const chunks = chunkText(content)
   const embeddings = embeddingsEnabled() ? await embedDocuments(chunks) : []
+  const useDocumentColumns = await hasDocumentColumns()
+  const documentId = randomUUID()
 
   const rows = chunks.map((chunk, i) => ({
     client_id: clientId,
+    ...(useDocumentColumns ? { document_id: documentId, file_id: fileId ?? null, description: description ?? null } : {}),
     title,
     content: chunk,
     url: url ?? null,
@@ -92,5 +155,49 @@ export async function addDocument(
 
   const { data, error } = await supabase.from('knowledge_base').insert(rows).select('id')
   if (error) throw error
-  return (data as { id: string }[]).map(r => r.id)
+  const ids = (data as { id: string }[]).map(r => r.id)
+  // Legacy fallback: without a document_id column, each chunk row is its own
+  // "document" in listDocuments above — hand back the first chunk's id so
+  // callers still get a stable reference.
+  return { documentId: useDocumentColumns ? documentId : ids[0], ids }
+}
+
+// Deletes every chunk in a document, and — if the document came from an
+// uploaded file — the original file's bytes + metadata row too.
+export async function deleteDocument(clientId: string, documentId: string): Promise<void> {
+  const useDocumentColumns = await hasDocumentColumns()
+  const matchColumn = useDocumentColumns ? 'document_id' : 'id'
+
+  const { data: rows, error: selectError } = await supabase
+    .from('knowledge_base')
+    .select(useDocumentColumns ? 'file_id' : 'id')
+    .eq('client_id', clientId)
+    .eq(matchColumn, documentId)
+  if (selectError) throw selectError
+
+  const { error: deleteError } = await supabase
+    .from('knowledge_base')
+    .delete()
+    .eq('client_id', clientId)
+    .eq(matchColumn, documentId)
+  if (deleteError) throw deleteError
+
+  if (useDocumentColumns) {
+    const fileIds = [...new Set((rows ?? []).map(r => (r as { file_id: string | null }).file_id).filter(Boolean))] as string[]
+    await Promise.all(fileIds.map(id => deleteKnowledgeFile(id)))
+  }
+}
+
+// Updates the user-editable description on every chunk row of a document
+// (title/url are already duplicated per-chunk this way — same pattern).
+export async function updateDocumentDescription(clientId: string, documentId: string, description: string): Promise<void> {
+  if (!(await hasDocumentColumns())) {
+    throw new Error('Descriptions require supabase/migrate_2026-07-16_knowledge-delete.sql to be applied first.')
+  }
+  const { error } = await supabase
+    .from('knowledge_base')
+    .update({ description })
+    .eq('client_id', clientId)
+    .eq('document_id', documentId)
+  if (error) throw error
 }

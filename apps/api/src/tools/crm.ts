@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase'
-import type { Lead, Channel } from '@agent-platform/shared'
+import type { Lead, Channel, LeadStatus } from '@agent-platform/shared'
 
 interface LeadRow {
   id: string
@@ -9,6 +9,7 @@ interface LeadRow {
   intent: string
   summary: string
   channel: string
+  status: LeadStatus
   created_at: string
 }
 
@@ -21,11 +22,12 @@ function fromRow(row: LeadRow): Lead {
     intent: row.intent,
     summary: row.summary,
     channel: row.channel as Channel,
+    status: row.status,
     createdAt: row.created_at
   }
 }
 
-export async function logLead(lead: Omit<Lead, 'id' | 'createdAt' | 'channel'>): Promise<void> {
+export async function logLead(lead: Omit<Lead, 'id' | 'createdAt' | 'channel' | 'status'>): Promise<void> {
   await supabase.from('leads').insert({
     client_id: lead.clientId,
     name: lead.name,
@@ -42,4 +44,26 @@ export async function getLeads(clientId: string): Promise<Lead[]> {
     .eq('client_id', clientId)
     .order('created_at', { ascending: false })
   return ((data ?? []) as LeadRow[]).map(fromRow)
+}
+
+const VALID_STATUSES: LeadStatus[] = ['new', 'followed_up']
+
+export async function updateLeadStatus(clientId: string, leadId: string, status: LeadStatus): Promise<Lead> {
+  if (!VALID_STATUSES.includes(status)) throw new Error(`Invalid status: ${status}`)
+  const { data, error } = await supabase
+    .from('leads')
+    .update({ status })
+    .eq('client_id', clientId)
+    .eq('id', leadId)
+    .select()
+    .single()
+  if (error) throw error
+  return fromRow(data as LeadRow)
+}
+
+// Superadmin-only (see routes/clients.ts) — clients don't get a delete
+// control yet, only the followed-up toggle above.
+export async function deleteLead(clientId: string, leadId: string): Promise<void> {
+  const { error } = await supabase.from('leads').delete().eq('client_id', clientId).eq('id', leadId)
+  if (error) throw error
 }

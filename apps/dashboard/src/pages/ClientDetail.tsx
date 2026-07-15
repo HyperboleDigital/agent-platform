@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import {
-  Upload, FileText, Users, Plug, CreditCard, Mail, MessageSquare, CheckCircle2, XCircle
+  Users, Plug, CreditCard, Mail, MessageSquare, MessageSquarePlus,
+  CheckCircle2, XCircle, Undo2, Trash2
 } from 'lucide-react'
+import type { LeadStatus } from '@agent-platform/shared'
 import { api } from '@/lib/api'
-import type { ConnectorStatus, ServiceKey } from '@/lib/api'
+import type { ConnectorStatus, RequestStatus, ServiceKey } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { StatTile } from '@/components/stat-tile'
@@ -19,6 +21,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConversationsChart } from '@/components/charts/conversations-chart'
 import { UsageBar } from '@/components/usage-bar'
+import { RequestsTable } from '@/components/requests-table'
 
 // ── Section wrappers ─────────────────────────────────────────────────────────
 // Each maps a /clients/:id/<section> route to the section component below,
@@ -45,28 +48,81 @@ export function ClientHome() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatTile label="Messages this week" value={stats?.messagesThisWeek ?? '—'} />
-        <StatTile label="Leads this week" value={stats?.leadsThisWeek ?? '—'} />
-        <StatTile label="Open escalations" value={stats?.openEscalations ?? '—'} />
-        <StatTile label="Resolved rate" value={pct} />
-      </div>
+      {!stats ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[72px] w-full" />)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Messages this week" value={stats.messagesThisWeek} />
+          <StatTile label="Leads this week" value={stats.leadsThisWeek} />
+          <StatTile label="Open escalations" value={stats.openEscalations} />
+          <StatTile label="Resolved rate" value={pct} />
+        </div>
+      )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatTile label="Conversations (lifetime)" value={stats?.totalConversations ?? '—'} />
-        <StatTile label="Leads captured (lifetime)" value={stats?.totalLeadsCaptured ?? '—'} />
-        <StatTile label="Questions answered" value={stats?.questionsAnswered ?? '—'} />
-        <StatTile label="Est. hours saved" value={stats ? `${stats.estimatedHoursSaved}h` : '—'} />
-      </div>
+      {!stats ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[72px] w-full" />)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Conversations (lifetime)" value={stats.totalConversations} />
+          <StatTile label="Leads captured (lifetime)" value={stats.totalLeadsCaptured} />
+          <StatTile label="Questions answered" value={stats.questionsAnswered} />
+          <StatTile label="Est. hours saved" value={`${stats.estimatedHoursSaved}h`} />
+        </div>
+      )}
 
       <ConversationsCard clientId={id} />
+      <RequestsCard clientId={id} />
     </div>
   )
 }
 
-export function KnowledgeSection() {
-  const { clientId } = useClientCtx()
-  return <KnowledgeTab clientId={clientId} />
+function RequestsCard({ clientId }: { clientId: string }) {
+  const key = ['requests', clientId]
+  const { data: requests, isLoading } = useSWR(key, () => api.clients.requests(clientId))
+  const { data: me } = useSWR('me', api.me)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const openCount = requests?.filter(r => r.status === 'open' || r.status === 'in_progress').length ?? 0
+
+  async function changeStatus(reqClientId: string, reqId: string, status: RequestStatus) {
+    try {
+      await api.clients.updateRequestStatus(reqClientId, reqId, status)
+      mutate(key)
+      mutate(['request-detail', reqClientId, reqId])
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update status')
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Change requests</CardTitle>
+        <Link to="requests" className="text-sm text-primary hover:underline">View all</Link>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : !requests?.length ? (
+          <EmptyState icon={MessageSquarePlus} title="No requests yet" description="Ask for a website update from the Requests section." />
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted-foreground">{openCount} open</p>
+            <RequestsTable
+              requests={requests.slice(0, 3)}
+              isSuperadmin={!!me?.isSuperadmin}
+              expandedId={expandedId}
+              onToggle={id => setExpandedId(prev => (prev === id ? null : id))}
+              onChangeStatus={changeStatus}
+            />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
 }
 
 export function LeadsSection() {
@@ -75,8 +131,8 @@ export function LeadsSection() {
 }
 
 export function ConnectorsSection() {
-  const { clientId } = useClientCtx()
-  return <ConnectorsTab clientId={clientId} />
+  const { clientId, client } = useClientCtx()
+  return client ? <ConnectorsTab clientId={clientId} client={client} /> : <Skeleton className="h-40 w-full" />
 }
 
 export function BillingSection() {
@@ -108,102 +164,31 @@ function ConversationsCard({ clientId }: { clientId: string }) {
   )
 }
 
-function KnowledgeTab({ clientId }: { clientId: string }) {
-  const key = ['knowledge', clientId]
-  const { data: docs } = useSWR(key, () => api.clients.knowledge(clientId))
-  const [title, setTitle] = useState('')
-  const [content, setContent] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  async function add() {
-    if (!title || !content) return
-    setSaving(true)
-    try {
-      await api.clients.addKnowledge(clientId, title, content)
-      setTitle(''); setContent('')
-      mutate(key)
-      toast.success('Document added')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to add document')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(true)
-    try {
-      await api.clients.uploadKnowledge(clientId, file)
-      mutate(key)
-      toast.success(`Uploaded "${file.name}"`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Upload failed')
-    } finally {
-      setUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-4">
-      <Card>
-        <CardContent className="flex flex-col gap-3 pt-5">
-          <div className="flex items-center gap-3">
-            <Button variant="secondary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-              <Upload className="h-4 w-4" />
-              {uploading ? 'Uploading…' : 'Upload file (PDF, Word, txt, md)'}
-            </Button>
-            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.md" onChange={onFileChosen} className="hidden" />
-          </div>
-
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">or paste text directly</div>
-
-          <div className="grid gap-2">
-            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Document title" />
-            <Textarea value={content} onChange={e => setContent(e.target.value)} placeholder="Content…" rows={4} />
-            <Button onClick={add} disabled={saving} className="justify-self-start">
-              {saving ? 'Adding…' : 'Add document'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="overflow-hidden p-0">
-        {docs?.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Title</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Added</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {docs.map(d => (
-                <TableRow key={d.id}>
-                  <TableCell className="font-medium">{d.title}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{d.url}</a> : '—'}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{new Date(d.created_at).toLocaleDateString()}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <EmptyState icon={FileText} title="No documents yet" description="Upload a file or paste text above to build the knowledge base." />
-        )}
-      </Card>
-    </div>
-  )
-}
-
 function LeadsTab({ clientId }: { clientId: string }) {
-  const { data: leads } = useSWR(['leads', clientId], () => api.clients.leads(clientId))
+  const key = ['leads', clientId]
+  const { data: leads } = useSWR(key, () => api.clients.leads(clientId))
+  const { data: me } = useSWR('me', api.me)
+
+  async function setStatus(leadId: string, status: LeadStatus) {
+    try {
+      await api.clients.updateLeadStatus(clientId, leadId, status)
+      mutate(key)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update lead')
+    }
+  }
+
+  async function remove(leadId: string) {
+    if (!window.confirm('Delete this lead? This can\'t be undone.')) return
+    try {
+      await api.clients.deleteLead(clientId, leadId)
+      mutate(key)
+      toast.success('Lead deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete lead')
+    }
+  }
+
   return (
     <Card className="overflow-hidden p-0">
       {leads?.length ? (
@@ -214,15 +199,41 @@ function LeadsTab({ clientId }: { clientId: string }) {
               <TableHead>Name</TableHead>
               <TableHead>Intent</TableHead>
               <TableHead>When</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {leads.map(l => (
-              <TableRow key={l.id}>
+              <TableRow key={l.id} className={l.status === 'followed_up' ? 'opacity-60' : undefined}>
                 <TableCell className="font-medium">{l.email}</TableCell>
                 <TableCell className="text-muted-foreground">{l.name || '—'}</TableCell>
                 <TableCell className="text-muted-foreground">{l.intent || '—'}</TableCell>
                 <TableCell className="text-muted-foreground">{new Date(l.createdAt).toLocaleDateString()}</TableCell>
+                <TableCell>
+                  <Badge variant={l.status === 'followed_up' ? 'success' : 'secondary'}>
+                    <StatusDot variant={l.status === 'followed_up' ? 'success' : 'secondary'} />
+                    {l.status === 'followed_up' ? 'Followed up' : 'New'}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1">
+                    {l.status === 'followed_up' ? (
+                      <Button variant="ghost" size="sm" onClick={() => setStatus(l.id, 'new')} title="Mark as new again">
+                        <Undo2 className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={() => setStatus(l.id, 'followed_up')}>
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Followed up
+                      </Button>
+                    )}
+                    {me?.isSuperadmin && (
+                      <Button variant="ghost" size="sm" onClick={() => remove(l.id)} title="Delete lead">
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -249,10 +260,11 @@ function statusLabel(status: ConnectorStatus['gmail']['status']): string {
   }
 }
 
-function ConnectorsTab({ clientId }: { clientId: string }) {
+function ConnectorsTab({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
   const key = ['connectors', clientId]
   const { data, isLoading } = useSWR(key, () => api.clients.connectors(clientId), { refreshInterval: 30_000 })
   const [connecting, setConnecting] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
 
   async function connectGmail() {
     setConnecting(true)
@@ -263,6 +275,20 @@ function ConnectorsTab({ clientId }: { clientId: string }) {
       toast.error(err instanceof Error ? err.message : 'Failed to start Gmail connection')
     } finally {
       setConnecting(false)
+    }
+  }
+
+  async function disconnectGmail() {
+    if (!window.confirm('Disconnect Gmail? Escalation emails will stop sending until you reconnect (Slack still works).')) return
+    setDisconnecting(true)
+    try {
+      await api.clients.disconnectGmail(clientId)
+      mutate(key)
+      toast.success('Gmail disconnected')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to disconnect Gmail')
+    } finally {
+      setDisconnecting(false)
     }
   }
 
@@ -295,40 +321,110 @@ function ConnectorsTab({ clientId }: { clientId: string }) {
               )}
             </div>
           </div>
-          {data.gmail.configured && data.gmail.status !== 'ok' && (
-            <Button variant="secondary" size="sm" onClick={connectGmail} disabled={connecting}>
-              {connecting ? 'Opening…' : data.gmail.status === 'not_connected' ? 'Connect' : 'Reconnect'}
-            </Button>
+          {data.gmail.configured && (
+            <div className="flex shrink-0 gap-2">
+              <Button variant="secondary" size="sm" onClick={connectGmail} disabled={connecting}>
+                {connecting ? 'Opening…' : data.gmail.status === 'not_connected' ? 'Connect' : 'Reconnect with a different account'}
+              </Button>
+              {data.gmail.status === 'ok' && (
+                <Button variant="outline" size="sm" onClick={disconnectGmail} disabled={disconnecting}>
+                  {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                </Button>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="flex items-center gap-3 pt-5">
+      <SlackConnectorCard clientId={clientId} client={client} configured={data.slack.configured} />
+      <CalendlyConnectorCard clientId={clientId} client={client} configured={data.calendly.configured} />
+    </div>
+  )
+}
+
+function SlackConnectorCard({ clientId, client, configured }: {
+  clientId: string; client: import('@agent-platform/shared').Client; configured: boolean
+}) {
+  const cfg = client.agentConfig ?? {}
+  const [webhook, setWebhook] = useState(cfg.slackWebhook ?? '')
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, slackWebhook: webhook || undefined } })
+      mutate(['client', clientId])
+      mutate(['connectors', clientId])
+      toast.success('Slack webhook saved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-3 pt-5">
+        <div className="flex items-center gap-3">
           <MessageSquare className="h-4 w-4 text-muted-foreground" />
           <div>
             <div className="font-medium">Slack escalations</div>
-            <Badge variant={data.slack.configured ? 'success' : 'secondary'} className="mt-1.5">
-              <StatusDot variant={data.slack.configured ? 'success' : 'secondary'} />
-              {data.slack.configured ? 'Configured' : 'Not configured'}
+            <Badge variant={configured ? 'success' : 'secondary'} className="mt-1.5">
+              <StatusDot variant={configured ? 'success' : 'secondary'} />
+              {configured ? 'Configured' : 'Not configured'}
             </Badge>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="flex gap-2">
+          <Input value={webhook} onChange={e => setWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/…" />
+          <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
-      <Card>
-        <CardContent className="flex items-center gap-3 pt-5">
+function CalendlyConnectorCard({ clientId, client, configured }: {
+  clientId: string; client: import('@agent-platform/shared').Client; configured: boolean
+}) {
+  const cfg = client.agentConfig ?? {}
+  const [link, setLink] = useState(cfg.calendlyLink ?? '')
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, calendlyLink: link || undefined } })
+      mutate(['client', clientId])
+      mutate(['connectors', clientId])
+      toast.success('Calendly link saved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-3 pt-5">
+        <div className="flex items-center gap-3">
           <Plug className="h-4 w-4 text-muted-foreground" />
           <div>
             <div className="font-medium">Calendly</div>
-            <Badge variant={data.calendly.configured ? 'success' : 'secondary'} className="mt-1.5">
-              <StatusDot variant={data.calendly.configured ? 'success' : 'secondary'} />
-              {data.calendly.configured ? 'Configured' : 'Not configured — set a link in Config'}
+            <Badge variant={configured ? 'success' : 'secondary'} className="mt-1.5">
+              <StatusDot variant={configured ? 'success' : 'secondary'} />
+              {configured ? 'Configured' : 'Not configured'}
             </Badge>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+        <div className="flex gap-2">
+          <Input value={link} onChange={e => setLink(e.target.value)} placeholder="https://calendly.com/your-link" />
+          <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -549,14 +645,13 @@ function ServicesCard({ clientId, comped }: { clientId: string; comped: boolean 
 function ConfigTab({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
   const cfg = client.agentConfig ?? {}
   const [systemPromptExtra, setExtra] = useState(cfg.systemPromptExtra ?? '')
-  const [calendlyLink, setCalendly] = useState(cfg.calendlyLink ?? '')
   const [escalationEmail, setEscalationEmail] = useState(cfg.escalationEmail ?? '')
   const [saving, setSaving] = useState(false)
 
   async function save() {
     setSaving(true)
     try {
-      await api.clients.upsert({ id: client.id, agentConfig: { ...cfg, systemPromptExtra, calendlyLink, escalationEmail } })
+      await api.clients.upsert({ id: client.id, agentConfig: { ...cfg, systemPromptExtra, escalationEmail } })
       mutate(['client', clientId])
       toast.success('Config saved', { icon: <CheckCircle2 className="h-4 w-4" /> })
     } catch (err) {
@@ -572,10 +667,6 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
         <div className="grid gap-1.5">
           <Label>Extra system prompt</Label>
           <Textarea value={systemPromptExtra} onChange={e => setExtra(e.target.value)} rows={4} />
-        </div>
-        <div className="grid gap-1.5">
-          <Label>Calendly link</Label>
-          <Input value={calendlyLink} onChange={e => setCalendly(e.target.value)} />
         </div>
         <div className="grid gap-1.5">
           <Label>Escalation email (where "get a human" requests are sent)</Label>

@@ -2,8 +2,8 @@ import { Outlet, Link, useLocation } from 'react-router-dom'
 import useSWR from 'swr'
 import type { LucideIcon } from 'lucide-react'
 import {
-  Users, Sparkles, LayoutDashboard, FileText, Plug, Search, Bot,
-  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock
+  Users, Sparkles, LayoutDashboard, Plug, Search, Bot,
+  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2
 } from 'lucide-react'
 import { UserButton } from '@clerk/react'
 import { dark } from '@clerk/themes'
@@ -28,11 +28,10 @@ interface ClientNavItem {
 }
 const CLIENT_SECTIONS: ClientNavItem[] = [
   { label: 'Home', to: '', icon: LayoutDashboard },
-  { label: 'Knowledge', to: 'knowledge', icon: FileText },
+  { label: 'Chat Assistant', to: 'assistant', icon: Bot },
   { label: 'Leads', to: 'leads', icon: Users },
   { label: 'Connectors', to: 'connectors', icon: Plug },
-  { label: 'SEO', to: 'seo', icon: Search, serviceKey: 'seo' },
-  { label: 'AI Visibility', to: 'visibility', icon: Bot, serviceKey: 'seo' },
+  { label: 'SEO + AI Visibility', to: 'seo', icon: Search, serviceKey: 'seo' },
   { label: 'Content', to: 'content', icon: Sparkles, serviceKey: 'content' },
   { label: 'Requests', to: 'requests', icon: MessageSquarePlus },
   { label: 'Reports', to: 'reports', icon: FileBarChart },
@@ -123,12 +122,54 @@ function Sidebar() {
   )
 }
 
+// Shows what you're currently looking at — the client name (+ section) when
+// inside /clients/:id/*, or a platform-level label otherwise. Otherwise this
+// header space just sits empty.
+function Breadcrumb() {
+  const location = useLocation()
+  const clientId = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
+  const { data: client } = useSWR(clientId ? ['client', clientId] : null, () => api.clients.get(clientId!))
+
+  if (clientId) {
+    const section = CLIENT_SECTIONS.find(item => {
+      const to = item.to ? `/clients/${clientId}/${item.to}` : `/clients/${clientId}`
+      return location.pathname === to
+    })
+    return (
+      <div className="flex items-center gap-2 text-sm">
+        <Building2 className="h-4 w-4 text-muted-foreground" />
+        <span className="font-medium">{client?.name ?? 'Loading…'}</span>
+        {section && section.to && <span className="text-muted-foreground">/ {section.label}</span>}
+      </div>
+    )
+  }
+
+  if (location.pathname === '/overview') {
+    return (
+      <div className="flex items-center gap-2 text-sm">
+        <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
+        <span className="font-medium">Platform Overview</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <Users className="h-4 w-4 text-muted-foreground" />
+      <span className="font-medium">All Clients</span>
+    </div>
+  )
+}
+
 function Topbar() {
   const { theme } = useTheme()
   return (
-    <header className="flex h-14 shrink-0 items-center justify-end gap-2 border-b border-border px-5">
-      <ThemeToggle />
-      <UserButton appearance={{ baseTheme: theme === 'light' ? undefined : dark } as never} />
+    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-5">
+      <Breadcrumb />
+      <div className="flex items-center gap-2">
+        <ThemeToggle />
+        <UserButton appearance={{ baseTheme: theme === 'light' ? undefined : dark } as never} />
+      </div>
     </header>
   )
 }
