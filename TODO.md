@@ -4,6 +4,23 @@ Working list of what's next / unfinished. Owen reviews and edits this
 directly — treat entries here as authoritative over anything a session
 summary elsewhere implies.
 
+## Active initiative (2026-07-15) → see `docs/plans/`
+
+Two approved living plans now drive the roadmap. Full detail + running
+checkpoints live in the plan docs; this is just the pointer:
+
+- **`docs/plans/seo-automation.md`** — automate SEO/GEO: URL → audit → fixes →
+  results → report. **Next: Phase 0** (DataForSEO + Haiku cost-safe test on one
+  site + background-job infra). **Blocked on:** Owen creating a DataForSEO
+  pay-as-you-go account, then adding the credential to `apps/api/.env`.
+- **`docs/plans/website-rebuild.md`** — automated Framer rebuild of a client's
+  old site (control = frictionless SEO + lock-in). Built after SEO Phase 0;
+  feasibility spike desk-research done, hands-on spike pending.
+
+The **Scheduler** and **DataForSEO** items below are now folded into the SEO plan
+(job infra ships in Phase 0; DataForSEO is the chosen crawler, no longer
+"deferred").
+
 ## Deferred from the Phase 4 plan (not started)
 
 - **Scheduler** — everything built in Phase 4 (SEO audits, PageSpeed

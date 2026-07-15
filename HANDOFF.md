@@ -1,14 +1,44 @@
 # Handoff — read this first in a new chat
 
-Last updated: 2026-07-14, end of session. This doc exists so a fresh Claude
+Last updated: 2026-07-15, end of session. This doc exists so a fresh Claude
 session (or a human) can pick up instantly. Delete/replace it once it's stale
 — it's a snapshot, not permanent docs (that's `README.md`). See `TODO.md` for
 the working punch list — Owen edits that directly, treat it as authoritative.
 
-## State: everything committed, nothing pending
+## Current focus: two new plans (2026-07-15)
 
-Unlike prior handoffs, there is **no uncommitted work**. `git status --short`
-is clean. Every phase below is committed on `feat/dashboard-retrieval-escalation-mvp`.
+The active initiative is now **automating the SEO/GEO service** and, second, an
+**automated website-rebuild engine** on Framer. Both are written up as living
+plan docs — **read these before doing SEO/rebuild work**:
+
+- **`docs/plans/seo-automation.md`** — input a URL → audit → generate fixes →
+  track results → branded report. Approved; next action is **Phase 0** (a
+  cost-safe DataForSEO + Haiku test on one site, plus background-job infra).
+  Blocked only on Owen creating a DataForSEO account.
+- **`docs/plans/website-rebuild.md`** — ingest a client's old site → rebuild it
+  SEO-clean on Framer (a platform we control). Approved; feasibility spike
+  desk-research done (Framer 3.0 Server/Canvas/Plugin APIs + MCP make it
+  feasible), hands-on spike pending. Built **after** SEO Phase 0 (shares the
+  crawler).
+
+**Checkpoint convention (so progress is never lost across chats):** each plan
+doc has a `## Checkpoint log` at the bottom. Append a dated entry whenever you
+make meaningful progress or change a decision — and always before ending a
+session or when context runs low. The plan docs are the durable source of truth;
+this Handoff just points at them.
+
+## State (2026-07-15)
+
+Phase 4 work below is committed on `feat/dashboard-retrieval-escalation-mvp`.
+The new-initiative planning docs (`docs/plans/*.md` + this Handoff/TODO update)
+are committed separately — no code was written yet for the new initiative.
+
+**Still uncommitted (from the prior session, NOT the new initiative):** GSC
+"Take snapshot" route + `gscProperty` config input + client-name rename —
+`apps/api/src/routes/clients.ts`, `apps/dashboard/src/lib/api.ts`,
+`apps/dashboard/src/pages/ClientDetail.tsx`, `apps/dashboard/src/pages/client/Seo.tsx`.
+Note the snapshot button may be superseded by the SEO-automation plan's rankings
+rebuild — decide whether to commit, keep, or drop these when that phase lands.
 
 ## Where things stand — by phase
 
@@ -164,6 +194,8 @@ revert when done.
 
 ## Key files to read before continuing
 
+- `docs/plans/seo-automation.md` + `docs/plans/website-rebuild.md` — the two
+  active initiatives (see "Current focus" above); read these first for new work
 - `TODO.md` — the actual next-steps list, Owen-maintained
 - `apps/dashboard/DESIGN_SYSTEM.md` — design system spec
 - `README.md` — normal project docs (stack, onboarding, integrations)
