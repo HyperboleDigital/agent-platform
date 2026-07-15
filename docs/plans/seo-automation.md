@@ -162,6 +162,17 @@ automatically from GSC data.
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Phase 2 — schema fix type, LIVE-VERIFIED)** — Second fix type:
+  schema.org JSON-LD (`draftSchemaFixes`/`createSchemaFixRequest`), operates on
+  the client's key pages (no paid crawl needed → free to verify), directly serves
+  GEO/AEO. Route `POST /:id/seo/fix/schema` (superadmin) + a "Schema markup"
+  button alongside the meta-fix one. Verifying caught two real bugs (guessed logo
+  URL; invalid `@type: "Project"`) → tightened the prompt to require valid
+  schema.org types and forbid invented URLs/asset paths; re-verified clean
+  (LocalBusiness + CreativeWork, grounded, no fake URLs). Known minor rough edge:
+  can still over-reach on a `founder`/entity name — acceptable because every fix
+  is a human-reviewed change request, not auto-applied. Next candidate fix type:
+  alt text (vision). GEO is the term to market under (see plan discussion).
 - **2026-07-15 (Phase 2 — fix generation, first type LIVE-VERIFIED)** — Turn
   crawl issues into Claude-generated fixes delivered as one-click change requests.
   First fix type = **titles + meta descriptions** (`lib/seo-fixes.ts`): finds the

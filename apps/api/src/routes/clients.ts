@@ -12,7 +12,7 @@ import { getMonthlyUsage } from '../lib/usage'
 import { getEntitlements, isEntitled } from '../lib/entitlements'
 import { runAudits, getAuditHistory } from '../lib/seo'
 import { startCrawl, refreshCrawl, getLatestCrawl, crawlConfigured } from '../lib/dataforseo'
-import { createMetaFixRequest } from '../lib/seo-fixes'
+import { createMetaFixRequest, createSchemaFixRequest } from '../lib/seo-fixes'
 import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities, snapshotGsc } from '../lib/gsc'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
 import {
@@ -415,6 +415,21 @@ clientsRouter.post('/:id/seo/crawl/:crawlId/fix/meta', async (req, res) => {
     res.json({ requestId: request.id, count })
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate fix' })
+  }
+})
+
+// Generate schema.org JSON-LD for the client's key pages, delivered as a change
+// request (Phase 2, fix type 2). Not crawl-scoped — operates on configured pages.
+clientsRouter.post('/:id/seo/fix/schema', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  try {
+    const { request, count } = await createSchemaFixRequest(id, identity.userId)
+    res.json({ requestId: request.id, count })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate schema' })
   }
 })
 

@@ -252,22 +252,35 @@ const TITLE_DESC_KEYS = ['no_title', 'title_too_short', 'title_too_long', 'irrel
 function CrawlCard({ clientId }: { clientId: string }) {
   const { data: crawl, mutate: mutateCrawl } = useSWR(['seo-crawl', clientId], () => api.clients.latestCrawl(clientId))
   const [running, setRunning] = useState(false)
-  const [fixing, setFixing] = useState(false)
+  const [fixing, setFixing] = useState<null | 'meta' | 'schema'>(null)
 
   async function generateMetaFix() {
     if (!crawl) return
-    setFixing(true)
+    setFixing('meta')
     try {
       const { count } = await api.clients.generateMetaFix(clientId, crawl.id)
       toast.success(`Drafted title & meta fixes for ${count} page(s) — see the Requests tab to review and approve.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to generate fix')
     } finally {
-      setFixing(false)
+      setFixing(null)
+    }
+  }
+
+  async function generateSchemaFix() {
+    setFixing('schema')
+    try {
+      const { count } = await api.clients.generateSchemaFix(clientId)
+      toast.success(`Drafted schema markup for ${count} page(s) — see the Requests tab to review and approve.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate schema')
+    } finally {
+      setFixing(null)
     }
   }
 
   const canFixMeta = crawl?.status === 'finished' && (crawl.checks ?? []).some(c => TITLE_DESC_KEYS.includes(c.key))
+  const canFix = crawl?.status === 'finished'
 
   async function run() {
     setRunning(true)
@@ -332,11 +345,16 @@ function CrawlCard({ clientId }: { clientId: string }) {
               </div>
             </div>
 
-            {canFixMeta && (
+            {canFix && (
               <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2.5">
                 <span className="text-xs text-muted-foreground">Generate fixes:</span>
-                <Button size="sm" variant="secondary" onClick={generateMetaFix} disabled={fixing}>
-                  {fixing ? 'Drafting…' : 'Titles & meta descriptions'}
+                {canFixMeta && (
+                  <Button size="sm" variant="secondary" onClick={generateMetaFix} disabled={!!fixing}>
+                    {fixing === 'meta' ? 'Drafting…' : 'Titles & meta descriptions'}
+                  </Button>
+                )}
+                <Button size="sm" variant="secondary" onClick={generateSchemaFix} disabled={!!fixing}>
+                  {fixing === 'schema' ? 'Drafting…' : 'Schema markup'}
                 </Button>
               </div>
             )}

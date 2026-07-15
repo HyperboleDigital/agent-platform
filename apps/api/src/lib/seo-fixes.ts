@@ -1,5 +1,6 @@
 import { complete } from './llm/complete'
 import { getCrawl } from './dataforseo'
+import { getClientById } from './clients'
 import { createRequest, type ChangeRequest } from './change-requests'
 
 // Phase 2 of the SEO-automation plan: turn crawl issues into concrete,
@@ -127,5 +128,73 @@ export async function createMetaFixRequest(clientId: string, crawlId: string, cr
   const draft = await draftMetaFixes(clientId, crawlId)
   const title = `SEO fix: titles & meta descriptions (${draft.items.length} page${draft.items.length === 1 ? '' : 's'})`
   const request = await createRequest(clientId, title, toMarkdown(draft.items), createdBy)
+  return { request, count: draft.items.length }
+}
+
+// ── Fix type 2: schema.org structured data (JSON-LD) ─────────────────────────
+// Pure text, directly serves GEO/AEO (machine-readability + citation). Operates
+// on the client's key pages, not crawl-specific issues, so it needs no paid
+// crawl to run — free to verify. Grounded strictly in real page content.
+const MAX_SCHEMA_PAGES = 4
+
+export interface SchemaFixItem { url: string; type: string; jsonld: string }
+export interface SchemaFixDraft { items: SchemaFixItem[] }
+
+function keyPages(seoPages: string[] | undefined, domain: string | undefined): string[] {
+  const pages = seoPages?.length
+    ? seoPages
+    : domain
+      ? [domain.startsWith('http') ? domain : `https://${domain}`]
+      : []
+  return pages.slice(0, MAX_SCHEMA_PAGES)
+}
+
+export async function draftSchemaFixes(clientId: string): Promise<SchemaFixDraft> {
+  const client = await getClientById(clientId)
+  if (!client) throw new Error('Client not found')
+  const urls = keyPages(client.portalConfig?.seoPages, client.domain)
+  if (urls.length === 0) throw new Error('No pages configured — set a domain or SEO pages first')
+
+  const items: SchemaFixItem[] = []
+  for (const url of urls) {
+    const meta = await fetchPageMeta(url)
+    if (!meta) continue
+    const prompt = `Generate schema.org structured data (JSON-LD) for this web page.
+Use ONLY official schema.org @types — e.g. Organization, LocalBusiness, WebSite, WebPage, Article, BlogPosting, Product, Service, CreativeWork, BreadcrumbList, FAQPage. Never invent a custom type (e.g. "Project" is NOT valid).
+Pick the best fit: Organization/LocalBusiness for a homepage/about/contact page; Article/BlogPosting for a post; Product for a product page; CreativeWork or Article for a portfolio/case-study page.
+Ground every field in the content below. Do NOT invent phone numbers, addresses, emails, prices, ratings, review counts, OR urls/image/logo paths — include a URL only if it appears verbatim in the content, otherwise omit that field entirely.
+URL: ${meta.url}
+Title: ${meta.title}
+Meta description: ${meta.description}
+Content: ${meta.snippet}
+
+Return ONLY a single valid JSON object with "@context" and "@type" (no prose, no code fences, no <script> tag).`
+    const raw = await complete(prompt, { maxTokens: 800, tier: 'cheap' })
+    const match = raw.match(/\{[\s\S]*\}/)
+    if (!match) continue
+    let obj: any
+    try { obj = JSON.parse(match[0]) } catch { continue }
+    if (!obj || !obj['@type']) continue
+    const type = Array.isArray(obj['@type']) ? obj['@type'].join(', ') : String(obj['@type'])
+    items.push({ url: meta.url, type, jsonld: JSON.stringify(obj, null, 2) })
+  }
+  if (items.length === 0) throw new Error('Could not generate schema for any page')
+  return { items }
+}
+
+function schemaMarkdown(items: SchemaFixItem[]): string {
+  const blocks = items.map(it => `### ${it.url}
+Type: **${it.type}**. Paste inside the page's \`<head>\` in a \`<script type="application/ld+json">\` tag:
+
+\`\`\`json
+${it.jsonld}
+\`\`\``).join('\n\n')
+  return `Auto-generated schema.org structured data (JSON-LD) for ${items.length} page(s). Structured data helps Google and AI engines understand and cite your pages.\n\n${blocks}`
+}
+
+export async function createSchemaFixRequest(clientId: string, createdBy: string | null): Promise<{ request: ChangeRequest; count: number }> {
+  const draft = await draftSchemaFixes(clientId)
+  const title = `SEO fix: schema markup (${draft.items.length} page${draft.items.length === 1 ? '' : 's'})`
+  const request = await createRequest(clientId, title, schemaMarkdown(draft.items), createdBy)
   return { request, count: draft.items.length }
 }
