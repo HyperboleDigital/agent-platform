@@ -202,17 +202,16 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
-- **2026-07-15 (Shareable audit report — print-to-PDF)** — Branded, light-themed,
-  chromeless report at `/audit-report/:crawlId` (`AuditReportPrint.tsx`, outside
-  AppShell) with a "Save as PDF / Print" button → covers save-to-computer /
-  Google-Drive / email-as-attachment in one artifact. "Report" buttons on the
-  Audit Tool (active audit + recent rows) open it in a new tab. Extracted shared
-  `lib/audit-rows.ts` (buildAuditRows/groupByCategory/CATEGORY_BY_KEY) used by
-  both the on-screen AuditReport and the print page so they never drift. Reuses
-  the existing `GET /overview/audits/:id` endpoint — no backend/migration.
-  **Deliberately did NOT wire one-click email-to-prospect** — the 582-email
-  guardrail locks every send to a test inbox; a real prospect-send needs its own
-  careful pass. PDF is the v1 send path.
+- **2026-07-15 (Direct PDF download — replaced print flow)** — Per Owen: no print
+  dialog, just download. Added `jspdf`; `lib/audit-pdf.ts` builds a branded PDF
+  directly from the crawl data (crisp/selectable text, not a screenshot) via
+  `buildAuditPdf(crawl)` (testable) + `downloadAuditPdf(crawl)` (saves
+  `SEO-Audit-<domain>-<date>.pdf`). Audit Tool "Download PDF" buttons (active +
+  recent rows) call it — one click, instant download. Removed the print page +
+  `/audit-report/:crawlId` route. Smoke-tested in Node (valid 6KB PDF) and
+  visually confirmed: gold-accent header, two score boxes, severity pills,
+  explanations, affected-URL bullets, footer. Uses shared `lib/audit-rows.ts`.
+  Email-to-prospect still deferred (582-email guardrail).
 - **2026-07-15 (Check-list overhaul + score-card redesign)** — Dumped DataForSEO's
   full On-Page vocabulary (57 checks) and rebuilt `PROBLEM_CHECKS` (~40 real
   problem checks). Fixed two real bugs the audit surfaced: (1) a FALSE POSITIVE —

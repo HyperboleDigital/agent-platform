@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
-import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { Search, FileText } from 'lucide-react'
 import { api } from '@/lib/api'
+import { downloadAuditPdf } from '@/lib/audit-pdf'
 import type { SeoCrawl } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -76,13 +76,12 @@ export default function AuditTool() {
           <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="truncate">{active.url}</CardTitle>
             {active.status === 'finished' && (
-              <Link
-                to={`/audit-report/${active.id}`}
-                target="_blank"
+              <button
+                onClick={() => downloadAuditPdf(active)}
                 className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm font-medium hover:bg-muted"
               >
-                <FileText className="h-3.5 w-3.5" /> Report
-              </Link>
+                <FileText className="h-3.5 w-3.5" /> Download PDF
+              </button>
             )}
           </CardHeader>
           <CardContent className="pt-0">
@@ -111,9 +110,9 @@ export default function AuditTool() {
                     </span>
                   </button>
                   {a.status === 'finished' && (
-                    <Link to={`/audit-report/${a.id}`} target="_blank" className="shrink-0 text-muted-foreground hover:text-foreground" title="Open report">
+                    <button onClick={() => downloadAuditPdf(a)} className="shrink-0 text-muted-foreground hover:text-foreground" title="Download PDF">
                       <FileText className="h-3.5 w-3.5" />
-                    </Link>
+                    </button>
                   )}
                 </div>
               ))}
