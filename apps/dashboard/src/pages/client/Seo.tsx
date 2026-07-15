@@ -247,9 +247,27 @@ function AffectedUrls({ urls }: { urls: string[] }) {
 // Superadmin-only beta: full-site crawl audit via DataForSEO (costs real money
 // per run), producing the SEMrush-style score + a prioritized issue tracker.
 // Phase 0 of the SEO-automation plan — see docs/plans/seo-automation.md.
+const TITLE_DESC_KEYS = ['no_title', 'title_too_short', 'title_too_long', 'irrelevant_title', 'no_description', 'duplicate_description', 'irrelevant_description']
+
 function CrawlCard({ clientId }: { clientId: string }) {
   const { data: crawl, mutate: mutateCrawl } = useSWR(['seo-crawl', clientId], () => api.clients.latestCrawl(clientId))
   const [running, setRunning] = useState(false)
+  const [fixing, setFixing] = useState(false)
+
+  async function generateMetaFix() {
+    if (!crawl) return
+    setFixing(true)
+    try {
+      const { count } = await api.clients.generateMetaFix(clientId, crawl.id)
+      toast.success(`Drafted title & meta fixes for ${count} page(s) — see the Requests tab to review and approve.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate fix')
+    } finally {
+      setFixing(false)
+    }
+  }
+
+  const canFixMeta = crawl?.status === 'finished' && (crawl.checks ?? []).some(c => TITLE_DESC_KEYS.includes(c.key))
 
   async function run() {
     setRunning(true)
@@ -313,6 +331,15 @@ function CrawlCard({ clientId }: { clientId: string }) {
                 {crawl.cost != null && <> · ${crawl.cost.toFixed(3)} crawl cost</>}
               </div>
             </div>
+
+            {canFixMeta && (
+              <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2.5">
+                <span className="text-xs text-muted-foreground">Generate fixes:</span>
+                <Button size="sm" variant="secondary" onClick={generateMetaFix} disabled={fixing}>
+                  {fixing ? 'Drafting…' : 'Titles & meta descriptions'}
+                </Button>
+              </div>
+            )}
 
             {issues && issues.length > 0 ? (
               <div className="flex flex-col gap-2">

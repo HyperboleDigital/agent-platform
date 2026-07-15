@@ -319,6 +319,16 @@ async function finalizeFailed(crawlId: string, message: string): Promise<SeoCraw
   return fromRow(data as CrawlRow)
 }
 
+export async function getCrawl(clientId: string, crawlId: string): Promise<SeoCrawl | null> {
+  const { data } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .eq('id', crawlId)
+    .eq('client_id', clientId)
+    .maybeSingle()
+  return data ? fromRow(data as CrawlRow) : null
+}
+
 export async function getLatestCrawl(clientId: string): Promise<SeoCrawl | null> {
   const { data } = await supabase
     .from('seo_crawls')

@@ -427,6 +427,8 @@ export const api = {
     latestCrawl: (id: string) => request<SeoCrawl | null>(`/clients/${id}/seo/crawl`),
     startCrawl: (id: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl`, { method: 'POST' }),
     refreshCrawl: (id: string, crawlId: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl/${crawlId}`),
+    generateMetaFix: (id: string, crawlId: string) =>
+      request<{ requestId: string; count: number }>(`/clients/${id}/seo/crawl/${crawlId}/fix/meta`, { method: 'POST' }),
     seoOpportunities: (id: string) => request<GscQueryRow[]>(`/clients/${id}/seo/opportunities`),
     visibilityQueries: (id: string) => request<VisibilityQuery[]>(`/clients/${id}/visibility/queries`),
     addVisibilityQuery: (id: string, query: string) =>

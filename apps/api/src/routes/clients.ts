@@ -12,6 +12,7 @@ import { getMonthlyUsage } from '../lib/usage'
 import { getEntitlements, isEntitled } from '../lib/entitlements'
 import { runAudits, getAuditHistory } from '../lib/seo'
 import { startCrawl, refreshCrawl, getLatestCrawl, crawlConfigured } from '../lib/dataforseo'
+import { createMetaFixRequest } from '../lib/seo-fixes'
 import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities, snapshotGsc } from '../lib/gsc'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
 import {
@@ -399,6 +400,21 @@ clientsRouter.get('/:id/seo/crawl/:crawlId', async (req, res) => {
     res.json(await refreshCrawl(id, req.params.crawlId))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to refresh crawl' })
+  }
+})
+
+// Generate title/meta-description fixes from a finished crawl and deliver them
+// as a one-click change request (Phase 2). Superadmin-only beta.
+clientsRouter.post('/:id/seo/crawl/:crawlId/fix/meta', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  try {
+    const { request, count } = await createMetaFixRequest(id, req.params.crawlId, identity.userId)
+    res.json({ requestId: request.id, count })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate fix' })
   }
 })
 

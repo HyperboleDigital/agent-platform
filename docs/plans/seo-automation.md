@@ -162,6 +162,19 @@ automatically from GSC data.
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Phase 2 — fix generation, first type LIVE-VERIFIED)** — Turn
+  crawl issues into Claude-generated fixes delivered as one-click change requests.
+  First fix type = **titles + meta descriptions** (`lib/seo-fixes.ts`): finds the
+  title/desc-flagged URLs from the crawl, fetches each page's real content (free),
+  one cheap Haiku call rewrites all pages' title (≤60) + meta description (≤155)
+  grounded in actual copy. Generation (`draftMetaFixes`) is side-effect-free;
+  delivery (`createMetaFixRequest`) wraps it + `createRequest`. Route
+  `POST /:id/seo/crawl/:crawlId/fix/meta` (superadmin); dashboard shows a
+  "Generate fixes: Titles & meta descriptions" button when eligible. Verified
+  live on hyperboledigital.com — produced strong, specific rewrites and correctly
+  caught duplicate titles across /projects and /contact. Cleaned up. Next fix
+  types to add alongside: alt text (vision), JSON-LD schema. Then: client-facing
+  view + free-audit lead magnet; scheduler for auto-runs.
 - **2026-07-15 (Phase 1 — per-issue URL mapping, LIVE-VERIFIED)** — Each issue
   now lists the exact affected page URLs (the agency-spreadsheet "which pages"
   column). `fetchAffectedUrls` pulls `/on_page/pages` (free retrieval, no extra
