@@ -644,6 +644,8 @@ function ServicesCard({ clientId, comped }: { clientId: string; comped: boolean 
 
 function ConfigTab({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
   const cfg = client.agentConfig ?? {}
+  const { data: me } = useSWR('me', api.me)
+  const [name, setName] = useState(client.name)
   const [systemPromptExtra, setExtra] = useState(cfg.systemPromptExtra ?? '')
   const [escalationEmail, setEscalationEmail] = useState(cfg.escalationEmail ?? '')
   const [saving, setSaving] = useState(false)
@@ -651,7 +653,11 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
   async function save() {
     setSaving(true)
     try {
-      await api.clients.upsert({ id: client.id, agentConfig: { ...cfg, systemPromptExtra, escalationEmail } })
+      await api.clients.upsert({
+        id: client.id,
+        ...(me?.isSuperadmin ? { name } : {}),
+        agentConfig: { ...cfg, systemPromptExtra, escalationEmail }
+      })
       mutate(['client', clientId])
       toast.success('Config saved', { icon: <CheckCircle2 className="h-4 w-4" /> })
     } catch (err) {
@@ -664,6 +670,12 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
   return (
     <Card>
       <CardContent className="grid gap-4 pt-5">
+        {me?.isSuperadmin && (
+          <div className="grid gap-1.5">
+            <Label>Client name</Label>
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Client name" />
+          </div>
+        )}
         <div className="grid gap-1.5">
           <Label>Extra system prompt</Label>
           <Textarea value={systemPromptExtra} onChange={e => setExtra(e.target.value)} rows={4} />

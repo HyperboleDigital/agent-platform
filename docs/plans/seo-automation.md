@@ -162,6 +162,39 @@ automatically from GSC data.
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Phase 0 LIVE-VERIFIED)** — Ran the full pipeline end-to-end
+  against Spec-ID temporarily pointed at hyperboledigital.com (migration applied
+  by Owen): DB write → DataForSEO crawl → problem curation → Haiku synthesis →
+  finalize all worked. Haiku produced an excellent severity-ranked, plain-English
+  tracker (missing H1 = high, HTTP link = high, low content = medium, missing alt
+  = low) — Anthropic credits are working again. Test row deleted + Spec-ID
+  restored afterward. **Phase 0 is DONE and proven.** Remaining before it's
+  client-facing: per-issue→URL mapping (Phase 1), the free-audit lead-magnet
+  surface, and scheduler/job infra for auto-runs.
+- **2026-07-15 (Phase 0 built)** — Real in-app integration written + typechecks
+  clean (API + dashboard). New: `supabase/migrate_2026-07-18_seo-crawls.sql`
+  (`seo_crawls` table); `apps/api/src/lib/dataforseo.ts` (pull-based job:
+  `startCrawl` posts the On-Page task, `refreshCrawl` polls + finalizes, curates
+  DataForSEO's checks down to real *problems* only via `PROBLEM_CHECKS`, then
+  Haiku-synthesizes a severity-ranked tracker — synthesis is non-fatal, falls
+  back to raw problem counts if LLM credits are low); superadmin-only routes
+  `POST/GET /:id/seo/crawl` + `GET /:id/seo/crawl/:crawlId`; dashboard
+  `CrawlCard` (superadmin-gated) in `Seo.tsx` with score hero + issue list +
+  crawl-cost display. **Not yet live-verified in-app** — needs the migration
+  applied to Supabase, then a real run. onpage_score/checks field paths are
+  probe-confirmed; `crawl_status.pages_crawled` path is a best-guess
+  (non-critical). No auto/scheduled runs — manual superadmin button only.
+- **2026-07-15 (Phase 0 probe)** — DataForSEO On-Page verified live against
+  hyperboledigital.com via a throwaway probe script (`apps/api/.env` creds).
+  **Measured cost: $0.018 for a ~10-page crawl (~$0.002/page)** — balance
+  $1.00 → $0.982. Extrapolates to ~$0.05 for 25 pages, ~$0.20 for 100 pages, so
+  even with Claude synthesis tokens an audit lands well under $1 → the
+  free-instant-audit lead magnet is economically viable. Returned real
+  agency-spreadsheet-style checks (onpage_score 92.72; no_h1_tag×2, no_image_alt×10,
+  https_to_http_links×1, low_content_rate×10, etc.). Crawl is async (~50s for 10
+  pages) → confirms Phase 0 needs the background-job infra, not a sync request.
+  Real in-app integration (lib + route + Haiku synthesis + job infra) not yet
+  built — this was cost validation only.
 - **2026-07-15** — Plan approved by Owen. Decisions locked: DataForSEO On-Page
   crawler; auto-fix scope = generate + deliver as change requests (test cheap
   first); blog + community participation (no forum); Microsoft Clarity skipped

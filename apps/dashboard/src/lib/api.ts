@@ -192,6 +192,29 @@ export interface PortalConfig {
   gscProperty?: string
 }
 
+export interface CrawlIssue {
+  severity: 'high' | 'medium' | 'low'
+  title: string
+  count: number
+  explanation: string
+}
+
+export interface SeoCrawl {
+  id: string
+  clientId: string
+  url: string
+  status: 'running' | 'finished' | 'failed'
+  taskId: string | null
+  onpageScore: number | null
+  pagesCrawled: number | null
+  checks: { key: string; label: string; count: number }[] | null
+  issues: CrawlIssue[] | null
+  cost: number | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface GscQueryRow {
   query: string
   clicks: number
@@ -398,6 +421,10 @@ export const api = {
     seoAudits: (id: string, days = 90) => request<SeoAudit[]>(`/clients/${id}/seo/audits?days=${days}`),
     runSeoAudit: (id: string) => request<SeoAudit[]>(`/clients/${id}/seo/audits`, { method: 'POST' }),
     seoRankings: (id: string, days = 28) => request<GscRankings>(`/clients/${id}/seo/rankings?days=${days}`),
+    snapshotRankings: (id: string) => request<{ ok: boolean }>(`/clients/${id}/seo/rankings/snapshot`, { method: 'POST' }),
+    latestCrawl: (id: string) => request<SeoCrawl | null>(`/clients/${id}/seo/crawl`),
+    startCrawl: (id: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl`, { method: 'POST' }),
+    refreshCrawl: (id: string, crawlId: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl/${crawlId}`),
     seoOpportunities: (id: string) => request<GscQueryRow[]>(`/clients/${id}/seo/opportunities`),
     visibilityQueries: (id: string) => request<VisibilityQuery[]>(`/clients/${id}/visibility/queries`),
     addVisibilityQuery: (id: string, query: string) =>

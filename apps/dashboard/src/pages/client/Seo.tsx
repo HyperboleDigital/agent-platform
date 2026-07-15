@@ -67,12 +67,14 @@ function ConfigCard({ clientId }: { clientId: string }) {
   const { data: cfg } = useSWR(['seo-config', clientId], () => api.clients.seoConfig(clientId))
   const [pages, setPages] = useState('')
   const [terms, setTerms] = useState('')
+  const [gscProperty, setGscProperty] = useState('')
   const [saving, setSaving] = useState(false)
   const [open, setOpen] = useState(false)
 
   function startEdit() {
     setPages((cfg?.seoPages ?? []).join('\n'))
     setTerms((cfg?.brandTerms ?? []).join(', '))
+    setGscProperty(cfg?.gscProperty ?? '')
     setOpen(true)
   }
 
@@ -81,9 +83,11 @@ function ConfigCard({ clientId }: { clientId: string }) {
     try {
       await api.clients.updateSeoConfig(clientId, {
         seoPages: pages.split('\n').map(p => p.trim()).filter(Boolean),
-        brandTerms: terms.split(',').map(t => t.trim()).filter(Boolean)
+        brandTerms: terms.split(',').map(t => t.trim()).filter(Boolean),
+        gscProperty: gscProperty.trim() || undefined
       })
       mutate(['seo-config', clientId])
+      mutate(['gsc-rankings', clientId])
       setOpen(false)
       toast.success('SEO settings saved')
     } catch (err) {
@@ -99,6 +103,7 @@ function ConfigCard({ clientId }: { clientId: string }) {
         <CardContent className="flex items-center justify-between gap-4 pt-5">
           <div className="text-sm text-muted-foreground">
             {cfg?.seoPages?.length ? `${cfg.seoPages.length} page(s) tracked` : 'No pages configured yet — using the client domain by default.'}
+            {cfg?.gscProperty ? ` · GSC: ${cfg.gscProperty}` : ' · No Search Console property connected'}
           </div>
           <Button variant="secondary" size="sm" onClick={startEdit}>
             <Settings2 className="h-3.5 w-3.5" /> Configure
@@ -119,6 +124,10 @@ function ConfigCard({ clientId }: { clientId: string }) {
           <Label>Brand terms (comma-separated, used for AI visibility matching)</Label>
           <Input value={terms} onChange={e => setTerms(e.target.value)} placeholder="Acme Co, Acme Plumbing" />
         </div>
+        <div className="grid gap-1.5">
+          <Label>Search Console property (requires the platform service account added as a user on it)</Label>
+          <Input value={gscProperty} onChange={e => setGscProperty(e.target.value)} placeholder="sc-domain:example.com or https://example.com/" />
+        </div>
         <div className="flex gap-2">
           <Button onClick={save} disabled={saving} size="sm">{saving ? 'Saving…' : 'Save'}</Button>
           <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
@@ -129,7 +138,22 @@ function ConfigCard({ clientId }: { clientId: string }) {
 }
 
 function RankingsCard({ clientId }: { clientId: string }) {
-  const { data, isLoading } = useSWR(['gsc-rankings', clientId], () => api.clients.seoRankings(clientId, 28))
+  const key = ['gsc-rankings', clientId]
+  const { data, isLoading } = useSWR(key, () => api.clients.seoRankings(clientId, 28))
+  const [snapshotting, setSnapshotting] = useState(false)
+
+  async function takeSnapshot() {
+    setSnapshotting(true)
+    try {
+      await api.clients.snapshotRankings(clientId)
+      mutate(key)
+      toast.success('Snapshot saved — the trend chart will build up as you take more over time')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save snapshot')
+    } finally {
+      setSnapshotting(false)
+    }
+  }
 
   if (isLoading) return <Skeleton className="h-56 w-full" />
 
@@ -153,9 +177,15 @@ function RankingsCard({ clientId }: { clientId: string }) {
   return (
     <div className="grid gap-3">
       <Card>
-        <CardHeader><CardTitle>Clicks — last 28 days</CardTitle></CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Clicks — last 28 days</CardTitle>
+          <Button variant="secondary" size="sm" onClick={takeSnapshot} disabled={snapshotting}>
+            <RefreshCw className={`h-3.5 w-3.5 ${snapshotting ? 'animate-spin' : ''}`} />
+            {snapshotting ? 'Saving…' : 'Take snapshot'}
+          </Button>
+        </CardHeader>
         <CardContent className="pt-0">
-          <TrendChart data={chartData} dataKey="clicks" name="Clicks" emptyLabel="No click data yet." />
+          <TrendChart data={chartData} dataKey="clicks" name="Clicks" emptyLabel="No click data yet — click &ldquo;Take snapshot&rdquo; periodically to build up trend history." />
         </CardContent>
       </Card>
       <Card className="overflow-hidden p-0">
@@ -188,8 +218,120 @@ function RankingsCard({ clientId }: { clientId: string }) {
   )
 }
 
+function severityVariant(s: 'high' | 'medium' | 'low'): 'destructive' | 'warning' | 'success' {
+  return s === 'high' ? 'destructive' : s === 'medium' ? 'warning' : 'success'
+}
+
+// Superadmin-only beta: full-site crawl audit via DataForSEO (costs real money
+// per run), producing the SEMrush-style score + a prioritized issue tracker.
+// Phase 0 of the SEO-automation plan — see docs/plans/seo-automation.md.
+function CrawlCard({ clientId }: { clientId: string }) {
+  const { data: crawl, mutate: mutateCrawl } = useSWR(['seo-crawl', clientId], () => api.clients.latestCrawl(clientId))
+  const [running, setRunning] = useState(false)
+
+  async function run() {
+    setRunning(true)
+    try {
+      let current = await api.clients.startCrawl(clientId)
+      mutateCrawl(current, false)
+      while (current.status === 'running') {
+        await new Promise(r => setTimeout(r, 6000))
+        current = await api.clients.refreshCrawl(clientId, current.id)
+        mutateCrawl(current, false)
+      }
+      if (current.status === 'failed') toast.error(current.error ?? 'Crawl failed')
+      else toast.success('Crawl audit complete')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Crawl failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const busy = running || crawl?.status === 'running'
+  const issues = crawl?.issues ?? null
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2">
+          AI Site Crawl <Badge variant="warning">beta</Badge>
+        </CardTitle>
+        <Button size="sm" onClick={run} disabled={busy}>
+          <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
+          {busy ? 'Crawling…' : 'Run crawl audit'}
+        </Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4 pt-0">
+        {!crawl && !busy && (
+          <p className="text-sm text-muted-foreground">
+            Crawl the whole site to generate an overall health score and a prioritized,
+            plain-English list of what to fix. Superadmin-only while in beta (each run costs a few cents).
+          </p>
+        )}
+
+        {crawl?.status === 'running' && (
+          <p className="text-sm text-muted-foreground">Crawling the site — this usually takes about a minute…</p>
+        )}
+        {crawl?.status === 'failed' && (
+          <p className="text-sm text-destructive">{crawl.error ?? 'Crawl failed'}</p>
+        )}
+
+        {crawl?.status === 'finished' && (
+          <>
+            <div className="flex flex-wrap items-center gap-4">
+              {crawl.onpageScore != null && (
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-semibold">{Math.round(crawl.onpageScore)}</span>
+                  <span className="text-sm text-muted-foreground">/ 100 health score</span>
+                </div>
+              )}
+              <div className="text-xs text-muted-foreground">
+                {crawl.pagesCrawled != null && <>{crawl.pagesCrawled} pages crawled</>}
+                {crawl.cost != null && <> · ${crawl.cost.toFixed(3)} crawl cost</>}
+              </div>
+            </div>
+
+            {issues && issues.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {issues.map((iss, i) => (
+                  <div key={i} className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
+                    <Badge variant={severityVariant(iss.severity)}>
+                      <StatusDot variant={severityVariant(iss.severity)} />{iss.severity}
+                    </Badge>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">
+                        {iss.title}{iss.count ? <span className="text-muted-foreground"> · {iss.count}</span> : null}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{iss.explanation}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : crawl.checks && crawl.checks.length > 0 ? (
+              // Fallback if issue synthesis was unavailable (e.g. low LLM credits):
+              // still show the raw problem counts so the audit isn't empty.
+              <div className="flex flex-col gap-1.5">
+                {crawl.checks.map(c => (
+                  <div key={c.key} className="flex items-center justify-between text-sm">
+                    <span>{c.label}</span>
+                    <span className="text-muted-foreground">{c.count}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No significant issues found — nice.</p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function SiteHealthTab() {
   const { clientId } = useClientCtx()
+  const { data: me } = useSWR('me', api.me)
   const { data: audits, isLoading } = useSWR(['seo-audits', clientId], () => api.clients.seoAudits(clientId))
   const [running, setRunning] = useState(false)
 
@@ -227,6 +369,8 @@ export function SiteHealthTab() {
         </Card>
       )}
       {latest && <AuditCard latest={latest} prev={prev} />}
+
+      {me?.isSuperadmin && <CrawlCard clientId={clientId} />}
 
       <ConfigCard clientId={clientId} />
 

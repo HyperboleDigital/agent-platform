@@ -11,7 +11,8 @@ import { gmailConfigured, getAuthUrl, disconnectGmail } from '../lib/gmail'
 import { getMonthlyUsage } from '../lib/usage'
 import { getEntitlements, isEntitled } from '../lib/entitlements'
 import { runAudits, getAuditHistory } from '../lib/seo'
-import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities } from '../lib/gsc'
+import { startCrawl, refreshCrawl, getLatestCrawl, crawlConfigured } from '../lib/dataforseo'
+import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities, snapshotGsc } from '../lib/gsc'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
 import {
   listRequests, createRequest, updateRequestStatus, cancelRequest, getRequestDetail, addComment
@@ -68,7 +69,10 @@ clientsRouter.post('/', async (req, res) => {
   const isUpdate = !!req.body?.id
   if (isUpdate) {
     if (!(await canAccessClient(identity, req.body.id))) return res.status(403).json({ error: 'Forbidden' })
-    if (!identity.isSuperadmin) delete req.body.clerkOrgId // org members can't reassign tenant ownership
+    if (!identity.isSuperadmin) {
+      delete req.body.clerkOrgId // org members can't reassign tenant ownership
+      delete req.body.name       // renaming a client is a superadmin action
+    }
   } else if (!identity.isSuperadmin) {
     return res.status(403).json({ error: 'Only an admin can create a new client' })
   }
@@ -344,6 +348,58 @@ clientsRouter.get('/:id/seo/rankings', async (req, res) => {
   const days = Math.min(90, Math.max(1, Number(req.query.days) || 28))
   const [trend, live] = await Promise.all([getGscTrend(id, days), fetchSearchAnalytics(id, days)])
   res.json({ connected: !!live, trend, latest: live })
+})
+
+// Manually persist today's GSC snapshot for the trend chart. There's no
+// scheduler yet (see TODO.md), so without this the trend chart can never
+// populate — click-driven snapshots are the stand-in until one exists.
+clientsRouter.post('/:id/seo/rankings/snapshot', async (req, res) => {
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  if (!gscConfigured()) return res.status(400).json({ error: 'Search Console is not configured on this deployment' })
+  try {
+    await snapshotGsc(id)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to snapshot rankings' })
+  }
+})
+
+// ── DataForSEO On-Page crawl audit (SEO-automation plan, Phase 0) ─────────────
+// Superadmin-only beta: costs real money per run (~$0.002/page), so it's gated
+// off the client-facing funnel until the pipeline is proven. The crawl runs
+// async on DataForSEO; the dashboard polls GET /seo/crawl/:crawlId to finalize.
+clientsRouter.post('/:id/seo/crawl', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  if (!crawlConfigured()) return res.status(400).json({ error: 'Crawl auditing is not configured on this deployment' })
+  try {
+    res.json(await startCrawl(id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to start crawl' })
+  }
+})
+
+clientsRouter.get('/:id/seo/crawl', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  res.json(await getLatestCrawl(id))
+})
+
+clientsRouter.get('/:id/seo/crawl/:crawlId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  try {
+    res.json(await refreshCrawl(id, req.params.crawlId))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to refresh crawl' })
+  }
 })
 
 clientsRouter.get('/:id/seo/opportunities', async (req, res) => {
