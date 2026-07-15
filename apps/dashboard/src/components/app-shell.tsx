@@ -15,7 +15,10 @@ import { useTheme } from 'next-themes'
 import { ServerDownScreen } from '@/components/server-down-screen'
 
 const TOP_NAV = [{ label: 'Clients', to: '/', icon: Users }]
-const SUPERADMIN_TOP_NAV = [{ label: 'Overview', to: '/overview', icon: LayoutDashboard }]
+const SUPERADMIN_TOP_NAV = [
+  { label: 'Overview', to: '/overview', icon: LayoutDashboard },
+  { label: 'Audit Tool', to: '/audit-tool', icon: Search },
+]
 
 // Per-client sections. `to` is relative to /clients/:id ('' = the index/home).
 // `serviceKey` marks sections gated behind an add-on service — shown with a

@@ -562,6 +562,9 @@ export const api = {
     summary: () => request<OverviewSummary>('/overview/summary'),
     clients: () => request<ClientRollup[]>('/overview/clients'),
     requests: () => request<ChangeRequestWithClient[]>('/overview/requests'),
+    audits: () => request<SeoCrawl[]>('/overview/audits'),
+    startAudit: (url: string) => request<SeoCrawl>('/overview/audits', { method: 'POST', body: JSON.stringify({ url }) }),
+    refreshAudit: (crawlId: string) => request<SeoCrawl>(`/overview/audits/${crawlId}`),
     updateRequestStatus: (clientId: string, reqId: string, status: RequestStatus) =>
       request<ChangeRequest>(`/overview/requests/${clientId}/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
   }

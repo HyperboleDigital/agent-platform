@@ -6,6 +6,7 @@ import { dark } from '@clerk/themes'
 import { Toaster } from 'sonner'
 import Dashboard from './pages/Dashboard'
 import Overview from './pages/Overview'
+import AuditTool from './pages/AuditTool'
 import ClientLayout from './pages/client/ClientLayout'
 import {
   ClientHome, LeadsSection, ConnectorsSection, BillingSection, ConfigSection
@@ -39,6 +40,7 @@ const router = createBrowserRouter([
         children: [
           { path: '/', element: <Dashboard /> },
           { path: '/overview', element: <Overview /> },
+          { path: '/audit-tool', element: <AuditTool /> },
           {
             path: '/clients/:id',
             element: <ClientLayout />,

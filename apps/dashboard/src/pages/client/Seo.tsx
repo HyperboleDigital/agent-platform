@@ -14,6 +14,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/empty-state'
 import { TrendChart } from '@/components/charts/trend-chart'
+import { CrawlResults } from '@/components/crawl-results'
 
 function scoreVariant(score: number): 'success' | 'warning' | 'destructive' {
   if (score >= 90) return 'success'
@@ -218,32 +219,6 @@ function RankingsCard({ clientId }: { clientId: string }) {
   )
 }
 
-function severityVariant(s: 'high' | 'medium' | 'low'): 'destructive' | 'warning' | 'success' {
-  return s === 'high' ? 'destructive' : s === 'medium' ? 'warning' : 'success'
-}
-
-// Shows the exact pages an issue affects (the agency-spreadsheet "which pages"
-// column), truncated with an expander so a 10-page issue doesn't flood the card.
-function AffectedUrls({ urls }: { urls: string[] }) {
-  const [expanded, setExpanded] = useState(false)
-  const shown = expanded ? urls : urls.slice(0, 5)
-  const path = (u: string) => { try { return new URL(u).pathname || '/' } catch { return u } }
-  return (
-    <div className="mt-1.5 flex flex-col gap-0.5">
-      {shown.map(u => (
-        <a key={u} href={u} target="_blank" rel="noreferrer" className="truncate text-xs text-muted-foreground hover:text-foreground hover:underline">
-          {path(u)}
-        </a>
-      ))}
-      {urls.length > 5 && (
-        <button type="button" onClick={() => setExpanded(v => !v)} className="self-start text-xs text-muted-foreground hover:text-foreground">
-          {expanded ? 'Show less' : `+${urls.length - 5} more`}
-        </button>
-      )}
-    </div>
-  )
-}
-
 // Superadmin-only beta: full-site crawl audit via DataForSEO (costs real money
 // per run), producing the SEMrush-style score + a prioritized issue tracker.
 // Phase 0 of the SEO-automation plan — see docs/plans/seo-automation.md.
@@ -304,7 +279,6 @@ function CrawlCard({ clientId }: { clientId: string }) {
   }
 
   const busy = running || crawl?.status === 'running'
-  const issues = crawl?.issues ?? null
 
   return (
     <Card>
@@ -337,19 +311,7 @@ function CrawlCard({ clientId }: { clientId: string }) {
 
         {crawl?.status === 'finished' && (
           <>
-            <div className="flex flex-wrap items-center gap-4">
-              {crawl.onpageScore != null && (
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-3xl font-semibold">{Math.round(crawl.onpageScore)}</span>
-                  <span className="text-sm text-muted-foreground">/ 100 health score</span>
-                </div>
-              )}
-              <div className="text-xs text-muted-foreground">
-                {crawl.pagesCrawled != null && <>{crawl.pagesCrawled} pages crawled</>}
-                {crawl.cost != null && <> · ${crawl.cost.toFixed(3)} crawl cost</>}
-              </div>
-            </div>
-
+            <CrawlResults crawl={crawl} />
             {canFix && (
               <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2.5">
                 <span className="text-xs text-muted-foreground">Generate fixes:</span>
@@ -362,38 +324,6 @@ function CrawlCard({ clientId }: { clientId: string }) {
                   {fixing === 'schema' ? 'Drafting…' : 'Schema markup'}
                 </Button>
               </div>
-            )}
-
-            {issues && issues.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {issues.map((iss, i) => (
-                  <div key={i} className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
-                    <Badge variant={severityVariant(iss.severity)}>
-                      <StatusDot variant={severityVariant(iss.severity)} />{iss.severity}
-                    </Badge>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium">
-                        {iss.title}{iss.count ? <span className="text-muted-foreground"> · {iss.count}</span> : null}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{iss.explanation}</div>
-                      {iss.urls && iss.urls.length > 0 && <AffectedUrls urls={iss.urls} />}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : crawl.checks && crawl.checks.length > 0 ? (
-              // Fallback if issue synthesis was unavailable (e.g. low LLM credits):
-              // still show the raw problem counts so the audit isn't empty.
-              <div className="flex flex-col gap-1.5">
-                {crawl.checks.map(c => (
-                  <div key={c.key} className="flex items-center justify-between text-sm">
-                    <span>{c.label}</span>
-                    <span className="text-muted-foreground">{c.count}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No significant issues found — nice.</p>
             )}
           </>
         )}

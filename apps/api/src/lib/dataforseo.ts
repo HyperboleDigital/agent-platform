@@ -97,7 +97,7 @@ const MAX_URLS_PER_ISSUE = 25
 
 export interface SeoCrawl {
   id: string
-  clientId: string
+  clientId: string | null
   url: string
   status: 'running' | 'finished' | 'failed'
   taskId: string | null
@@ -113,7 +113,7 @@ export interface SeoCrawl {
 
 interface CrawlRow {
   id: string
-  client_id: string
+  client_id: string | null
   url: string
   status: string
   task_id: string | null
@@ -245,9 +245,7 @@ export async function startCrawl(clientId: string): Promise<SeoCrawl> {
   return fromRow(data as CrawlRow)
 }
 
-// Poll a running crawl. While DataForSEO is still crawling, returns the row
-// unchanged. Once finished, pulls the summary, filters to real problems,
-// synthesizes the issue tracker, and finalizes the row. Idempotent for terminal rows.
+// Poll a running crawl (client-scoped). Thin wrapper over finalizeIfNeeded.
 export async function refreshCrawl(clientId: string, crawlId: string): Promise<SeoCrawl> {
   const { data: row } = await supabase
     .from('seo_crawls')
@@ -256,13 +254,21 @@ export async function refreshCrawl(clientId: string, crawlId: string): Promise<S
     .eq('client_id', clientId)
     .maybeSingle()
   if (!row) throw new Error('Crawl not found')
-  const crawl = row as CrawlRow
+  return finalizeIfNeeded(row as CrawlRow)
+}
+
+// Shared poll+finalize for both client-scoped and ad-hoc crawls. While
+// DataForSEO is still crawling, returns the row unchanged; once finished, pulls
+// the summary, filters to real problems, synthesizes the issue tracker, and
+// finalizes the row. Idempotent for terminal rows. Keyed off the row itself, so
+// tenant scoping stays an auth concern at the route layer.
+async function finalizeIfNeeded(crawl: CrawlRow): Promise<SeoCrawl> {
   if (crawl.status !== 'running') return fromRow(crawl)
-  if (!crawl.task_id) return finalizeFailed(crawlId, 'No DataForSEO task id on record')
+  if (!crawl.task_id) return finalizeFailed(crawl.id, 'No DataForSEO task id on record')
 
   // Give up on a crawl that never finishes rather than polling forever.
   if (Date.now() - new Date(crawl.created_at).getTime() > CRAWL_TIMEOUT_MS) {
-    return finalizeFailed(crawlId, 'Crawl timed out before DataForSEO finished')
+    return finalizeFailed(crawl.id, 'Crawl timed out before DataForSEO finished')
   }
 
   const summary = await dfs('/on_page/summary', [{ id: crawl.task_id }])
@@ -272,7 +278,7 @@ export async function refreshCrawl(clientId: string, crawlId: string): Promise<S
 
   if (progress !== 'finished') {
     if (pagesCrawled != null) {
-      await supabase.from('seo_crawls').update({ pages_crawled: pagesCrawled, updated_at: new Date().toISOString() }).eq('id', crawlId)
+      await supabase.from('seo_crawls').update({ pages_crawled: pagesCrawled, updated_at: new Date().toISOString() }).eq('id', crawl.id)
     }
     return { ...fromRow(crawl), pagesCrawled }
   }
@@ -302,11 +308,71 @@ export async function refreshCrawl(clientId: string, crawlId: string): Promise<S
       issues,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', crawlId)
+    .eq('id', crawl.id)
     .select()
     .single()
   if (error) throw new Error(`Failed to finalize crawl: ${error.message}`)
   return fromRow(data as CrawlRow)
+}
+
+// ── Ad-hoc audits: crawl ANY url, not tied to a client (superadmin tool) ──────
+// Same engine, client_id = null. Lets a superadmin audit a prospect's site on
+// demand. No public exposure, no automation.
+export async function startAdhocCrawl(rawTarget: string): Promise<SeoCrawl> {
+  const target = toTarget(rawTarget)
+  if (!target) throw new Error('Enter a valid website URL or domain')
+
+  const { data: running } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .is('client_id', null)
+    .eq('url', target)
+    .eq('status', 'running')
+    .gte('created_at', new Date(Date.now() - 15 * 60 * 1000).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (running) return fromRow(running as CrawlRow)
+
+  const post = await dfs('/on_page/task_post', [{
+    target,
+    max_crawl_pages: MAX_CRAWL_PAGES,
+    load_resources: true,
+    enable_javascript: true,
+  }])
+  const task = post.tasks?.[0]
+  const taskId = task?.id
+  if (!taskId) throw new Error('DataForSEO did not return a task id')
+  const cost = task?.cost ?? post.cost ?? null
+
+  const { data, error } = await supabase
+    .from('seo_crawls')
+    .insert({ client_id: null, url: target, status: 'running', task_id: taskId, cost })
+    .select()
+    .single()
+  if (error) throw new Error(`Failed to record crawl: ${error.message}`)
+  return fromRow(data as CrawlRow)
+}
+
+export async function refreshAdhocCrawl(crawlId: string): Promise<SeoCrawl> {
+  const { data: row } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .eq('id', crawlId)
+    .is('client_id', null)
+    .maybeSingle()
+  if (!row) throw new Error('Audit not found')
+  return finalizeIfNeeded(row as CrawlRow)
+}
+
+export async function listAdhocCrawls(limit = 20): Promise<SeoCrawl[]> {
+  const { data } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .is('client_id', null)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  return (data ?? []).map(r => fromRow(r as CrawlRow))
 }
 
 async function finalizeFailed(crawlId: string, message: string): Promise<SeoCrawl> {

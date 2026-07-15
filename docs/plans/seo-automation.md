@@ -171,7 +171,13 @@ Turns the superadmin-beta engine into the actual two-tier product. Two parts:
   clients; `POST /crawl`, the poll/finalize `GET /crawl/:crawlId`, and all fix
   routes stay superadmin-only.
 
-### Part B — Free-audit lead magnet (design; build next, needs guardrails + top-up)
+> **Update 2026-07-15:** Owen chose to start with an **admin-only Audit Tool**
+> instead of the public lead magnet — a superadmin runs audits on any URL on
+> demand (no public endpoint, no automation), which drops all the abuse/spend/
+> flag complexity below. Built (see checkpoint). The public version (Part B) is
+> still a valid future option but is deferred.
+
+### Part B — Free-audit lead magnet (design; deferred in favor of admin tool)
 Public "audit any URL" page: prospect enters **URL + email** → sees their score +
 top 3 issues → CTA to sign up / book a call. The email is the lead capture (the
 whole point) and doubles as a throttle. It works on *prospects'* sites, so
@@ -196,6 +202,18 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Admin Audit Tool — BUILT, needs migration to verify)** — Owen's
+  chosen direction: superadmin runs audits on ANY url on demand (prospects etc.),
+  no public flow, no automation. `seo_crawls.client_id` made nullable
+  (`migrate_2026-07-19_adhoc-crawls.sql`) so a crawl need not belong to a client.
+  `dataforseo.ts` refactored: shared `finalizeIfNeeded`; new `startAdhocCrawl`
+  / `refreshAdhocCrawl` / `listAdhocCrawls`. Superadmin routes on overviewRouter
+  (`GET/POST /overview/audits`, `GET /overview/audits/:id`). New `/audit-tool`
+  page + superadmin nav item (Search icon); extracted a shared `CrawlResults`
+  component reused by both the client Site Health card and the tool. Typechecks
+  clean. **Not yet live-verified — run `migrate_2026-07-19_adhoc-crawls.sql`
+  first** (startAdhocCrawl posts the paid task before insert, so don't run it
+  pre-migration).
 - **2026-07-15 (Part A — client-facing audit view, BUILT)** — Crawl audit now
   visible read-only to entitled seo clients (was superadmin-only). `GET
   /:id/seo/crawl` (latest, pure read) opened to entitled clients; `POST /crawl`,
