@@ -202,6 +202,16 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Audit Tool UI — SEMrush-style redesign, draft)** — New
+  `components/audit-report.tsx` used by the Audit Tool: score gauges (Site Health
+  + AI Search Health, color-coded), a category-breakdown chip row (Titles & meta,
+  Content, Images, Security, Links, Performance, Structure, AI Search/GEO), and
+  issues grouped by category with expandable rows (click → explanation + affected
+  URLs). Also added a "you can leave this page" note + live page count to the
+  running state. Frontend-only, typechecks. Client-facing `CrawlResults` left
+  simple. Rough draft per Owen's request — iterate after he tests. Still TODO:
+  resume polling on reload (currently the run() loop drives polling, so leaving
+  mid-crawl stops the frontend updates though the crawl finishes server-side).
 - **2026-07-15 (Fix type 3 — llms.txt generator, VERIFIED)** — Closes the GEO
   loop: the AI Search check detects a missing llms.txt, this generates one.
   `draftLlmsTxt`/`createLlmsTxtRequest` in `seo-fixes.ts` build a spec-compliant

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/empty-state'
-import { CrawlResults } from '@/components/crawl-results'
+import { AuditReport } from '@/components/audit-report'
 
 // Superadmin tool: run a full-site SEO audit on ANY url on demand (e.g. a sales
 // prospect's site). Manual only — nothing here runs automatically. Backed by the
@@ -76,9 +76,13 @@ export default function AuditTool() {
             <CardTitle className="truncate">{active.url}</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            {active.status === 'running' && <p className="text-sm text-muted-foreground">Crawling the site — this usually takes about a minute…</p>}
+            {active.status === 'running' && (
+              <p className="text-sm text-muted-foreground">
+                Crawling the site{active.pagesCrawled ? ` — ${active.pagesCrawled} pages so far` : ''}… this usually takes about a minute. You can leave this page; the audit keeps running.
+              </p>
+            )}
             {active.status === 'failed' && <p className="text-sm text-destructive">{active.error ?? 'Audit failed'}</p>}
-            {active.status === 'finished' && <CrawlResults crawl={active} />}
+            {active.status === 'finished' && <AuditReport crawl={active} />}
           </CardContent>
         </Card>
       )}
