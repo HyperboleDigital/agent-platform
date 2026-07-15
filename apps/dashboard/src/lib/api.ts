@@ -438,6 +438,8 @@ export const api = {
       request<{ requestId: string; count: number }>(`/clients/${id}/seo/crawl/${crawlId}/fix/meta`, { method: 'POST' }),
     generateSchemaFix: (id: string) =>
       request<{ requestId: string; count: number }>(`/clients/${id}/seo/fix/schema`, { method: 'POST' }),
+    generateLlmsTxt: (id: string) =>
+      request<{ requestId: string; count: number }>(`/clients/${id}/seo/fix/llms`, { method: 'POST' }),
     seoOpportunities: (id: string) => request<GscQueryRow[]>(`/clients/${id}/seo/opportunities`),
     visibilityQueries: (id: string) => request<VisibilityQuery[]>(`/clients/${id}/visibility/queries`),
     addVisibilityQuery: (id: string, query: string) =>

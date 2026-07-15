@@ -229,7 +229,7 @@ function CrawlCard({ clientId }: { clientId: string }) {
   const isAdmin = !!me?.isSuperadmin
   const { data: crawl, mutate: mutateCrawl } = useSWR(['seo-crawl', clientId], () => api.clients.latestCrawl(clientId))
   const [running, setRunning] = useState(false)
-  const [fixing, setFixing] = useState<null | 'meta' | 'schema'>(null)
+  const [fixing, setFixing] = useState<null | 'meta' | 'schema' | 'llms'>(null)
 
   async function generateMetaFix() {
     if (!crawl) return
@@ -256,8 +256,21 @@ function CrawlCard({ clientId }: { clientId: string }) {
     }
   }
 
+  async function generateLlmsTxt() {
+    setFixing('llms')
+    try {
+      await api.clients.generateLlmsTxt(clientId)
+      toast.success('Drafted an llms.txt — see the Requests tab to review and approve.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate llms.txt')
+    } finally {
+      setFixing(null)
+    }
+  }
+
   const canFixMeta = isAdmin && crawl?.status === 'finished' && (crawl.checks ?? []).some(c => TITLE_DESC_KEYS.includes(c.key))
   const canFix = isAdmin && crawl?.status === 'finished'
+  const canFixLlms = isAdmin && crawl?.status === 'finished' && crawl.aiSearch != null && !crawl.aiSearch.hasLlmsTxt
 
   async function run() {
     setRunning(true)
@@ -323,6 +336,11 @@ function CrawlCard({ clientId }: { clientId: string }) {
                 <Button size="sm" variant="secondary" onClick={generateSchemaFix} disabled={!!fixing}>
                   {fixing === 'schema' ? 'Drafting…' : 'Schema markup'}
                 </Button>
+                {canFixLlms && (
+                  <Button size="sm" variant="secondary" onClick={generateLlmsTxt} disabled={!!fixing}>
+                    {fixing === 'llms' ? 'Drafting…' : 'llms.txt'}
+                  </Button>
+                )}
               </div>
             )}
           </>

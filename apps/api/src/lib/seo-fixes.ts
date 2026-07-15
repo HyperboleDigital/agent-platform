@@ -140,13 +140,13 @@ const MAX_SCHEMA_PAGES = 4
 export interface SchemaFixItem { url: string; type: string; jsonld: string }
 export interface SchemaFixDraft { items: SchemaFixItem[] }
 
-function keyPages(seoPages: string[] | undefined, domain: string | undefined): string[] {
+function keyPages(seoPages: string[] | undefined, domain: string | undefined, limit = MAX_SCHEMA_PAGES): string[] {
   const pages = seoPages?.length
     ? seoPages
     : domain
       ? [domain.startsWith('http') ? domain : `https://${domain}`]
       : []
-  return pages.slice(0, MAX_SCHEMA_PAGES)
+  return pages.slice(0, limit)
 }
 
 export async function draftSchemaFixes(clientId: string): Promise<SchemaFixDraft> {
@@ -197,4 +197,52 @@ export async function createSchemaFixRequest(clientId: string, createdBy: string
   const title = `SEO fix: schema markup (${draft.items.length} page${draft.items.length === 1 ? '' : 's'})`
   const request = await createRequest(clientId, title, schemaMarkdown(draft.items), createdBy)
   return { request, count: draft.items.length }
+}
+
+// ── Fix type 3: llms.txt (GEO) ───────────────────────────────────────────────
+// The emerging llmstxt.org standard — a markdown file at /llms.txt that guides
+// AI engines on how to use a site. Pairs with the AI Search Health check, which
+// detects when it's missing. Pure text; grounded in the site's real pages.
+const MAX_LLMS_PAGES = 8
+
+export async function draftLlmsTxt(clientId: string): Promise<string> {
+  const client = await getClientById(clientId)
+  if (!client) throw new Error('Client not found')
+  const urls = keyPages(client.portalConfig?.seoPages, client.domain, MAX_LLMS_PAGES)
+  if (urls.length === 0) throw new Error('No pages configured — set a domain or SEO pages first')
+
+  const pages = (await Promise.all(urls.map(fetchPageMeta))).filter((p): p is Awaited<ReturnType<typeof fetchPageMeta>> & object => !!p)
+  if (pages.length === 0) throw new Error('Could not fetch any of the pages')
+
+  const list = pages.map(p => `URL: ${p.url}\nTitle: ${p.title || '(none)'}\nContent: ${p.snippet}`).join('\n\n')
+  const prompt = `Create an llms.txt file (the emerging llmstxt.org standard that guides AI engines on how to use a site's content) for this business.
+Use this EXACT structure:
+# <Business/Site name>
+
+> <one-sentence summary of what the business does>
+
+<optional one- or two-sentence description>
+
+## Key pages
+- [<page title>](<url>): <one plain-English line on what the page is for>
+(one bullet per page)
+
+Ground everything ONLY in the content below — do not invent services, locations, prices, or claims. Take the business name and summary from the homepage (the shortest-path URL). Keep page descriptions concise and factual.
+
+Pages:
+${list}
+
+Return ONLY the llms.txt file content (markdown), no code fences, no preamble.`
+
+  const raw = await complete(prompt, { maxTokens: 900, tier: 'cheap' })
+  const content = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
+  if (!content.startsWith('#')) throw new Error('llms.txt generation returned nothing usable — try again')
+  return content
+}
+
+export async function createLlmsTxtRequest(clientId: string, createdBy: string | null): Promise<{ request: ChangeRequest; count: number }> {
+  const content = await draftLlmsTxt(clientId)
+  const body = `Auto-generated **llms.txt** — the emerging standard that tells AI engines (ChatGPT, Perplexity, Claude, etc.) how to use your content. Save this as \`/llms.txt\` at your site root (e.g. https://yoursite.com/llms.txt).\n\n\`\`\`markdown\n${content}\n\`\`\``
+  const request = await createRequest(clientId, 'SEO fix: llms.txt (AI search guidance file)', body, createdBy)
+  return { request, count: 1 }
 }

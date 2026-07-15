@@ -12,7 +12,7 @@ import { getMonthlyUsage } from '../lib/usage'
 import { getEntitlements, isEntitled } from '../lib/entitlements'
 import { runAudits, getAuditHistory } from '../lib/seo'
 import { startCrawl, refreshCrawl, getLatestCrawl, crawlConfigured } from '../lib/dataforseo'
-import { createMetaFixRequest, createSchemaFixRequest } from '../lib/seo-fixes'
+import { createMetaFixRequest, createSchemaFixRequest, createLlmsTxtRequest } from '../lib/seo-fixes'
 import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities, snapshotGsc } from '../lib/gsc'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
 import {
@@ -430,6 +430,20 @@ clientsRouter.post('/:id/seo/fix/schema', async (req, res) => {
     res.json({ requestId: request.id, count })
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate schema' })
+  }
+})
+
+// Generate an llms.txt file (GEO) for the client, delivered as a change request.
+clientsRouter.post('/:id/seo/fix/llms', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  try {
+    const { request, count } = await createLlmsTxtRequest(id, identity.userId)
+    res.json({ requestId: request.id, count })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate llms.txt' })
   }
 })
 

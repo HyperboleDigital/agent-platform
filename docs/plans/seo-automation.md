@@ -202,6 +202,15 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Fix type 3 — llms.txt generator, VERIFIED)** — Closes the GEO
+  loop: the AI Search check detects a missing llms.txt, this generates one.
+  `draftLlmsTxt`/`createLlmsTxtRequest` in `seo-fixes.ts` build a spec-compliant
+  llmstxt.org file (H1 name, blockquote summary, `## Key pages` bullets) grounded
+  in the client's real pages; delivered as a change request. Route
+  `POST /:id/seo/fix/llms` (superadmin); dashboard "llms.txt" fix button shown
+  only when the crawl detected it's missing (`aiSearch.hasLlmsTxt === false`).
+  Verified free on hyperbole's pages — clean, usable output. Trio of GEO-flavored
+  fixes now: titles/meta, schema, llms.txt.
 - **2026-07-15 (AI Search Health — LIVE-VERIFIED end-to-end)** — Migration
   applied. Full ad-hoc crawl of hyperboledigital.com returned site health 92.72
   AND ai_search {score 90, blockedBots [], hasLlmsTxt false} in the finalized
