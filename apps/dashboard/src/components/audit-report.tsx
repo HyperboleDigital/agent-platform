@@ -2,49 +2,14 @@ import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { SeoCrawl } from '@/lib/api'
 import { Badge, StatusDot } from '@/components/ui/badge'
+import { buildAuditRows, groupByCategory, SEVERITY_RANK, type AuditRow, type Severity } from '@/lib/audit-rows'
 
 // Richer, SEMrush-style audit view for the Audit Tool: score gauges, a category
 // breakdown, and an expandable issue list (click a row → explanation + the exact
 // affected URLs). Separate from the simpler client-facing CrawlResults card.
 
-const CATEGORY_BY_KEY: Record<string, string> = {
-  // Titles & meta
-  no_title: 'Titles & meta', duplicate_title_tag: 'Titles & meta', title_too_long: 'Titles & meta',
-  title_too_short: 'Titles & meta', irrelevant_title: 'Titles & meta', no_description: 'Titles & meta',
-  duplicate_meta_tags: 'Titles & meta', irrelevant_description: 'Titles & meta', irrelevant_meta_keywords: 'Titles & meta',
-  // Content
-  low_content_rate: 'Content', low_character_count: 'Content', low_readability_rate: 'Content', lorem_ipsum: 'Content',
-  // Images
-  no_image_alt: 'Images', no_image_title: 'Images',
-  // Security
-  is_http: 'Security', https_to_http_links: 'Security',
-  // Links & crawl
-  is_4xx_code: 'Links', is_5xx_code: 'Links', is_broken: 'Links', is_orphan_page: 'Links', has_links_to_redirects: 'Links',
-  // Canonicals & redirects
-  canonical_to_broken: 'Canonicals & redirects', canonical_to_redirect: 'Canonicals & redirects',
-  canonical_chain: 'Canonicals & redirects', recursive_canonical: 'Canonicals & redirects',
-  redirect_chain: 'Canonicals & redirects', has_meta_refresh_redirect: 'Canonicals & redirects',
-  // Performance
-  large_page_size: 'Performance', size_greater_than_3mb: 'Performance', high_loading_time: 'Performance',
-  high_waiting_time: 'Performance', has_render_blocking_resources: 'Performance', no_content_encoding: 'Performance',
-  // Structure & markup
-  no_h1_tag: 'Structure', no_doctype: 'Structure', no_encoding_meta_tag: 'Structure',
-  deprecated_html_tags: 'Structure', flash: 'Structure', no_favicon: 'Structure',
-}
-
-type Severity = 'high' | 'medium' | 'low'
 function severityVariant(s: Severity): 'destructive' | 'warning' | 'success' {
   return s === 'high' ? 'destructive' : s === 'medium' ? 'warning' : 'success'
-}
-const SEVERITY_RANK: Record<Severity, number> = { high: 3, medium: 2, low: 1 }
-
-interface Row {
-  category: string
-  severity: Severity
-  title: string
-  detail: string
-  count: number
-  urls: string[]
 }
 
 function scoreColor(score: number): string {
@@ -74,7 +39,7 @@ function ScoreCard({ label, score }: { label: string; score: number }) {
   )
 }
 
-function IssueRow({ row }: { row: Row }) {
+function IssueRow({ row }: { row: AuditRow }) {
   const [open, setOpen] = useState(false)
   const path = (u: string) => { try { return new URL(u).pathname || '/' } catch { return u } }
   return (
@@ -109,25 +74,8 @@ function IssueRow({ row }: { row: Row }) {
 }
 
 export function AuditReport({ crawl }: { crawl: SeoCrawl }) {
-  const rows: Row[] = []
-  for (const i of crawl.issues ?? []) {
-    rows.push({ category: CATEGORY_BY_KEY[i.key ?? ''] ?? 'Other', severity: i.severity, title: i.title, detail: i.explanation, count: i.count, urls: i.urls ?? [] })
-  }
-  for (const i of crawl.aiSearch?.issues ?? []) {
-    rows.push({ category: 'AI Search / GEO', severity: i.severity, title: i.title, detail: i.detail, count: 0, urls: [] })
-  }
-
-  // Category summary tiles, worst-severity-first.
-  const byCategory = new Map<string, Row[]>()
-  for (const r of rows) {
-    if (!byCategory.has(r.category)) byCategory.set(r.category, [])
-    byCategory.get(r.category)!.push(r)
-  }
-  const categories = [...byCategory.entries()].sort((a, b) => {
-    const wa = Math.max(...a[1].map(r => SEVERITY_RANK[r.severity]))
-    const wb = Math.max(...b[1].map(r => SEVERITY_RANK[r.severity]))
-    return wb - wa
-  })
+  const rows = buildAuditRows(crawl)
+  const categories = groupByCategory(rows)
 
   return (
     <div className="flex flex-col gap-5">

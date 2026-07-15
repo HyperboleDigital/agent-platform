@@ -7,6 +7,7 @@ import { Toaster } from 'sonner'
 import Dashboard from './pages/Dashboard'
 import Overview from './pages/Overview'
 import AuditTool from './pages/AuditTool'
+import AuditReportPrint from './pages/AuditReportPrint'
 import ClientLayout from './pages/client/ClientLayout'
 import {
   ClientHome, LeadsSection, ConnectorsSection, BillingSection, ConfigSection
@@ -35,6 +36,8 @@ const router = createBrowserRouter([
   {
     element: <ProtectedLayout />,
     children: [
+      // Chromeless printable report (no sidebar) — opened in a new tab.
+      { path: '/audit-report/:crawlId', element: <AuditReportPrint /> },
       {
         element: <AppShell />,
         children: [

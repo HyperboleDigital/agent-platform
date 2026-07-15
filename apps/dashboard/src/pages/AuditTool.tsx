@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
-import { Search } from 'lucide-react'
+import { Search, FileText } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { SeoCrawl } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -72,8 +73,17 @@ export default function AuditTool() {
 
       {active && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="truncate">{active.url}</CardTitle>
+            {active.status === 'finished' && (
+              <Link
+                to={`/audit-report/${active.id}`}
+                target="_blank"
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm font-medium hover:bg-muted"
+              >
+                <FileText className="h-3.5 w-3.5" /> Report
+              </Link>
+            )}
           </CardHeader>
           <CardContent className="pt-0">
             {active.status === 'running' && (
@@ -93,12 +103,19 @@ export default function AuditTool() {
           {recent && recent.length > 0 ? (
             <div className="flex flex-col divide-y divide-border">
               {recent.map(a => (
-                <button key={a.id} onClick={() => setActive(a)} className="flex items-center justify-between py-2 text-left text-sm text-muted-foreground hover:text-foreground">
-                  <span className="truncate">{a.url}</span>
-                  <span className="ml-3 shrink-0">
-                    {a.status === 'finished' && a.onpageScore != null ? `${Math.round(a.onpageScore)}/100` : a.status}
-                  </span>
-                </button>
+                <div key={a.id} className="flex items-center gap-3 py-2 text-sm">
+                  <button onClick={() => setActive(a)} className="flex min-w-0 flex-1 items-center justify-between text-left text-muted-foreground hover:text-foreground">
+                    <span className="truncate">{a.url}</span>
+                    <span className="ml-3 shrink-0">
+                      {a.status === 'finished' && a.onpageScore != null ? `${Math.round(a.onpageScore)}/100` : a.status}
+                    </span>
+                  </button>
+                  {a.status === 'finished' && (
+                    <Link to={`/audit-report/${a.id}`} target="_blank" className="shrink-0 text-muted-foreground hover:text-foreground" title="Open report">
+                      <FileText className="h-3.5 w-3.5" />
+                    </Link>
+                  )}
+                </div>
               ))}
             </div>
           ) : (
