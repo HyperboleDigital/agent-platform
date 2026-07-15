@@ -202,6 +202,10 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-15 (Admin Audit Tool — LIVE-VERIFIED)** — Migration applied.
+  Verified the client-less path end-to-end on example.com (score 95.24, issues
+  synthesized w/ severity + affected URL, listAdhocCrawls returned it, test row
+  cleaned up). Admin Audit Tool is DONE — superadmin can audit any URL on demand.
 - **2026-07-15 (Admin Audit Tool — BUILT, needs migration to verify)** — Owen's
   chosen direction: superadmin runs audits on ANY url on demand (prospects etc.),
   no public flow, no automation. `seo_crawls.client_id` made nullable
