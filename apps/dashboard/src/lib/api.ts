@@ -24,7 +24,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       ...options?.headers
     }
   })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (!res.ok) {
+    let message = `API error: ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.error) message = body.error
+    } catch { /* response wasn't JSON — keep the generic message */ }
+    throw new Error(message)
+  }
   return res.json() as Promise<T>
 }
 
@@ -215,6 +222,7 @@ export interface SeoCrawl {
     score: number
     hasLlmsTxt: boolean
     blockedBots: string[]
+    sitemap: { found: boolean; url: string | null; urlCount: number | null; referencedInRobots: boolean }
     issues: { severity: 'high' | 'medium' | 'low'; title: string; detail: string }[]
   } | null
   cost: number | null

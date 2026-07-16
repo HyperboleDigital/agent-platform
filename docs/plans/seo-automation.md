@@ -202,6 +202,23 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-16 (Sitemap check added; frontend error-swallowing bug fixed)** —
+  Owen asked whether sitemap checking existed (it didn't — noted gap from
+  earlier). Added to `lib/ai-search.ts`: `checkSitemap()` reads `Sitemap:` lines
+  from robots.txt (falls back to `/sitemap.xml`), validates it's real XML, counts
+  `<loc>` entries. Wired into `checkAiSearch` (score now 80% bots / 10% llms.txt /
+  10% sitemap present) with new issues (missing sitemap = medium; found but not
+  referenced in robots.txt = low). Verified: hyperbole found (13 URLs, referenced),
+  nytimes found (622 URLs). No cost, no migration (rides the existing `ai_search`
+  jsonb column).
+
+  Separately: while investigating an unrelated Framer-publish 400 error Owen hit,
+  found and fixed a real bug in `apps/dashboard/src/lib/api.ts`'s `request()` —
+  it discarded the server's actual JSON error message and always threw a generic
+  "API error: {status}", hiding real causes from the UI. Now reads `body.error`
+  when present. The underlying publish failure itself is still unconfirmed —
+  waiting on Owen's API server terminal output; likely candidate per HANDOFF.md
+  is the known "Framer collection/field IDs are not stable" issue.
 - **2026-07-15 (Direct PDF download — replaced print flow)** — Per Owen: no print
   dialog, just download. Added `jspdf`; `lib/audit-pdf.ts` builds a branded PDF
   directly from the crawl data (crisp/selectable text, not a screenshot) via

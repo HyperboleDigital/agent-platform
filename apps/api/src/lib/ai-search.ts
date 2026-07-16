@@ -20,10 +20,18 @@ export interface AiSearchIssue {
   detail: string
 }
 
+export interface SitemapResult {
+  found: boolean
+  url: string | null
+  urlCount: number | null
+  referencedInRobots: boolean
+}
+
 export interface AiSearchResult {
   score: number // 0-100
   hasLlmsTxt: boolean
   blockedBots: string[]
+  sitemap: SitemapResult
   issues: AiSearchIssue[]
 }
 
@@ -78,6 +86,37 @@ function isFullyBlocked(groups: Map<string, string[]>, bot: string): boolean {
   return star ? star.some(d => d === '/') : false
 }
 
+// Extract Sitemap: directives from robots.txt (case-insensitive field name).
+function sitemapUrlsFromRobots(txt: string): string[] {
+  const urls: string[] = []
+  for (const raw of txt.split('\n')) {
+    const line = raw.split('#')[0].trim()
+    const m = line.match(/^sitemap:\s*(\S+)/i)
+    if (m) urls.push(m[1])
+  }
+  return urls
+}
+
+function countXmlLocs(xml: string): number {
+  const matches = xml.match(/<loc>/gi)
+  return matches ? matches.length : 0
+}
+
+async function checkSitemap(base: string, robotsBody: string | null): Promise<SitemapResult> {
+  const fromRobots = robotsBody ? sitemapUrlsFromRobots(robotsBody) : []
+  const referencedInRobots = fromRobots.length > 0
+  const candidates = fromRobots.length ? fromRobots : [`${base}/sitemap.xml`]
+
+  for (const url of candidates) {
+    const res = await fetchText(url)
+    if (!res?.ok) continue
+    const isXml = res.contentType.includes('xml') || res.body.trimStart().startsWith('<?xml') || res.body.includes('<urlset') || res.body.includes('<sitemapindex')
+    if (!isXml) continue
+    return { found: true, url, urlCount: countXmlLocs(res.body), referencedInRobots }
+  }
+  return { found: false, url: null, urlCount: null, referencedInRobots }
+}
+
 export async function checkAiSearch(rawTarget: string): Promise<AiSearchResult> {
   const base = 'https://' + rawTarget.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim()
 
@@ -89,9 +128,11 @@ export async function checkAiSearch(rawTarget: string): Promise<AiSearchResult> 
   const llms = await fetchText(`${base}/llms.txt`)
   const hasLlmsTxt = !!llms?.ok && !llms.contentType.includes('text/html') && !llms.body.trimStart().startsWith('<')
 
-  // Score: 90% weighted on AI-crawler accessibility, 10% on having llms.txt.
+  const sitemap = await checkSitemap(base, robots?.ok ? robots.body : null)
+
+  // Score: 80% AI-crawler accessibility, 10% llms.txt, 10% sitemap present.
   const allowed = AI_BOTS.length - blockedBots.length
-  const score = Math.round((allowed / AI_BOTS.length) * 90 + (hasLlmsTxt ? 10 : 0))
+  const score = Math.round((allowed / AI_BOTS.length) * 80 + (hasLlmsTxt ? 10 : 0) + (sitemap.found ? 10 : 0))
 
   const issues: AiSearchIssue[] = []
   if (blockedBots.length) {
@@ -101,6 +142,19 @@ export async function checkAiSearch(rawTarget: string): Promise<AiSearchResult> 
       detail: `robots.txt disallows: ${blockedBots.join(', ')}. These AI engines can't read the site, so it can't be cited in their answers.`,
     })
   }
+  if (!sitemap.found) {
+    issues.push({
+      severity: 'medium',
+      title: 'No sitemap.xml found',
+      detail: 'A sitemap helps search engines and AI crawlers discover and index every page on the site efficiently.',
+    })
+  } else if (!sitemap.referencedInRobots) {
+    issues.push({
+      severity: 'low',
+      title: 'Sitemap not referenced in robots.txt',
+      detail: `Found ${sitemap.url}, but robots.txt doesn't point to it — adding a "Sitemap:" line makes it easier for crawlers to find.`,
+    })
+  }
   if (!hasLlmsTxt) {
     issues.push({
       severity: 'low',
@@ -108,5 +162,5 @@ export async function checkAiSearch(rawTarget: string): Promise<AiSearchResult> 
       detail: 'llms.txt is an emerging standard that tells AI engines how to use your content. Adding one is a low-effort GEO win.',
     })
   }
-  return { score, hasLlmsTxt, blockedBots, issues }
+  return { score, hasLlmsTxt, blockedBots, sitemap, issues }
 }
