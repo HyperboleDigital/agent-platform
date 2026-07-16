@@ -192,6 +192,15 @@ function PostEditor({ clientId, post }: { clientId: string; post: BlogPost }) {
           </>
         ) : (
           <>
+            {!editable && (
+              <p className="text-xs text-muted-foreground">
+                {post.status === 'published' && post.publishedAt
+                  ? `Published to Framer on ${new Date(post.publishedAt).toLocaleDateString()} — read-only record of what went live.`
+                  : post.status === 'archived'
+                    ? 'Archived — read-only.'
+                    : 'Read-only.'}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">{metaDescription}</p>
             <div className="rounded-md border border-border p-4">
               <MarkdownPreview markdown={contentMd} />
