@@ -202,6 +202,35 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-16 (@mention notifications on request comments — off-plan, requested
+  directly)** — Not part of the SEO plan; logged here anyway since it's the same
+  session/checkpoint discipline. Owen also caught a real bug while discussing
+  this: comment authors always showed the hardcoded label "Hyperbole Digital" or
+  "You" (`requests-table.tsx` line ~158) instead of the real signed-in user's
+  name — the app tracked `isSuperadmin` boolean + Clerk userId but never a
+  display name.
+  - New `lib/users.ts`: `getDisplayNames()` (batched, cached Clerk
+    `getUserList`), `getUserEmail()`, `getMentionableUsers(clientId)` (Hyperbole
+    team from `SUPERADMIN_USER_IDS` + the client's Clerk org members via
+    `getOrganizationMembershipList`). Verified live against real Clerk data —
+    resolved the actual profile name ("Hyperbole"), not a hardcoded string.
+  - `change_request_comments` gains a `mentions text[]` column
+    (`migrate_2026-07-16_comment-mentions.sql`) — populated by explicit picker
+    selection in the compose UI, NOT parsed from free text, so notifying the
+    right person is reliable.
+  - `addComment` now emails each mentioned person individually via the existing
+    `sendGuardedEmail` guardrail path (test-mode/cap/logging all still apply —
+    no new send path invented). `listComments`/`getRequestDetail` resolve real
+    author names.
+  - Route: `GET /:id/mentionable-users`. Frontend: `MentionComposer` in
+    `requests-table.tsx` — typing "@" opens a dropdown of real mentionable
+    people, picking one inserts "@Full Name" and tracks their Clerk ID
+    separately from the text (mentions sent = only those whose "@Name" is still
+    present in the text at submit, protecting against a stale ping); comment
+    bodies bold "@Name" occurrences; author label now shows `authorName`.
+  - **Not yet live-verified end-to-end (needs the migration applied)** — Clerk
+    lookups verified standalone; the full post-a-comment-with-a-mention →
+    email-sent path is untested until the migration runs.
 - **2026-07-16 (Sitemap check added; frontend error-swallowing bug fixed)** —
   Owen asked whether sitemap checking existed (it didn't — noted gap from
   earlier). Added to `lib/ai-search.ts`: `checkSitemap()` reads `Sitemap:` lines

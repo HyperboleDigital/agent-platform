@@ -1,9 +1,9 @@
-import { Fragment, useRef, useState } from 'react'
+import { Fragment, useMemo, useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import { Paperclip, Send, XCircle, ChevronRight } from 'lucide-react'
 import { api } from '@/lib/api'
-import type { ChangeRequest, RequestStatus } from '@/lib/api'
+import type { ChangeRequest, RequestStatus, MentionableUser } from '@/lib/api'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea, Label } from '@/components/ui/input'
@@ -46,6 +46,93 @@ function statusChangeLabel(status: RequestStatus | null): string {
 // only present in the superadmin cross-client queue.
 export type RequestRow = ChangeRequest & { clientName?: string }
 
+// Renders a comment body with any "@Full Name" mentions bolded, so a mention
+// reads clearly in the thread without needing a rich-text editor.
+function CommentBody({ body, mentionNames }: { body: string; mentionNames: string[] }) {
+  if (mentionNames.length === 0) return <>{body}</>
+  const pattern = new RegExp(`(@(?:${mentionNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}))`, 'g')
+  const parts = body.split(pattern)
+  return <>{parts.map((p, i) => (mentionNames.some(n => p === `@${n}`) ? <span key={i} className="font-medium text-primary">{p}</span> : <Fragment key={i}>{p}</Fragment>))}</>
+}
+
+// A plain text input with an "@" autocomplete: typing "@" + a few letters opens
+// a dropdown of mentionable users (the Hyperbole team + the client's own org
+// members); picking one inserts "@Full Name " and records their Clerk user ID
+// so the backend can notify them directly. Selection is explicit (click/enter
+// on a real suggestion), never inferred from free text, so notifying the right
+// person is reliable even with names that contain spaces.
+function MentionComposer({
+  value, onChange, mentionIds, onMentionIdsChange, onSubmit, disabled, users,
+}: {
+  value: string
+  onChange: (v: string) => void
+  mentionIds: string[]
+  onMentionIdsChange: (ids: string[]) => void
+  onSubmit: () => void
+  disabled: boolean
+  users: MentionableUser[]
+}) {
+  const [query, setQuery] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const suggestions = useMemo(() => {
+    if (query === null) return []
+    const q = query.toLowerCase()
+    return users.filter(u => u.name.toLowerCase().includes(q)).slice(0, 6)
+  }, [query, users])
+
+  function handleChange(v: string) {
+    onChange(v)
+    const cursor = inputRef.current?.selectionStart ?? v.length
+    const upToCursor = v.slice(0, cursor)
+    const match = upToCursor.match(/@([^\s@]*)$/)
+    setQuery(match ? match[1] : null)
+  }
+
+  function pick(u: MentionableUser) {
+    const cursor = inputRef.current?.selectionStart ?? value.length
+    const upToCursor = value.slice(0, cursor)
+    const start = upToCursor.search(/@[^\s@]*$/)
+    if (start === -1) return
+    const next = `${value.slice(0, start)}@${u.name} ${value.slice(cursor)}`
+    onChange(next)
+    onMentionIdsChange([...new Set([...mentionIds, u.id])])
+    setQuery(null)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  return (
+    <div className="relative flex-1">
+      <Input
+        ref={inputRef}
+        value={value}
+        onChange={e => handleChange(e.target.value)}
+        placeholder="Add a comment… (@ to mention someone)"
+        onKeyDown={e => {
+          if (e.key === 'Enter' && query === null) onSubmit()
+          if (e.key === 'Escape') setQuery(null)
+        }}
+        disabled={disabled}
+      />
+      {query !== null && suggestions.length > 0 && (
+        <div className="absolute bottom-full z-10 mb-1 w-56 rounded-md border border-border bg-popover shadow-md">
+          {suggestions.map(u => (
+            <button
+              key={u.id}
+              type="button"
+              onClick={() => pick(u)}
+              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-accent"
+            >
+              <span>{u.name}</span>
+              {u.isSuperadmin && <span className="text-xs text-muted-foreground">Hyperbole</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Inline expand-in-place detail: status timeline, comment thread,
 // attachments, and (for the client, while still cancellable) a cancel
 // action with a required reason.
@@ -53,7 +140,9 @@ export function RequestDetailPanel({ clientId, requestId }: { clientId: string; 
   const key = ['request-detail', clientId, requestId]
   const { data: detail, isLoading } = useSWR(key, () => api.clients.requestDetail(clientId, requestId))
   const { data: me } = useSWR('me', api.me)
+  const { data: mentionableUsers } = useSWR(['mentionable-users', clientId], () => api.clients.mentionableUsers(clientId))
   const [comment, setComment] = useState('')
+  const [mentionIds, setMentionIds] = useState<string[]>([])
   const [posting, setPosting] = useState(false)
   const [attaching, setAttaching] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -62,11 +151,19 @@ export function RequestDetailPanel({ clientId, requestId }: { clientId: string; 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function postComment() {
-    if (!comment.trim()) return
+    const trimmed = comment.trim()
+    if (!trimmed) return
     setPosting(true)
     try {
-      await api.clients.addRequestComment(clientId, requestId, comment.trim())
+      // Only notify mentions whose "@Name" is still actually present in the
+      // text — protects against a stale ping if the user deleted it after picking.
+      const stillPresent = mentionIds.filter(id => {
+        const u = mentionableUsers?.find(u => u.id === id)
+        return u && trimmed.includes(`@${u.name}`)
+      })
+      await api.clients.addRequestComment(clientId, requestId, trimmed, stillPresent)
       setComment('')
+      setMentionIds([])
       mutate(key)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to post comment')
@@ -152,19 +249,30 @@ export function RequestDetailPanel({ clientId, requestId }: { clientId: string; 
       <div>
         <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Comments</div>
         <div className="flex flex-col gap-2">
-          {comments.map(c => (
-            <div key={c.id} className="rounded-md border border-border px-3 py-2 text-sm">
-              <div className="mb-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">{c.isSuperadmin ? 'Hyperbole Digital' : 'You'}</span>
-                <span>{new Date(c.createdAt).toLocaleString()}</span>
+          {comments.map(c => {
+            const mentionNames = c.mentions.map(id => mentionableUsers?.find(u => u.id === id)?.name).filter((n): n is string => !!n)
+            return (
+              <div key={c.id} className="rounded-md border border-border px-3 py-2 text-sm">
+                <div className="mb-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{c.authorName}</span>
+                  <span>{new Date(c.createdAt).toLocaleString()}</span>
+                </div>
+                <CommentBody body={c.body} mentionNames={mentionNames} />
               </div>
-              {c.body}
-            </div>
-          ))}
+            )
+          })}
           {!comments.length && <p className="text-xs text-muted-foreground">No comments yet.</p>}
         </div>
         <div className="mt-2 flex gap-2">
-          <Input value={comment} onChange={e => setComment(e.target.value)} placeholder="Add a comment…" onKeyDown={e => e.key === 'Enter' && postComment()} />
+          <MentionComposer
+            value={comment}
+            onChange={setComment}
+            mentionIds={mentionIds}
+            onMentionIdsChange={setMentionIds}
+            onSubmit={postComment}
+            disabled={posting}
+            users={mentionableUsers ?? []}
+          />
           <Button variant="secondary" size="sm" onClick={postComment} disabled={posting || !comment.trim()}>
             <Send className="h-3.5 w-3.5" />
           </Button>

@@ -317,9 +317,17 @@ export interface RequestComment {
   id: string
   requestId: string
   authorId: string
+  authorName: string
   isSuperadmin: boolean
   body: string
+  mentions: string[]
   createdAt: string
+}
+
+export interface MentionableUser {
+  id: string
+  name: string
+  isSuperadmin: boolean
 }
 
 export interface RequestAttachment {
@@ -466,8 +474,9 @@ export const api = {
     requestDetail: (id: string, reqId: string) => request<RequestDetail>(`/clients/${id}/requests/${reqId}`),
     cancelRequest: (id: string, reqId: string, reason: string) =>
       request<ChangeRequest>(`/clients/${id}/requests/${reqId}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
-    addRequestComment: (id: string, reqId: string, body: string) =>
-      request<RequestComment>(`/clients/${id}/requests/${reqId}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+    addRequestComment: (id: string, reqId: string, body: string, mentions: string[] = []) =>
+      request<RequestComment>(`/clients/${id}/requests/${reqId}/comments`, { method: 'POST', body: JSON.stringify({ body, mentions }) }),
+    mentionableUsers: (id: string) => request<MentionableUser[]>(`/clients/${id}/mentionable-users`),
     uploadRequestAttachment: async (id: string, reqId: string, file: File) => {
       const form = new FormData()
       form.append('file', file)

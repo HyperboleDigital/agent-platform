@@ -18,6 +18,7 @@ import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVi
 import {
   listRequests, createRequest, updateRequestStatus, cancelRequest, getRequestDetail, addComment
 } from '../lib/change-requests'
+import { getMentionableUsers } from '../lib/users'
 import { listAttachments, uploadAttachment, getAttachment, getSignedUrl } from '../lib/attachments'
 import {
   listKnowledgeFiles, uploadKnowledgeFile, getKnowledgeFile, getSignedUrl as getKnowledgeFileSignedUrl
@@ -570,11 +571,20 @@ clientsRouter.post('/:id/requests/:reqId/comments', async (req, res) => {
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
   const body = typeof req.body?.body === 'string' ? req.body.body.trim() : ''
   if (!body) return res.status(400).json({ error: 'body is required' })
+  const mentions = Array.isArray(req.body?.mentions) ? req.body.mentions.filter((m: unknown) => typeof m === 'string') : []
   try {
-    res.json(await addComment(req.params.reqId, identity.userId, !!identity.isSuperadmin, body))
+    res.json(await addComment(req.params.reqId, identity.userId, !!identity.isSuperadmin, body, mentions))
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to add comment' })
   }
+})
+
+// Users who can be @mentioned in this client's request comments: the Hyperbole
+// team + the client's own Clerk org members. Backs the composer's "@" picker.
+clientsRouter.get('/:id/mentionable-users', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await getMentionableUsers(req.params.id))
 })
 
 // Attach a file to a request — on submit or any time after, per either party.
