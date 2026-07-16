@@ -228,9 +228,12 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
     separately from the text (mentions sent = only those whose "@Name" is still
     present in the text at submit, protecting against a stale ping); comment
     bodies bold "@Name" occurrences; author label now shows `authorName`.
-  - **Not yet live-verified end-to-end (needs the migration applied)** — Clerk
-    lookups verified standalone; the full post-a-comment-with-a-mention →
-    email-sent path is untested until the migration runs.
+  - **2026-07-16 LIVE-VERIFIED end-to-end.** Migration applied. Created a real
+    test request on Spec-ID, posted a comment mentioning the Hyperbole account,
+    confirmed: comment saved with `mentions: [userId]`, real author name
+    resolved, and a `comment.mention` email logged + sent (guarded, test-mode
+    redirected to the test inbox) within 2s of the comment. Test request
+    cascade-deleted afterward (comments/events went with it). Feature is DONE.
 - **2026-07-16 (Sitemap check added; frontend error-swallowing bug fixed)** —
   Owen asked whether sitemap checking existed (it didn't — noted gap from
   earlier). Added to `lib/ai-search.ts`: `checkSitemap()` reads `Sitemap:` lines
