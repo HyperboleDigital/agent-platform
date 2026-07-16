@@ -1,25 +1,36 @@
 # Handoff — read this first in a new chat
 
-Last updated: 2026-07-15, end of session. This doc exists so a fresh Claude
+Last updated: 2026-07-16, end of session. This doc exists so a fresh Claude
 session (or a human) can pick up instantly. Delete/replace it once it's stale
 — it's a snapshot, not permanent docs (that's `README.md`). See `TODO.md` for
 the working punch list — Owen edits that directly, treat it as authoritative.
 
-## Current focus: two new plans (2026-07-15)
+## Current focus: SEO/GEO automation is LIVE (started 2026-07-15)
 
-The active initiative is now **automating the SEO/GEO service** and, second, an
-**automated website-rebuild engine** on Framer. Both are written up as living
-plan docs — **read these before doing SEO/rebuild work**:
+The active initiative is **automating the SEO/GEO service** and, second, an
+**automated website-rebuild engine** on Framer. The SEO side moved from plan to
+a working, live-verified product in one session — **read the plan doc's
+checkpoint log before doing SEO work, it's the real source of truth**:
 
-- **`docs/plans/seo-automation.md`** — input a URL → audit → generate fixes →
-  track results → branded report. Approved; next action is **Phase 0** (a
-  cost-safe DataForSEO + Haiku test on one site, plus background-job infra).
-  Blocked only on Owen creating a DataForSEO account.
-- **`docs/plans/website-rebuild.md`** — ingest a client's old site → rebuild it
-  SEO-clean on Framer (a platform we control). Approved; feasibility spike
-  desk-research done (Framer 3.0 Server/Canvas/Plugin APIs + MCP make it
-  feasible), hands-on spike pending. Built **after** SEO Phase 0 (shares the
-  crawler).
+- **`docs/plans/seo-automation.md`** — DONE through: DataForSEO crawl → /100
+  site-health score → AI-Search-Health/GEO score (bot blocking, llms.txt,
+  sitemap.xml) → severity-ranked issues with affected URLs → one-click AI
+  fixes (titles/meta, schema, llms.txt) as change requests → downloadable
+  branded PDF → rolled into monthly client Reports. Superadmin-only Audit Tool
+  crawls any URL on demand. **Everything is manual-trigger by deliberate
+  choice — no scheduler exists and none should be added without Owen asking.**
+  A SEMrush side-by-side comparison validated our numbers and directly
+  informed the AI-Search-Health build (see checkpoint log for specifics).
+- **`docs/plans/website-rebuild.md`** — approved, feasibility spike
+  desk-research done (Framer 3.0 Server/Canvas/Plugin APIs + MCP look viable).
+  Hands-on spike (build real pages on a throwaway Framer project) still
+  pending — needs a throwaway project + credentials from Owen. Built **after**
+  SEO work (shares the crawler); not started.
+
+Also shipped this session, off the SEO plan: **@mention notifications on
+change-request comments** (real Clerk names, guarded per-person email,
+live-verified) and a fix for a real bug where comment authors always showed
+the hardcoded "Hyperbole Digital"/"You" instead of their actual name.
 
 **Checkpoint convention (so progress is never lost across chats):** each plan
 doc has a `## Checkpoint log` at the bottom. Append a dated entry whenever you
@@ -27,18 +38,15 @@ make meaningful progress or change a decision — and always before ending a
 session or when context runs low. The plan docs are the durable source of truth;
 this Handoff just points at them.
 
-## State (2026-07-15)
+## State (2026-07-16)
 
-Phase 4 work below is committed on `feat/dashboard-retrieval-escalation-mvp`.
-The new-initiative planning docs (`docs/plans/*.md` + this Handoff/TODO update)
-are committed separately — no code was written yet for the new initiative.
-
-**Still uncommitted (from the prior session, NOT the new initiative):** GSC
-"Take snapshot" route + `gscProperty` config input + client-name rename —
-`apps/api/src/routes/clients.ts`, `apps/dashboard/src/lib/api.ts`,
-`apps/dashboard/src/pages/ClientDetail.tsx`, `apps/dashboard/src/pages/client/Seo.tsx`.
-Note the snapshot button may be superseded by the SEO-automation plan's rankings
-rebuild — decide whether to commit, keep, or drop these when that phase lands.
+Everything through the latest commit (`099d0f0` as of this writing) is
+committed AND pushed to `feat/dashboard-retrieval-escalation-mvp`. Tree is
+clean. New migrations since 2026-07-15 that must be applied to a fresh/other
+Supabase environment: `migrate_2026-07-18_seo-crawls.sql`,
+`migrate_2026-07-19_adhoc-crawls.sql`, `migrate_2026-07-20_ai-search.sql`,
+`migrate_2026-07-16_comment-mentions.sql` (all additive, safe to run, already
+applied to the live dev DB).
 
 ## Where things stand — by phase
 
