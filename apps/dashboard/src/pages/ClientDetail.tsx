@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import {
   Users, Plug, CreditCard, Mail, MessageSquare, MessageSquarePlus,
-  CheckCircle2, XCircle, Undo2, Trash2
+  CheckCircle2, XCircle, Undo2, Trash2, Layers, Clock, AlertTriangle, Link2, Bot, Lock
 } from 'lucide-react'
-import type { LeadStatus } from '@agent-platform/shared'
+import { normalizeDomain, isPublicHost, type LeadStatus, type Vertical } from '@agent-platform/shared'
 import { api } from '@/lib/api'
-import type { ConnectorStatus, RequestStatus, ServiceKey } from '@/lib/api'
+import type { ConnectorStatus, RequestStatus, TierInfo } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { StatTile } from '@/components/stat-tile'
@@ -21,6 +21,8 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConversationsChart } from '@/components/charts/conversations-chart'
 import { UsageBar } from '@/components/usage-bar'
+import { SiteHealthCard } from '@/components/site-health-card'
+import { ContactButton } from '@/components/contact-button'
 import { RequestsTable } from '@/components/requests-table'
 
 // ── Section wrappers ─────────────────────────────────────────────────────────
@@ -28,9 +30,11 @@ import { RequestsTable } from '@/components/requests-table'
 // pulling clientId/client from the layout's outlet context.
 
 export function ClientHome() {
-  const { clientId: id } = useClientCtx()
+  const { clientId: id, client } = useClientCtx()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: stats } = useSWR(id ? ['stats', id] : null, () => api.clients.stats(id))
+  const { entitlements } = useEntitlements(id)
+  const chatEntitled = entitlements?.services.chat?.entitled ?? false
 
   // Billing redirect toast — the API's success/cancel URLs land here.
   useEffect(() => {
@@ -46,37 +50,180 @@ export function ClientHome() {
 
   const pct = stats ? `${Math.round(stats.resolvedRate * 100)}%` : '—'
 
+  // Ordered by what a client actually cares about first: is my plan active
+  // (the ClientLayout gate already blocks a fully inactive account, but this
+  // is the visible confirmation — and it's the one thing superadmin needs to
+  // spot at a glance across every client), is the site healthy, is SEO/
+  // visibility improving, what needs my attention (requests), how's lead
+  // flow, and — last, since it's the mechanism not the outcome — how's the
+  // chat assistant doing.
   return (
     <div className="flex flex-col gap-6">
-      {!stats ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[72px] w-full" />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <StatTile label="Messages this week" value={stats.messagesThisWeek} />
-          <StatTile label="Leads this week" value={stats.leadsThisWeek} />
-          <StatTile label="Open escalations" value={stats.openEscalations} />
-          <StatTile label="Resolved rate" value={pct} />
-        </div>
-      )}
-
-      {!stats ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[72px] w-full" />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <StatTile label="Conversations (lifetime)" value={stats.totalConversations} />
-          <StatTile label="Leads captured (lifetime)" value={stats.totalLeadsCaptured} />
-          <StatTile label="Questions answered" value={stats.questionsAnswered} />
-          <StatTile label="Est. hours saved" value={`${stats.estimatedHoursSaved}h`} />
-        </div>
-      )}
-
-      <ConversationsCard clientId={id} />
+      <PlanStatusCard clientId={id} />
+      <SiteHealthCard clientId={id} domain={client?.domain} />
+      <SeoVisibilitySummaryCard clientId={id} />
       <RequestsCard clientId={id} />
+
+      <div>
+        <h2 className="mb-2 text-lg font-semibold">Leads</h2>
+        {!stats ? (
+          <div className="grid grid-cols-2 gap-3">
+            <Skeleton className="h-[72px] w-full" /><Skeleton className="h-[72px] w-full" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <StatTile label="Leads this week" value={stats.leadsThisWeek} />
+            <StatTile label="Leads captured (lifetime)" value={stats.totalLeadsCaptured} />
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h2 className="mb-2 text-lg font-semibold">Chat assistant</h2>
+        {!chatEntitled ? (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-1.5 py-8 text-center">
+              <Lock className="h-6 w-6 text-muted-foreground" />
+              <p className="text-sm font-medium">Chat Assistant is locked</p>
+              <p className="text-sm text-muted-foreground">It&apos;s included on Growth plans — <Link to="billing" className="text-primary hover:underline">see your plan</Link> to add it.</p>
+            </CardContent>
+          </Card>
+        ) : !stats ? (
+          <Skeleton className="h-24 w-full" />
+        ) : stats.totalConversations === 0 ? (
+          // No conversation has ever happened — 6 zero-tiles + an empty chart
+          // is noise, not information. One line says the same thing.
+          <Card>
+            <CardContent className="flex flex-col items-center gap-1.5 py-8 text-center">
+              <Bot className="h-6 w-6 text-muted-foreground" />
+              <p className="text-sm font-medium">No conversations yet</p>
+              <p className="text-sm text-muted-foreground">Stats will show up here once visitors start chatting.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+              <StatTile label="Messages this week" value={stats.messagesThisWeek} />
+              <StatTile label="Open escalations" value={stats.openEscalations} />
+              <StatTile label="Resolved rate" value={pct} />
+              <StatTile label="Conversations (lifetime)" value={stats.totalConversations} />
+              <StatTile label="Questions answered" value={stats.questionsAnswered} />
+              <StatTile label="Est. hours saved" value={`${stats.estimatedHoursSaved}h`} />
+            </div>
+            <ConversationsCard clientId={id} />
+          </div>
+        )}
+      </div>
     </div>
+  )
+}
+
+// Compact SEO + AI Visibility summary for Home — on-page score, target-keyword
+// progress, and AI-mention rate at a glance, each linking to the full SEO page
+// for detail. Read-only; no on-demand checks fire from here.
+function SeoVisibilitySummaryCard({ clientId }: { clientId: string }) {
+  // Only fetch (and only render) when the client is actually entitled to SEO —
+  // otherwise these calls 403 and the card is meaningless.
+  const { entitlements } = useEntitlements(clientId)
+  const seoEntitled = entitlements?.services.seo?.entitled ?? false
+
+  const { data: crawl } = useSWR(seoEntitled ? ['seo-crawl', clientId] : null, () => api.clients.latestCrawl(clientId))
+  const { data: kwData } = useSWR(seoEntitled ? ['target-keywords', clientId] : null, () => api.clients.targetKeywords(clientId))
+  const { data: visData } = useSWR(seoEntitled ? ['visibility-runs', clientId] : null, () => api.clients.visibilityRuns(clientId, 30))
+
+  if (!seoEntitled) return null
+
+  const keywords = kwData?.keywords ?? []
+  const rankedKeywords = keywords.filter(k => k.latestRank != null)
+  const top10 = rankedKeywords.filter(k => (k.latestRank ?? 999) <= 10).length
+
+  const latestMentionRate = visData?.trend?.length ? visData.trend[visData.trend.length - 1].mentionRate : null
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>SEO &amp; AI Visibility</CardTitle>
+        <Link to="seo" className="text-sm text-primary hover:underline">View all</Link>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-3 pt-0 sm:grid-cols-3">
+        <StatTile
+          label="On-page health"
+          value={crawl?.onpageScore != null ? `${Math.round(crawl.onpageScore)}/100` : 'Not run yet'}
+        />
+        <StatTile
+          label="Target keywords in top 10"
+          value={keywords.length ? `${top10} / ${keywords.length}` : 'None tracked'}
+        />
+        <StatTile
+          label="AI mention rate (30d)"
+          value={latestMentionRate != null ? `${Math.round(latestMentionRate * 100)}%` : 'No checks yet'}
+        />
+      </CardContent>
+    </Card>
+  )
+}
+
+// Visible confirmation of subscription status. ClientLayout's gate already
+// blocks a fully-inactive account from reaching Home at all, so a client will
+// normally only ever see the "Active" state here — this is the proof-of-life,
+// not the enforcement. Superadmin sees it too, including the inactive state,
+// since they can view a client's Home regardless of billing status.
+function PlanStatusCard({ clientId }: { clientId: string }) {
+  const { entitlements, isLoading } = useEntitlements(clientId)
+  const { data: tiers } = useSWR('billing-tiers', api.billing.tiers)
+  const { data: billing } = useSWR(['billing', clientId], () => api.billing.get(clientId))
+  const { data: me } = useSWR('me', api.me)
+  const isAdmin = !!me?.isSuperadmin
+
+  if (isLoading || !entitlements) return <Skeleton className="h-20 w-full" />
+
+  const tier = tiers?.find(t => t.key === entitlements.planKey) ?? null
+  const priceLabel = tier ? `$${(tier.monthlyPriceCents / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}/mo` : null
+  const renewsAt = billing?.subscription?.currentPeriodEnd
+  const included = tier?.features.filter(f => f.built).slice(0, 4) ?? []
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-3 pt-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge variant={entitlements.active ? 'success' : 'destructive'}>
+              <StatusDot variant={entitlements.active ? 'success' : 'destructive'} />
+              {entitlements.active ? 'Plan active' : 'Not active'}
+            </Badge>
+            {tier && <span className="text-sm font-medium">{tier.name}</span>}
+            {priceLabel && <span className="text-sm text-muted-foreground">{priceLabel}</span>}
+          </div>
+          <div className="flex items-center gap-3">
+            {entitlements.active && renewsAt && (
+              <span className="text-xs text-muted-foreground">Renews {new Date(renewsAt).toLocaleDateString()}</span>
+            )}
+            {(isAdmin || entitlements.active) && (
+              <Link to="billing" className="text-sm text-primary hover:underline">
+                {entitlements.active ? 'Manage plan' : 'View billing'}
+              </Link>
+            )}
+          </div>
+        </div>
+        {entitlements.active && included.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {included.map(f => (
+              <span key={f.text} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{f.text}</span>
+            ))}
+          </div>
+        )}
+        {!entitlements.active && (
+          isAdmin ? (
+            <p className="text-sm text-muted-foreground">Not active yet. Open billing to assign a tier and get them a payment link.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm text-muted-foreground">Not sure which plan is right for you?</p>
+              <ContactButton clientId={clientId} variant="secondary" label="Contact Hyperbole to pick a plan" defaultTopic="Choosing or changing my plan" />
+            </div>
+          )
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -130,23 +277,236 @@ export function LeadsSection() {
   return <LeadsTab clientId={clientId} />
 }
 
-export function ConnectorsSection() {
+export function BillingSection() {
   const { clientId, client } = useClientCtx()
-  return client ? <ConnectorsTab clientId={clientId} client={client} /> : <Skeleton className="h-40 w-full" />
+  const { data: me } = useSWR('me', api.me)
+
+  // Clients never see pricing-sheet tiers, the tier picker, payment links, or
+  // raw Stripe subscription internals. They see the plan they're on (or a
+  // prompt to reach out), and nothing they could self-serve into.
+  if (me && !me.isSuperadmin) {
+    return client ? <ClientPlanView client={client} /> : <Skeleton className="h-24 w-full" />
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {client ? <TierCard clientId={clientId} client={client} /> : <Skeleton className="h-24 w-full" />}
+      <BillingTab clientId={clientId} client={client} />
+    </div>
+  )
 }
 
-export function BillingSection() {
-  const { clientId } = useClientCtx()
-  return <BillingTab clientId={clientId} />
+// The client-facing billing view: just the plan they're on and what it
+// includes, or a nudge to reach out if they're not on one yet. No prices to
+// pick, no Stripe internals, no payment links.
+function ClientPlanView({ client }: { client: import('@agent-platform/shared').Client }) {
+  const { data: tiers } = useSWR('tiers', () => api.billing.tiers())
+  const assigned = tiers?.find(t => t.key === client.tierKey) ?? null
+
+  if (!tiers) return <Skeleton className="h-24 w-full" />
+
+  if (!assigned) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Your plan</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <EmptyState
+            icon={CreditCard}
+            title="You're not on a plan yet"
+            description="We'll get you set up with the right plan."
+            action={<ContactButton clientId={client.id} label="Contact Hyperbole to get started" defaultTopic="Choosing or changing my plan" />}
+          />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Layers className="h-4 w-4 text-primary" /> Your plan</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 pt-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-base font-semibold">{assigned.name}</span>
+          <span className="text-sm tabular-nums text-muted-foreground">${(assigned.monthlyPriceCents / 100).toFixed(0)}/mo</span>
+        </div>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Included in your plan</p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {assigned.features.map(f => (
+              <li key={f.text} className="flex items-start gap-2 text-sm">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                <span>{f.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <p className="text-xs text-muted-foreground">Questions about your plan? Use <span className="font-medium text-foreground">Contact Hyperbole</span> at the top.</p>
+      </CardContent>
+    </Card>
+  )
 }
 
 export function ConfigSection() {
   const { clientId, client } = useClientCtx()
+  const { data: me } = useSWR('me', api.me)
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
+      {me?.isSuperadmin && client && <InviteCard clientId={clientId} client={client} />}
       {client ? <ConfigTab clientId={clientId} client={client} /> : <Skeleton className="h-40 w-full" />}
       <NotificationSettingsCard clientId={clientId} />
+      <div>
+        <h2 className="mb-1 text-lg font-semibold">Connectors</h2>
+        <p className="mb-3 text-sm text-muted-foreground">Gmail, Slack, and Calendly integrations for this client.</p>
+        {client ? <ConnectorsTab clientId={clientId} client={client} /> : <Skeleton className="h-40 w-full" />}
+      </div>
+      {me?.isSuperadmin && client && <DangerZoneCard client={client} />}
     </div>
+  )
+}
+
+// Superadmin-only permanent delete. Requires typing the client's exact name to
+// confirm — the same guard the API enforces — so a stray click can't wipe a
+// tenant and all its data.
+function DangerZoneCard({ client }: { client: import('@agent-platform/shared').Client }) {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [confirmText, setConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+
+  async function remove() {
+    setDeleting(true)
+    try {
+      await api.clients.remove(client.id, confirmText.trim())
+      mutate('clients')
+      toast.success(`${client.name} deleted`)
+      navigate('/')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete client')
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <Card className="border-destructive/30">
+      <CardHeader>
+        <CardTitle className="text-destructive">Danger zone</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 pt-0">
+        <p className="text-sm text-muted-foreground">
+          Permanently delete <span className="font-medium text-foreground">{client.name}</span> and everything associated with it — leads, requests, audits, subscriptions, and their login. This cannot be undone.
+        </p>
+        {!open ? (
+          <Button variant="outline" size="sm" className="self-start border-destructive/40 text-destructive hover:bg-destructive/10" onClick={() => setOpen(true)}>
+            <Trash2 className="h-3.5 w-3.5" /> Delete client
+          </Button>
+        ) : (
+          <div className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+            <p className="text-sm">
+              Type <span className="font-mono font-semibold">{client.name}</span> to confirm permanent deletion:
+            </p>
+            <Input value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder={client.name} disabled={deleting} />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { setOpen(false); setConfirmText('') }} disabled={deleting}>Cancel</Button>
+              <Button
+                size="sm"
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={remove}
+                disabled={deleting || confirmText.trim() !== client.name}
+              >
+                {deleting ? 'Deleting…' : 'Delete permanently'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Sends the client's real login invitation — a Clerk-hosted email where they
+// set their own password. Creates the client's Clerk Organization on first use
+// if it doesn't have one yet (that Organization IS the tenant boundary; see
+// authz.canAccessClient). Deliberately requires typing the email fresh each
+// time and an explicit click — this sends a real email, never automatic.
+function InviteCard({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
+  const [email, setEmail] = useState('')
+  const [sending, setSending] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [lastSentTo, setLastSentTo] = useState<string | null>(null)
+
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const validEmail = EMAIL_RE.test(email.trim())
+
+  async function send() {
+    setSending(true)
+    try {
+      await api.clients.invite(clientId, email.trim())
+      mutate(['client', clientId])
+      setLastSentTo(email.trim())
+      setEmail('')
+      setConfirming(false)
+      toast.success(`Invitation sent to ${email.trim()}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send invite')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Client login</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3 pt-0">
+        <p className="text-sm text-muted-foreground">
+          {client.clerkOrgId
+            ? "This client's organization is set up. Invite another teammate below — this won't resend to people already invited."
+            : "No login access yet. Sending an invite below creates this client's account automatically."}
+        </p>
+        <div className="flex items-end gap-2">
+          <div className="grid flex-1 gap-1.5">
+            <Label>Client's email</Label>
+            <Input
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="owner@example.com"
+              type="email"
+              disabled={confirming || sending}
+            />
+          </div>
+          {!confirming && (
+            <Button size="sm" onClick={() => setConfirming(true)} disabled={!validEmail}>
+              Send invite
+            </Button>
+          )}
+        </div>
+
+        {/* In-UI confirmation (no browser alert) — sending a real email is a
+            deliberate, confirmed action. */}
+        {confirming && (
+          <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3">
+            <p className="text-sm">
+              Send a real login invitation email to <span className="font-medium">{email.trim()}</span>? They'll get a link to set a password and access this client's dashboard.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setConfirming(false)} disabled={sending}>Cancel</Button>
+              <Button size="sm" onClick={send} disabled={sending}>{sending ? 'Sending…' : 'Yes, send invite'}</Button>
+            </div>
+          </div>
+        )}
+
+        {lastSentTo && !confirming && (
+          <p className="text-xs text-success">
+            Invitation sent to {lastSentTo}. Clerk emails them a link to set their password — check back once they've accepted.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -447,22 +807,168 @@ function UsageCard({ clientId }: { clientId: string }) {
   )
 }
 
-function BillingTab({ clientId }: { clientId: string }) {
-  const { data: plans } = useSWR('plans', () => api.billing.plans())
-  const { data, isLoading } = useSWR(['billing', clientId], () => api.billing.get(clientId), { refreshInterval: 30_000 })
-  const [busyPlan, setBusyPlan] = useState<string | null>(null)
-  const [openingPortal, setOpeningPortal] = useState(false)
+// The finalized pricing-sheet tier (Local/B2B, Care/mid/top) — see
+// lib/tiers.ts on the API side. Separate from the legacy Starter/Pro Stripe
+// plan below: this is a plain field assignment (clients.vertical/tier_key),
+// not a checkout, since Owen hasn't wired real Stripe products for the sheet
+// yet. Shows the client exactly what their tier promises, distinguishing
+// bullets the dashboard actually delivers today from ones still on the
+// roadmap — so nobody reads "call tracking" in the feature list and assumes
+// it's live.
+function TierCard({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
+  const { data: tiers } = useSWR('tiers', () => api.billing.tiers())
+  const { data: me } = useSWR('me', api.me)
+  const [vertical, setVertical] = useState<Vertical | ''>(client.vertical ?? '')
+  const [tierKey, setTierKey] = useState(client.tierKey ?? '')
+  const [saving, setSaving] = useState(false)
+  const [linking, setLinking] = useState(false)
 
-  async function subscribe(priceId: string) {
-    setBusyPlan(priceId)
+  const assigned = tiers?.find(t => t.key === client.tierKey) ?? null
+  const optionsForVertical = tiers?.filter(t => t.vertical === vertical) ?? []
+
+  async function copyPaymentLink() {
+    if (!tierKey) return
+    setLinking(true)
     try {
-      const { url } = await api.billing.checkout(clientId, priceId)
-      window.location.href = url
+      const { url } = await api.billing.tierLink(client.id, tierKey)
+      await navigator.clipboard.writeText(url)
+      toast.success('Payment link copied — send it to the client to switch their plan', { icon: <CheckCircle2 className="h-4 w-4" /> })
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to start checkout')
-      setBusyPlan(null)
+      toast.error(err instanceof Error ? err.message : 'Failed to create payment link', { icon: <XCircle className="h-4 w-4" /> })
+    } finally {
+      setLinking(false)
     }
   }
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.clients.upsert({ id: client.id, vertical: vertical || null, tierKey: tierKey || null })
+      mutate(['client', clientId])
+      toast.success('Tier updated', { icon: <CheckCircle2 className="h-4 w-4" /> })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update tier', { icon: <XCircle className="h-4 w-4" /> })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!tiers) return <Skeleton className="h-24 w-full" />
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Layers className="h-4 w-4 text-primary" /> Pricing-sheet tier <span className="text-xs font-normal text-muted-foreground">(reference only — not billed)</span></CardTitle>
+        <p className="text-xs text-muted-foreground">
+          What this client&apos;s plan is supposed to include, per the pricing sheet. This label isn&apos;t connected to Stripe — see <span className="font-medium text-foreground">Current plan</span> below for what&apos;s actually being charged.
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4 pt-0">
+        {assigned ? (
+          <div>
+            <div className="flex items-baseline gap-2">
+              <span className="font-medium">{assigned.name}</span>
+              <span className="text-xs text-muted-foreground">({assigned.vertical === 'local' ? 'Local Services' : 'B2B'})</span>
+              <span className="text-sm tabular-nums">${(assigned.monthlyPriceCents / 100).toFixed(0)}/mo</span>
+            </div>
+            {/*
+              Every bullet here is included in the plan and being delivered —
+              much of it by hand, off-dashboard. So they all read the same.
+              `built` only decides whether we can offer a deep link to live
+              data; it must never look like the client isn't getting something.
+              The build-coverage view is superadmin-only, below.
+            */}
+            <p className="mt-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Included in your plan</p>
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {assigned.features.map(f => (
+                <li key={f.text} className="flex items-start gap-2 text-sm">
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                  <span>
+                    {f.text}
+                    {f.built && f.section !== undefined && (
+                      <Link
+                        to={`/clients/${clientId}${f.section ? `/${f.section}` : ''}`}
+                        className="ml-2 text-xs text-primary hover:underline"
+                      >
+                        View
+                      </Link>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {me?.isSuperadmin && (
+              <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="h-3 w-3" />
+                Admin note: {assigned.features.filter(f => f.built).length} of {assigned.features.length} bullets
+                have live dashboard data. The rest are delivered off-dashboard — see TODO.md.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No tier assigned yet.</p>
+        )}
+
+        {me?.isSuperadmin && (
+          <div className="flex flex-wrap items-end gap-2 border-t border-border pt-4">
+            <div className="grid gap-1.5">
+              <Label>Vertical</Label>
+              <select
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={vertical}
+                onChange={e => { setVertical(e.target.value as Vertical | ''); setTierKey('') }}
+              >
+                <option value="">— none —</option>
+                <option value="local">Local Services</option>
+                <option value="b2b">B2B</option>
+              </select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Tier</Label>
+              <select
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={tierKey}
+                onChange={e => setTierKey(e.target.value)}
+                disabled={!vertical}
+              >
+                <option value="">— none —</option>
+                {optionsForVertical.map((t: TierInfo) => (
+                  <option key={t.key} value={t.key}>{t.name} — ${(t.monthlyPriceCents / 100).toFixed(0)}/mo</option>
+                ))}
+              </select>
+            </div>
+            <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save tier'}</Button>
+            <Button size="sm" variant="secondary" onClick={copyPaymentLink} disabled={linking || !tierKey}>
+              <Link2 className="h-3.5 w-3.5" /> {linking ? 'Getting link…' : 'Copy payment link'}
+            </Button>
+          </div>
+        )}
+        {me?.isSuperadmin && (
+          <p className="text-xs text-muted-foreground">
+            <strong className="text-foreground">Save tier</strong> sets the label only. <strong className="text-foreground">Copy payment link</strong> gives you a Stripe checkout link for the selected tier — send it to the client, and when they pay, their plan and entitlements switch to match automatically.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function BillingTab({ clientId, client }: { clientId: string; client?: import('@agent-platform/shared').Client }) {
+  const { data, isLoading } = useSWR(['billing', clientId], () => api.billing.get(clientId), { refreshInterval: 30_000 })
+  const { data: services } = useSWR('services', api.billing.services)
+  const { data: tiers } = useSWR('tiers', () => api.billing.tiers())
+  const { data: me } = useSWR('me', api.me)
+  const { entitlements } = useEntitlements(clientId)
+  // Superadmin-only: all active Stripe subs for this client, to catch a stale
+  // plan still billing after a tier switch (a null key skips the fetch for
+  // non-superadmins). staleSubs = every active sub that isn't the tracked one.
+  const { data: allSubs, mutate: mutateSubs } = useSWR(
+    me?.isSuperadmin ? ['client-subs', clientId] : null,
+    () => api.billing.subscriptions(clientId)
+  )
+  const staleSubs = (allSubs ?? []).filter(s => !s.isTracked)
+  const [openingPortal, setOpeningPortal] = useState(false)
+  const [cancelingSub, setCancelingSub] = useState<string | null>(null)
 
   async function openPortal() {
     setOpeningPortal(true)
@@ -476,13 +982,89 @@ function BillingTab({ clientId }: { clientId: string }) {
     }
   }
 
-  if (isLoading || !plans) return <Skeleton className="h-24 w-full" />
+  async function cancelStale(subId: string) {
+    setCancelingSub(subId)
+    try {
+      await api.billing.cancelSubscription(clientId, subId)
+      await mutateSubs()
+      mutate(['billing', clientId])
+      toast.success('Old subscription canceled')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel subscription')
+    } finally {
+      setCancelingSub(null)
+    }
+  }
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />
 
   const sub = data?.subscription
   const isActive = sub && ACTIVE_STATUSES.has(sub.status)
+  const comped = sub?.stripeCustomerId === 'comped'
+
+  // Only 'addon' (real Stripe subscription items) actually costs money —
+  // 'comp' and 'tier' sources are free until Stripe products exist for tiers.
+  // Previously nowhere on this page showed the combined figure: the plan
+  // badge and each service's price sat in separate cards with no total.
+  const addonCents = (services ?? []).reduce((sum, svc) => {
+    const ent = entitlements?.services[svc.key]
+    return ent?.source === 'addon' ? sum + svc.monthlyPriceCents : sum
+  }, 0)
+  const totalCents = comped ? 0 : (data?.plan?.monthlyPriceCents ?? 0) + addonCents
+
+  // The pricing-sheet tier (above) is a plain label, not a Stripe object — see
+  // TierCard's comment for why. Flag it for superadmin when it disagrees with
+  // what Stripe is actually charging, so a stale/wrong label gets caught here
+  // instead of surfacing as "the numbers don't match" confusion downstream.
+  const assignedTier = tiers?.find(t => t.key === client?.tierKey) ?? null
+  const tierMismatch = me?.isSuperadmin && isActive && !comped && assignedTier && assignedTier.monthlyPriceCents !== totalCents
 
   return (
     <div className="grid gap-3">
+      {staleSubs.length > 0 && (
+        <Card className="border-warning/50 bg-warning/5">
+          <CardContent className="pt-5 text-sm">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <div className="flex-1">
+                <span className="font-medium">
+                  This client has {staleSubs.length} older active subscription{staleSubs.length > 1 ? 's' : ''} still billing.
+                </span>{' '}
+                <span className="text-muted-foreground">
+                  Left over from a plan switch — cancel {staleSubs.length > 1 ? 'them' : 'it'} so the client isn&apos;t double-charged. The current plan below stays active.
+                </span>
+                <div className="mt-3 flex flex-col gap-2">
+                  {staleSubs.map(s => (
+                    <div key={s.id} className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/50 px-3 py-2">
+                      <span className="tabular-nums">
+                        {s.amountCents != null ? `$${(s.amountCents / 100).toFixed(0)}/mo` : 'Subscription'}
+                        <span className="ml-1.5 text-xs text-muted-foreground">· started {new Date(s.created).toLocaleDateString()}</span>
+                      </span>
+                      <Button size="sm" variant="destructive" disabled={cancelingSub === s.id} onClick={() => cancelStale(s.id)}>
+                        {cancelingSub === s.id ? 'Canceling…' : 'Cancel'}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {tierMismatch && (
+        <Card className="border-warning/50 bg-warning/5">
+          <CardContent className="flex items-start gap-3 pt-5 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div>
+              <span className="font-medium">Pricing-sheet tier doesn&apos;t match what Stripe is billing.</span>{' '}
+              <span className="text-muted-foreground">
+                Tier says {assignedTier.name} (${(assignedTier.monthlyPriceCents / 100).toFixed(0)}/mo), Stripe is charging ${(totalCents / 100).toFixed(0)}/mo.
+                Send the client the tier&apos;s payment link (above) to move them onto it, or fix whichever is wrong.
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardContent className="flex items-start justify-between gap-4 pt-5">
           <div className="flex items-start gap-3">
@@ -500,8 +1082,17 @@ function BillingTab({ clientId }: { clientId: string }) {
                       {sub.status === 'active' ? 'Renews' : 'Ends'} {new Date(sub.currentPeriodEnd).toLocaleDateString()}
                     </p>
                   )}
-                  {sub.stripeCustomerId === 'comped' && (
+                  {comped ? (
                     <p className="mt-1.5 text-xs text-muted-foreground">Comped by admin — no card on file.</p>
+                  ) : (
+                    <p className="mt-1.5 text-sm font-medium tabular-nums">
+                      ${(totalCents / 100).toFixed(0)}/mo total
+                      {addonCents > 0 && (
+                        <span className="ml-1 font-normal text-xs text-muted-foreground">
+                          (${((data?.plan?.monthlyPriceCents ?? 0) / 100).toFixed(0)} plan + ${(addonCents / 100).toFixed(0)} add-ons)
+                        </span>
+                      )}
+                    </p>
                   )}
                 </>
               ) : (
@@ -509,7 +1100,7 @@ function BillingTab({ clientId }: { clientId: string }) {
               )}
             </div>
           </div>
-          {sub && sub.stripeCustomerId !== 'comped' && (
+          {sub && !comped && (
             <Button variant="secondary" size="sm" onClick={openPortal} disabled={openingPortal}>
               {openingPortal ? 'Opening…' : 'Manage billing'}
             </Button>
@@ -518,127 +1109,15 @@ function BillingTab({ clientId }: { clientId: string }) {
       </Card>
 
       {isActive && <UsageCard clientId={clientId} />}
-      {isActive && <ServicesCard clientId={clientId} comped={sub?.stripeCustomerId === 'comped'} />}
 
       {!isActive && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {plans.map(p => (
-            <Card key={p.priceId}>
-              <CardContent className="pt-5">
-                <div className="font-medium">{p.name}</div>
-                <div className="mt-1 text-2xl font-semibold tabular-nums">
-                  ${(p.monthlyPriceCents / 100).toFixed(0)}<span className="text-sm font-normal text-muted-foreground">/mo</span>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">Up to {p.conversationCap.toLocaleString()} conversations/mo</p>
-                <Button onClick={() => subscribe(p.priceId)} disabled={busyPlan === p.priceId} className="mt-3 w-full">
-                  {busyPlan === p.priceId ? 'Redirecting…' : `Subscribe to ${p.name}`}
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <Card>
+          <CardContent className="pt-5 text-sm text-muted-foreground">
+            No active subscription. Pick a tier above and use <span className="font-medium text-foreground">Copy payment link</span> to send this client a checkout link — once they pay, their plan activates here automatically.
+          </CardContent>
+        </Card>
       )}
     </div>
-  )
-}
-
-// Add-on service marketplace on the billing tab: each service with its
-// entitlement state and an add/remove toggle. For comped base plans (no card
-// on file) Stripe add-ons can't be charged, so we show the superadmin comp
-// toggle instead.
-function ServicesCard({ clientId, comped }: { clientId: string; comped: boolean }) {
-  const { data: services } = useSWR('services', api.billing.services)
-  const { data: me } = useSWR('me', api.me)
-  const { entitlements, mutate: mutateEntitlements } = useEntitlements(clientId)
-  const [busy, setBusy] = useState<ServiceKey | null>(null)
-
-  if (!services) return <Skeleton className="h-24 w-full" />
-
-  async function toggleAddon(key: ServiceKey, entitled: boolean) {
-    setBusy(key)
-    try {
-      await api.billing.addon(clientId, key, entitled ? 'remove' : 'add')
-      await mutateEntitlements()
-      toast.success(entitled ? 'Service removed' : 'Service added')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update service')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function toggleComp(key: ServiceKey, entitled: boolean) {
-    setBusy(key)
-    try {
-      await api.billing.compService(clientId, key, entitled)
-      await mutateEntitlements()
-      toast.success(entitled ? 'Service grant revoked' : 'Service comped')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update grant')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Services</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-2 pt-0">
-        {services.map(svc => {
-          const ent = entitlements?.services[svc.key]
-          const entitled = ent?.entitled ?? false
-          const comingSoon = svc.status === 'coming_soon'
-          const isBusy = busy === svc.key
-          return (
-            <div key={svc.key} className="flex items-start justify-between gap-4 rounded-md border border-border p-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{svc.name}</span>
-                  {entitled && (
-                    <Badge variant="success">
-                      <StatusDot variant="success" />
-                      {ent?.source === 'comp' ? 'Comped' : 'Active'}
-                    </Badge>
-                  )}
-                  {comingSoon && !entitled && <Badge variant="secondary">Coming soon</Badge>}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">{svc.description}</p>
-                {!comingSoon && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    ${(svc.monthlyPriceCents / 100).toFixed(0)}/mo
-                  </p>
-                )}
-              </div>
-              <div className="flex shrink-0 flex-col items-end gap-1.5">
-                {/* Comped base plans can't run Stripe add-ons; superadmin comps the service instead. */}
-                {!comped && !comingSoon && (
-                  <Button
-                    variant={entitled ? 'outline' : 'default'}
-                    size="sm"
-                    disabled={isBusy}
-                    onClick={() => toggleAddon(svc.key, entitled)}
-                  >
-                    {isBusy ? '…' : entitled ? 'Remove' : 'Add'}
-                  </Button>
-                )}
-                {me?.isSuperadmin && (comped || comingSoon || ent?.source === 'comp') && (
-                  <Button
-                    variant={entitled ? 'outline' : 'secondary'}
-                    size="sm"
-                    disabled={isBusy}
-                    onClick={() => toggleComp(svc.key, entitled)}
-                  >
-                    {isBusy ? '…' : entitled ? 'Revoke comp' : 'Comp'}
-                  </Button>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </CardContent>
-    </Card>
   )
 }
 
@@ -646,16 +1125,23 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
   const cfg = client.agentConfig ?? {}
   const { data: me } = useSWR('me', api.me)
   const [name, setName] = useState(client.name)
+  const [domain, setDomain] = useState(client.domain ?? '')
   const [systemPromptExtra, setExtra] = useState(cfg.systemPromptExtra ?? '')
   const [escalationEmail, setEscalationEmail] = useState(cfg.escalationEmail ?? '')
   const [saving, setSaving] = useState(false)
 
+  const normalizedDomain = normalizeDomain(domain)
+  const domainError = normalizedDomain && !isPublicHost(normalizedDomain)
+    ? `"${normalizedDomain}" doesn't look like a real public website (not localhost or a private address).`
+    : null
+
   async function save() {
+    if (domainError) return
     setSaving(true)
     try {
       await api.clients.upsert({
         id: client.id,
-        ...(me?.isSuperadmin ? { name } : {}),
+        ...(me?.isSuperadmin ? { name, domain: normalizedDomain } : {}),
         agentConfig: { ...cfg, systemPromptExtra, escalationEmail }
       })
       mutate(['client', clientId])
@@ -676,15 +1162,38 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Client name" />
           </div>
         )}
-        <div className="grid gap-1.5">
-          <Label>Extra system prompt</Label>
-          <Textarea value={systemPromptExtra} onChange={e => setExtra(e.target.value)} rows={4} />
-        </div>
+        {me?.isSuperadmin && (
+          <div className="grid gap-1.5">
+            <Label>Website URL</Label>
+            <Input
+              value={domain}
+              onChange={e => setDomain(e.target.value)}
+              placeholder="example.com"
+              aria-invalid={!!domainError}
+              className={domainError ? 'border-destructive' : ''}
+            />
+            {domainError ? (
+              <p className="text-xs text-destructive">{domainError}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                The client&apos;s live public website — this is the <span className="font-medium text-foreground">one</span> domain used everywhere across the platform: <span className="font-medium text-foreground">Site Health</span> checks, the <span className="font-medium text-foreground">SEO Audit</span> crawl target, and the Search Console default. Get this wrong and every one of those breaks with a confusing error instead of an obvious one.
+              </p>
+            )}
+          </div>
+        )}
+        {/* Admin-only: how the agency configures the assistant's knowledge.
+            The client never sets this — we set it up for them. */}
+        {me?.isSuperadmin && (
+          <div className="grid gap-1.5">
+            <Label>Assistant instructions <span className="font-normal text-muted-foreground">(admin only — the chatbot&apos;s business context)</span></Label>
+            <Textarea value={systemPromptExtra} onChange={e => setExtra(e.target.value)} rows={4} placeholder="What the assistant should know about this business — services, hours, policies, tone…" />
+          </div>
+        )}
         <div className="grid gap-1.5">
           <Label>Escalation email (where "get a human" requests are sent)</Label>
           <Input value={escalationEmail} onChange={e => setEscalationEmail(e.target.value)} placeholder="support@yourcompany.com" />
         </div>
-        <Button onClick={save} disabled={saving} className="justify-self-start">
+        <Button onClick={save} disabled={saving || !!domainError} className="justify-self-start">
           {saving ? 'Saving…' : 'Save config'}
         </Button>
       </CardContent>

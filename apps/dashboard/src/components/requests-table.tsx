@@ -11,6 +11,7 @@ import { Badge, StatusDot } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AttachmentPreview } from '@/components/attachment-preview'
+import { Markdown } from '@/components/markdown'
 
 // Shared everywhere a change request shows up (client Home, the Requests
 // page, and the superadmin Overview cross-client queue) so the same
@@ -211,7 +212,7 @@ export function RequestDetailPanel({ clientId, requestId }: { clientId: string; 
 
   return (
     <div className="flex flex-col gap-4 border-t border-border p-4">
-      {request.description && <p className="text-sm text-muted-foreground">{request.description}</p>}
+      {request.description && <Markdown content={request.description} className="text-muted-foreground" />}
 
       <div>
         <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Status history</div>

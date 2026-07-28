@@ -13,6 +13,8 @@ import { webhookRouter } from './routes/webhooks'
 import { billingRouter, stripeWebhookHandler } from './routes/billing'
 import { overviewRouter } from './routes/overview'
 import { getIdentity } from './lib/authz'
+import { reconcileUserMembership } from './lib/clients'
+import { finalizePendingCrawls } from './lib/dataforseo'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
@@ -65,4 +67,38 @@ app.get('/me', requireAuth, (req, res) => {
   res.json({ userId: identity.userId, orgId: identity.orgId, isSuperadmin: identity.isSuperadmin })
 })
 
+// Best-effort self-heal for a signed-in user with no org: if they have a
+// pending client invitation for their email, join them to that org. The
+// frontend calls this once when it detects no active org + no memberships, then
+// reloads so Clerk picks up the new membership. Returns the joined org id.
+app.post('/reconcile', requireAuth, async (req, res) => {
+  const identity = getIdentity(req)!
+  try {
+    const orgId = await reconcileUserMembership(identity.userId)
+    res.json({ orgId })
+  } catch (err) {
+    console.error('[reconcile] error', err)
+    res.status(500).json({ error: 'Reconcile failed' })
+  }
+})
+
 app.listen(PORT, () => console.log(`API running on :${PORT}`))
+
+// In-process crawl finalizer. This platform has no general scheduler by design;
+// this timer is deliberately narrow — it only drives already-started DataForSEO
+// crawls to completion (or trips their timeout), so an audit finishes whether or
+// not a dashboard tab is left open to poll it. It is job completion, not
+// business automation. `.unref()` keeps it from holding the process open.
+const FINALIZE_INTERVAL_MS = 20_000
+let finalizing = false
+setInterval(async () => {
+  if (finalizing) return
+  finalizing = true
+  try {
+    await finalizePendingCrawls()
+  } catch (err) {
+    console.error('[finalizer] error', err instanceof Error ? err.message : err)
+  } finally {
+    finalizing = false
+  }
+}, FINALIZE_INTERVAL_MS).unref()

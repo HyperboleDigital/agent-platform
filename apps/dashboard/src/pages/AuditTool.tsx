@@ -91,7 +91,7 @@ export default function AuditTool() {
               </p>
             )}
             {active.status === 'failed' && <p className="text-sm text-destructive">{active.error ?? 'Audit failed'}</p>}
-            {active.status === 'finished' && <AuditReport crawl={active} />}
+            {active.status === 'finished' && <AuditReport crawl={active} showCost />}
           </CardContent>
         </Card>
       )}

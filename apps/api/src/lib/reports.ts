@@ -2,8 +2,7 @@ import { supabase } from './supabase'
 import { getClientById } from './clients'
 import { getStats } from './logs'
 import { getMonthlyUsage } from './usage'
-import { getAuditHistory } from './seo'
-import { getLatestCrawl } from './dataforseo'
+import { getLatestCrawl, getCrawlHistory } from './dataforseo'
 import { getRuns } from './visibility'
 import { sendGuardedEmail, type GuardedEmailResult } from './notify'
 
@@ -91,10 +90,10 @@ export async function buildReport(clientId: string, periodStart?: string, period
   const start = periodStart ?? isoDate(new Date(now.getFullYear(), now.getMonth(), 1))
   const end = periodEnd ?? isoDate(now)
 
-  const [stats, usage, audits, visRuns, latestCrawl, closedRes] = await Promise.all([
+  const [stats, usage, crawlHistory, visRuns, latestCrawl, closedRes] = await Promise.all([
     getStats(clientId),
     getMonthlyUsage(clientId),
-    getAuditHistory(clientId, 400),
+    getCrawlHistory(clientId, 400),
     getRuns(clientId, 400),
     getLatestCrawl(clientId),
     supabase
@@ -106,15 +105,19 @@ export async function buildReport(clientId: string, periodStart?: string, period
       .lte('completed_at', `${end}T23:59:59Z`)
   ])
 
-  // SEO: earliest vs latest audit whose created_at falls in the period.
+  // SEO: on-page health-score trend — earliest vs latest finished crawl whose
+  // created_at falls in the period. Sourced from crawls now that the crawl is
+  // the single audit engine.
   const inPeriod = (ts: string) => ts.slice(0, 10) >= start && ts.slice(0, 10) <= end
-  const periodAudits = audits.filter(a => inPeriod(a.createdAt)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const seo = periodAudits.length
+  const periodCrawls = crawlHistory
+    .filter(c => c.onpageScore != null && inPeriod(c.createdAt))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const seo = periodCrawls.length
     ? {
-        firstScore: periodAudits[0].scores.seo,
-        lastScore: periodAudits[periodAudits.length - 1].scores.seo,
-        delta: periodAudits[periodAudits.length - 1].scores.seo - periodAudits[0].scores.seo,
-        auditsInPeriod: periodAudits.length
+        firstScore: Math.round(periodCrawls[0].onpageScore!),
+        lastScore: Math.round(periodCrawls[periodCrawls.length - 1].onpageScore!),
+        delta: Math.round(periodCrawls[periodCrawls.length - 1].onpageScore!) - Math.round(periodCrawls[0].onpageScore!),
+        auditsInPeriod: periodCrawls.length
       }
     : null
 

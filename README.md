@@ -153,16 +153,29 @@ existing rows with `pnpm --filter api backfill`.
 
 ## Client portal services (Phase 4)
 
-On top of the chatbot, the dashboard is a modular add-on marketplace — see
-`apps/api/src/lib/services.ts` for the catalog. A client's base plan grants
-the chatbot; add-on services unlock further dashboard sections (shown locked
-with an upgrade CTA until purchased or comped):
+On top of the chatbot, the dashboard is a modular marketplace — see
+`apps/api/src/lib/services.ts` for the catalog. Sections unlock via
+**entitlements**, resolved from three independent sources in
+`lib/entitlements.ts` (first match wins, so a paid add-on outranks a tier
+default): a Stripe **add-on**, a superadmin **comp**, or the pricing-sheet
+**tier** the client is assigned to. Unentitled sections render locked with an
+upgrade CTA.
 
 - **SEO** (`seo`) — PageSpeed audits + AI-visibility tracking +
   (once configured) Google Search Console rankings.
 - **Content** (`content`) — AI-drafted, keyword-targeted blog posts with a
   review lifecycle (draft → in_review → approved → published), publishing to
   the client's Framer CMS.
+- **Local Presence** (`local`) — directory citation tracker (42 standard
+  directories, seeded on demand) with automatic NAP-drift detection against a
+  canonical NAP, plus a Google Business Profile activity log. Both are
+  **hand-maintained**: the GBP API needs Google-approved access, and citation
+  submission is manual agency work regardless. Reads are open to entitled
+  clients; **writes are superadmin-only** — this is the agency recording work it
+  performed, not something the client edits.
+- **Site Health** — uptime + SSL-expiry check on the client Home page for
+  **every** client, no entitlement gate (it backs the Care tier, which everyone
+  is on). On-demand only, debounced to once a minute; there is no poller.
 - **Change requests** — free with any active base plan (not gated). Clients
   submit; a superadmin triages via status transitions, notified over
   Slack/email.
@@ -172,8 +185,25 @@ with an upgrade CTA until purchased or comped):
 - **Superadmin Overview** (`/overview`) — platform-wide MRR/usage rollups and
   a cross-client change-request queue.
 
-Not yet built: a scheduler for automated (vs. on-demand) audits/checks, and
-paid SERP-based rank tracking. See `TODO.md`.
+### Pricing tiers vs. Stripe plans
+
+Two pricing models currently coexist, deliberately:
+
+- **Legacy Stripe plans** (`lib/billing.ts` — Starter/Pro) and **add-on
+  services** are real, checkout-backed, and still what actually bills.
+- **The finalized offer sheets** (`lib/tiers.ts` — Local Services and B2B,
+  three tiers each) are **hardcoded and not wired to Stripe yet**, by choice:
+  the sheet is still being iterated on. Assigning a client a tier is a plain
+  field update (`clients.vertical` / `clients.tier_key`) on the Billing tab, not
+  a checkout. Each tier bullet carries a `built` flag so the dashboard shows
+  clients what's live now versus still coming — **if you ship a sheet feature,
+  flip its flag in `lib/tiers.ts`**, or paying clients keep seeing it as
+  unavailable.
+
+Not yet built: a scheduler for automated (vs. on-demand) audits/checks, paid
+SERP-based rank tracking, ads management (deliberately deferred — the
+spend-tiered fee needs usage-based billing that doesn't exist), and review
+management. See `TODO.md` for the full offer-sheet gap list.
 
 ## Deploying
 

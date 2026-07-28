@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { getAllClients } from './clients'
-import { planForPriceId, isActive, type SubscriptionRow } from './billing'
+import { planForSubscription, isActive, type SubscriptionRow } from './billing'
+import { serviceForPriceId } from './services'
 import { DEFAULT_MONTHLY_CAP } from './usage'
 
 interface SubRow {
@@ -36,6 +37,35 @@ async function getSubscriptionsForClients(clientIds: string[]): Promise<Map<stri
   return map
 }
 
+// Batched add-on revenue per client, mirroring lib/entitlements.ts's per-client
+// subscription_items -> ServiceInfo lookup. Previously missing from MRR
+// entirely: only the base plan (subscriptions.stripe_price_id) was summed, so
+// a client paying Pro + SEO + Content showed as Pro-only revenue. Fixed here.
+async function getAddonRevenueByClient(clientIds: string[]): Promise<Map<string, number>> {
+  if (clientIds.length === 0) return new Map()
+  const { data, error } = await supabase
+    .from('subscription_items')
+    .select('client_id, stripe_price_id')
+    .in('client_id', clientIds)
+  if (error) console.error('[overview] failed to load subscription_items', error.message)
+  const map = new Map<string, number>()
+  for (const row of (data ?? []) as { client_id: string; stripe_price_id: string }[]) {
+    const svc = serviceForPriceId(row.stripe_price_id)
+    if (svc) map.set(row.client_id, (map.get(row.client_id) ?? 0) + svc.monthlyPriceCents)
+  }
+  return map
+}
+
+// A comped subscription (lib/billing.ts's compClient — friends & family,
+// internal test clients) sets status:'active' and a real stripe_price_id so
+// isActive()/planForSubscription() behave normally for entitlement purposes, but it
+// has NO card on file and collects NO money. Counting it in MRR overstates
+// revenue the moment anyone comps a client; this is the one place that
+// distinction actually matters.
+function isComped(sub: SubscriptionRow | null): boolean {
+  return sub?.stripeCustomerId === 'comped'
+}
+
 function startOfUtcMonth(): string {
   const d = new Date()
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString()
@@ -65,25 +95,41 @@ export interface ClientRollup {
   planName: string | null
   subscriptionStatus: string | null
   usage: { used: number; cap: number }
+  // What this client actually pays: base plan + add-ons, $0 if comped. Drives
+  // both the per-client row on the admin Overview table and (summed) the
+  // top-line MRR stat — same numbers, one source, can't drift apart.
+  mrrCents: number
+  comped: boolean
+  // True when the subscription is active AND not comped — i.e. genuinely
+  // billing. Comped clients have real dashboard access but aren't revenue.
+  billingActive: boolean
 }
 
 export async function getClientRollups(): Promise<ClientRollup[]> {
   const clients = await getAllClients()
-  const [subsByClient, usageByClient] = await Promise.all([
-    getSubscriptionsForClients(clients.map(c => c.id)),
-    getMonthlyUsageByClient()
+  const clientIds = clients.map(c => c.id)
+  const [subsByClient, usageByClient, addonRevenueByClient] = await Promise.all([
+    getSubscriptionsForClients(clientIds),
+    getMonthlyUsageByClient(),
+    getAddonRevenueByClient(clientIds)
   ])
 
   return clients.map(c => {
     const sub = subsByClient.get(c.id) ?? null
-    const plan = sub ? planForPriceId(sub.stripePriceId) : null
+    const plan = sub ? planForSubscription(sub.stripePriceId) : null
+    const comped = isComped(sub)
+    const billingActive = isActive(sub) && !comped
+    const mrrCents = billingActive ? (plan?.monthlyPriceCents ?? 0) + (addonRevenueByClient.get(c.id) ?? 0) : 0
     return {
       clientId: c.id,
       name: c.name,
       active: c.active,
       planName: plan?.name ?? null,
       subscriptionStatus: sub?.status ?? null,
-      usage: { used: usageByClient.get(c.id) ?? 0, cap: plan?.conversationCap ?? DEFAULT_MONTHLY_CAP }
+      usage: { used: usageByClient.get(c.id) ?? 0, cap: plan?.conversationCap ?? DEFAULT_MONTHLY_CAP },
+      mrrCents,
+      comped,
+      billingActive
     }
   })
 }
@@ -100,31 +146,25 @@ export interface OverviewSummary {
 // before they actually hit the wall and get blocked mid-month.
 const NEAR_CAP_THRESHOLD = 0.8
 
+// Derives the top-line stats from the exact same per-client rollups the
+// Overview table renders, rather than re-querying and re-computing separately
+// — the two views can no longer disagree about what a client is paying.
 export async function getOverviewSummary(): Promise<OverviewSummary> {
-  const clients = await getAllClients()
-  const [subsByClient, usageByClient] = await Promise.all([
-    getSubscriptionsForClients(clients.map(c => c.id)),
-    getMonthlyUsageByClient()
-  ])
+  const rollups = await getClientRollups()
 
   let mrrCents = 0
   let activeClients = 0
   let clientsNearCap = 0
   let conversationsThisMonth = 0
 
-  for (const c of clients) {
-    const sub = subsByClient.get(c.id) ?? null
-    const used = usageByClient.get(c.id) ?? 0
-    conversationsThisMonth += used
-
-    if (isActive(sub)) {
+  for (const r of rollups) {
+    conversationsThisMonth += r.usage.used
+    mrrCents += r.mrrCents
+    if (r.billingActive) {
       activeClients++
-      const plan = planForPriceId(sub!.stripePriceId)
-      if (plan) mrrCents += plan.monthlyPriceCents
-      const cap = plan?.conversationCap ?? DEFAULT_MONTHLY_CAP
-      if (cap > 0 && used / cap >= NEAR_CAP_THRESHOLD) clientsNearCap++
+      if (r.usage.cap > 0 && r.usage.used / r.usage.cap >= NEAR_CAP_THRESHOLD) clientsNearCap++
     }
   }
 
-  return { mrrCents, activeClients, totalClients: clients.length, conversationsThisMonth, clientsNearCap }
+  return { mrrCents, activeClients, totalClients: rollups.length, conversationsThisMonth, clientsNearCap }
 }

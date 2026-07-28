@@ -19,7 +19,12 @@ create table if not exists clients (
   clerk_org_id  text unique,
   -- SEO/portal soft config (audit pages, brand terms, connected GSC property).
   -- jsonb rather than columns since this shape keeps growing across slices.
-  portal_config jsonb not null default '{}'::jsonb
+  portal_config jsonb not null default '{}'::jsonb,
+  -- Finalized pricing-sheet tier assignment. No FK — the tier catalog is
+  -- code-defined in lib/tiers.ts (same pattern as billing.ts's PLANS), not a
+  -- DB table, since Owen is still iterating on the sheet.
+  vertical      text check (vertical in ('local', 'b2b')),
+  tier_key      text
 );
 
 -- ── knowledge_base ───────────────────────────────────────────────────────────
@@ -227,6 +232,61 @@ create table if not exists seo_audits (
 );
 create index if not exists seo_audits_client_idx on seo_audits (client_id, created_at desc);
 
+-- ── site_health_checks ────────────────────────────────────────────────────────
+-- On-demand "Site Health" checks (Care tier: uptime + SSL) for every client,
+-- regardless of add-on services. One row per check, most-recent read by the
+-- dashboard; no scheduler — always triggered by a live page load or an
+-- explicit "Check now" click (see lib/site-health.ts).
+create table if not exists site_health_checks (
+  id                uuid primary key default gen_random_uuid(),
+  client_id         uuid not null references clients(id) on delete cascade,
+  checked_at        timestamptz not null default now(),
+  up                boolean not null,
+  status_code       integer,
+  response_time_ms  integer,
+  error             text,               -- set when `up` is false (fetch failed) — timeout, DNS, refused, etc.
+  ssl_valid         boolean,            -- null when the site isn't served over https at all
+  ssl_issuer        text,
+  ssl_expires_at    timestamptz,
+  ssl_days_remaining integer
+);
+create index if not exists site_health_checks_client_idx on site_health_checks (client_id, checked_at desc);
+alter table site_health_checks enable row level security;
+
+-- ── citations / gbp_activity ──────────────────────────────────────────────────
+-- "Local Presence" (Offer Sheet A, Tier 2). Both are maintained BY HAND for
+-- now — the Google Business Profile API needs Google-approved access, and
+-- citation building is submission work done manually anyway. These are what
+-- the client sees proving the work happened; a later API integration would
+-- populate the same shape automatically.
+create table if not exists citations (
+  id           uuid primary key default gen_random_uuid(),
+  client_id    uuid not null references clients(id) on delete cascade,
+  directory    text not null,                     -- "Yelp", "Better Business Bureau", …
+  listing_url  text,
+  status       text not null default 'pending',   -- 'pending' | 'live' | 'inconsistent' | 'not_applicable'
+  nap_name     text,                              -- name/address/phone AS LISTED on that directory
+  nap_address  text,
+  nap_phone    text,
+  notes        text,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (client_id, directory)
+);
+create index if not exists citations_client_idx on citations (client_id, directory);
+
+create table if not exists gbp_activity (
+  id           uuid primary key default gen_random_uuid(),
+  client_id    uuid not null references clients(id) on delete cascade,
+  kind         text not null,                     -- 'post' | 'photo' | 'qa' | 'category' | 'other'
+  title        text not null,
+  url          text,
+  performed_at date not null default current_date,
+  notes        text,
+  created_at   timestamptz not null default now()
+);
+create index if not exists gbp_activity_client_idx on gbp_activity (client_id, performed_at desc);
+
 -- ── gsc_snapshots ─────────────────────────────────────────────────────────────
 -- Daily cache of Google Search Console query performance, so trends survive
 -- GSC's data window and dashboard loads don't hit Google live.
@@ -429,6 +489,8 @@ alter table notification_log   enable row level security;
 alter table blog_posts         enable row level security;
 alter table framer_connections enable row level security;
 alter table reports            enable row level security;
+alter table citations          enable row level security;
+alter table gbp_activity       enable row level security;
 
 -- Private bucket for change-request attachments — the API is the only thing
 -- that touches it, always via short-lived signed URLs it mints itself

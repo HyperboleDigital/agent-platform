@@ -30,15 +30,30 @@ rebuild is the on-ramp to recurring revenue, not a one-off transaction.
   cannibalize this — different buyer.
 
 ## Positioning & pricing
-- **Custom (premium): $10–15k** — human-designed, "no AI slop." Unchanged.
-- **Rapid Rebuild (automated): ~$4–6k** — "your site, rebuilt SEO-clean, in a
-  week." High margin, different buyer. Sell on **speed + SEO-readiness**, not
-  cheapness.
-- **The power move: bundle the Rapid Rebuild into the SEO retainer** at a steep
-  discount or "$0 down, rolled into a 12-month retainer." We *want* to subsidize
-  the build because owning the site makes the recurring revenue frictionless and
-  unkillable. A $5k build that locks in ~$18k/yr of retainer is a bargain to give
-  away.
+
+> **PARTLY SUPERSEDED 2026-07-21.** The finalized offer sheets price builds as:
+> **Local Services — $8,500 standalone, $4,500 with a 6-month retainer
+> commitment.** **B2B — $12,000–18,000, scoped per project, not discounted.**
+> There is **no separate "Rapid Rebuild" SKU on the sheet.** Before quoting a
+> ~$4–6k automated rebuild, clear it with Owen — as written it undercuts the
+> sheet's own $4,500 retainer-bundled build.
+>
+> The strategic logic below still holds, and the sheet already encodes it: the
+> $8,500 → $4,500 drop for a 6-month commitment *is* the "subsidize the build to
+> lock in recurring revenue" play, just expressed as a discount rather than a
+> distinct product.
+
+- **Custom (premium): $10–15k** — human-designed, "no AI slop." *(Sheet says
+  B2B builds are $12–18k; the local standalone build is $8,500.)*
+- ~~**Rapid Rebuild (automated): ~$4–6k**~~ — not a sheet SKU. The automation is
+  still worth building as a **margin play on the existing prices**: deliver the
+  $4,500/$8,500 build faster and cheaper, rather than introducing a lower price
+  point.
+- **The power move: bundle the build into the retainer** at a steep discount —
+  already live on the sheet as $8,500 → $4,500 with a 6-month commitment. We
+  *want* to subsidize the build because owning the site makes the recurring
+  revenue frictionless and unkillable. A discounted build that locks in a
+  $1,200–2,400/mo retainer pays for itself many times over.
 
 ## Feasibility spike — findings (desk research 2026-07-15)
 
@@ -125,6 +140,16 @@ engine.
   don't have to build or apply manually.)
 
 ## Checkpoint log
+- **2026-07-21 (pricing reconciled against the finalized offer sheets)** — No
+  build work on this plan; the Positioning & pricing section was corrected after
+  Owen supplied the finalized offer sheets. **The ~$4–6k "Rapid Rebuild" SKU
+  does not exist on the sheet** and as written undercuts the sheet's own $4,500
+  retainer-bundled local build — don't quote it without clearing it with Owen.
+  Real numbers: local $8,500 standalone / $4,500 with a 6-month retainer; B2B
+  $12–18k, not discounted. The subsidize-the-build strategy this plan argues for
+  is already encoded in that $8,500 → $4,500 drop, so the automation's value is
+  a **margin play at existing prices**, not a new lower price point. Hands-on
+  Framer spike still pending, still blocked on a throwaway project + credentials.
 - **2026-07-15** — Plan approved. Framer chosen (Webflow fallback), custom $10–15k
   premium kept as "no AI slop." Desk-research feasibility spike done (findings
   above): Framer 3.0 Server/Canvas/Plugin APIs + MCP make agent-driven page

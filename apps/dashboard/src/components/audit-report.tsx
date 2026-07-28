@@ -4,9 +4,10 @@ import type { SeoCrawl } from '@/lib/api'
 import { Badge, StatusDot } from '@/components/ui/badge'
 import { buildAuditRows, groupByCategory, SEVERITY_RANK, type AuditRow, type Severity } from '@/lib/audit-rows'
 
-// Richer, SEMrush-style audit view for the Audit Tool: score gauges, a category
-// breakdown, and an expandable issue list (click a row → explanation + the exact
-// affected URLs). Separate from the simpler client-facing CrawlResults card.
+// SEMrush-style audit view: score gauges, a category breakdown, and an
+// expandable issue list (click a row → explanation + the exact affected URLs).
+// Shared by the standalone Audit Tool and the client SEO tab — the single audit
+// view across the app.
 
 function severityVariant(s: Severity): 'destructive' | 'warning' | 'success' {
   return s === 'high' ? 'destructive' : s === 'medium' ? 'warning' : 'success'
@@ -73,7 +74,10 @@ function IssueRow({ row }: { row: AuditRow }) {
   )
 }
 
-export function AuditReport({ crawl }: { crawl: SeoCrawl }) {
+// `showCost` surfaces the internal DataForSEO crawl cost — only for internal
+// views (the Audit Tool, or a superadmin looking at a client). Off by default so
+// it never leaks into the client-facing portal.
+export function AuditReport({ crawl, showCost = false }: { crawl: SeoCrawl; showCost?: boolean }) {
   const rows = buildAuditRows(crawl)
   const categories = groupByCategory(rows)
 
@@ -85,7 +89,7 @@ export function AuditReport({ crawl }: { crawl: SeoCrawl }) {
         {crawl.aiSearch && <ScoreCard label="AI Search Health" score={crawl.aiSearch.score} />}
         <div className="text-xs text-muted-foreground">
           {crawl.pagesCrawled != null && <div>{crawl.pagesCrawled} pages crawled</div>}
-          {crawl.cost != null && <div>${crawl.cost.toFixed(3)} crawl cost</div>}
+          {showCost && crawl.cost != null && <div>${crawl.cost.toFixed(3)} crawl cost</div>}
           <div>{rows.length} issue{rows.length === 1 ? '' : 's'} found</div>
         </div>
       </div>

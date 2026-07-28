@@ -42,29 +42,45 @@ it as Phase 4, layered on the SEO pipeline — not a separate product.
 
 ## Pricing
 
+> **SUPERSEDED 2026-07-21.** The ladder below was this plan's early proposal and
+> is **no longer what we sell.** The finalized offer sheets (Local Services and
+> B2B, three tiers each) are the source of truth, encoded in
+> `apps/api/src/lib/tiers.ts`:
+>
+> | | Care | Mid | Top |
+> |---|---|---|---|
+> | **Local Services** | $495/mo | Local SEO $1,200/mo | Local SEO + Growth $2,400/mo |
+> | **B2B** | $795/mo | Pipeline $2,500/mo | Growth Partner $4,500/mo |
+>
+> Builds: local $8,500 standalone / $4,500 with a 6-month retainer; B2B
+> $12,000–18,000, not discounted. Retainers keep the 6-month minimum, then
+> month-to-month. See `TODO.md` for which sheet promises are actually built.
+>
+> Kept below because the *reasoning* (price on outcome not COGS; tie caps to
+> fix-generation volume, the only expensive part; 6-month minimum tied to how
+> long lagging metrics take to move) still holds and shaped the final sheet.
+
 Price on outcome, never on our cost (COGS is pennies). Value-based.
 
 - **Free instant audit** — lead magnet, no commitment.
-- **One-time deep audit + roadmap (~$750)** — no-commitment on-ramp; this is
-  literally the deliverable the studied agency sells. Credit it toward month 1
-  if they sign a retainer.
-- **Starter (~$500–750/mo)** — one site, monitoring, monthly re-audit + report,
-  ~10 implemented fixes/mo.
-- **Growth (~$1,500/mo)** — one site, higher fix volume, content consolidation,
-  GEO/AI-visibility tracking, biweekly reporting.
-- **Scale ($3k+/mo)** — for multi-site / multi-location clients: Growth across
-  all their properties, higher volume, + a monthly strategy call. *May launch
-  with Starter + Growth only and add Scale when a multi-location client appears.*
+- ~~**One-time deep audit + roadmap (~$750)**~~ — not on the final sheet.
+- ~~**Starter (~$500–750/mo)**~~ → became **Care** ($495 local / $795 B2B).
+- ~~**Growth (~$1,500/mo)**~~ → became **Local SEO** ($1,200) / **Pipeline** ($2,500).
+- ~~**Scale ($3k+/mo)**~~ → became **Local SEO + Growth** ($2,400) / **Growth
+  Partner** ($4,500).
 
 **Contract terms (load-bearing — SEO lags, so this protects retention):**
 - **6-month minimum on all retainers.** Tied deliberately to the results ladder:
   it's how long the lagging metrics (traffic/leads) take to move. Shorter =
-  guaranteed disappointed client.
-- **Prepay 6 months → 1 month free (or ~10–15% off).** The one we want — funds
-  the work, fixes cash flow, feels like the client's win.
+  guaranteed disappointed client. *(Still true; not yet enforced in code —
+  see `TODO.md`.)*
+- **Prepay 6 months → 1 month free (or ~10–15% off).** Proposed here; **not on
+  the final sheet** — confirm with Owen before quoting it.
 - After the initial term → month-to-month (they stay because it works).
 - **Tie tier caps to fix-generation volume** — that's the only expensive part
-  and the natural upgrade lever. Monitoring/audits can be ~unlimited.
+  and the natural upgrade lever. Monitoring/audits can be ~unlimited. *(The
+  final sheet meters pages/content pieces per month instead; quotas are declared
+  in `lib/tiers.ts` but not yet enforced.)*
 
 ## Dashboard: two different views
 
@@ -202,6 +218,27 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-07-21 (offer-sheet audit → tiers, Site Health, Local Presence)** — Owen
+  supplied the finalized Local Services + B2B offer sheets as a PDF and asked for
+  a gap report against the codebase. Three things shipped off the back of it; the
+  full remaining gap list is in `TODO.md` (authoritative), not duplicated here.
+  - **The pricing section above is now superseded** — see the banner. Real tiers
+    live in `lib/tiers.ts`, hardcoded with no Stripe products (Owen's call: the
+    sheet may still change). A tier is a third entitlement source alongside
+    add-ons and comps; verified that a paid add-on correctly outranks it.
+  - **Site Health** (uptime + SSL, on-demand) and **Local Presence** (42-directory
+    citation tracker with NAP-drift detection + GBP activity log, both
+    hand-maintained) built and live-verified against throwaway clients.
+  - **Directly relevant to this plan:** the sheets promise AI citation tracking
+    across **ChatGPT, Perplexity, and Google AI Overviews**. `lib/visibility.ts`
+    covers **OpenAI + Anthropic only**. Perplexity/Google-Extended appear in
+    `lib/ai-search.ts` purely as robots.txt bot names — that's crawler-blocking
+    detection, *not* citation tracking, and it's easy to mistake one for the
+    other. The GEO bullet on both mid tiers is flagged `built: false` until the
+    two missing engines are actually tracked. **This is the highest-value
+    remaining item on this plan's Phase 4 (GEO layer).**
+  - **Ads management deliberately deferred** (Owen, 2026-07-21). Worth knowing
+    it's a billing-architecture problem, not a dashboard one — see `TODO.md`.
 - **2026-07-16 (@mention notifications on request comments — off-plan, requested
   directly)** — Not part of the SEO plan; logged here anyway since it's the same
   session/checkpoint discipline. Owen also caught a real bug while discussing

@@ -1,9 +1,38 @@
 # Handoff — read this first in a new chat
 
-Last updated: 2026-07-16, end of session. This doc exists so a fresh Claude
+Last updated: 2026-07-21, end of session. This doc exists so a fresh Claude
 session (or a human) can pick up instantly. Delete/replace it once it's stale
 — it's a snapshot, not permanent docs (that's `README.md`). See `TODO.md` for
 the working punch list — Owen edits that directly, treat it as authoritative.
+
+## Most recent session (2026-07-21): offer-sheet alignment
+
+Owen supplied the **finalized Local Services + B2B offer sheets** and asked for a
+gap report against the codebase, then had the top gaps built in order. Start here
+before doing anything pricing- or tier-shaped:
+
+- **`lib/tiers.ts` is the new source of truth for what we sell** — all 6 tiers,
+  real prices. **Hardcoded, no Stripe products** (Owen's explicit call — the
+  sheet may still change). Assigning a tier = a field update
+  (`clients.vertical`/`tier_key`), not a checkout.
+- **Every tier bullet carries a `built: boolean`.** The dashboard shows clients
+  which promises are live versus still coming. **If you ship a sheet feature,
+  flip its flag** — otherwise paying clients keep seeing it as unavailable.
+  Only set `true` when the *whole* bullet is true.
+- **Shipped:** Site Health (uptime + SSL, on-demand, every client), pricing
+  tiers + tier-sourced entitlements, Local Presence (citation tracker with NAP
+  drift detection + GBP activity log, both hand-maintained). Three new
+  migrations, all applied to the live dev DB — see `TODO.md`.
+- **Ads management is deliberately deferred** (Owen, 2026-07-21). It's a
+  *billing-architecture* problem: the spend-tiered fee needs usage-based Stripe
+  billing that doesn't exist, plus a Google/Meta API integration. Don't start it
+  as if it were a dashboard ticket.
+- **Trap to know about:** the sheets promise AI citation tracking across
+  ChatGPT, Perplexity and Google AI Overviews. We only track **OpenAI +
+  Anthropic**. Perplexity/Google-Extended appear in `lib/ai-search.ts` only as
+  robots.txt bot names — crawler-blocking detection, *not* citation tracking.
+  Don't mistake one for the other; the GEO bullets are `built: false` for
+  exactly this reason.
 
 ## Current focus: SEO/GEO automation is LIVE (started 2026-07-15)
 
@@ -38,15 +67,19 @@ make meaningful progress or change a decision — and always before ending a
 session or when context runs low. The plan docs are the durable source of truth;
 this Handoff just points at them.
 
-## State (2026-07-16)
+## State (2026-07-21)
 
-Everything through the latest commit (`099d0f0` as of this writing) is
-committed AND pushed to `feat/dashboard-retrieval-escalation-mvp`. Tree is
-clean. New migrations since 2026-07-15 that must be applied to a fresh/other
-Supabase environment: `migrate_2026-07-18_seo-crawls.sql`,
-`migrate_2026-07-19_adhoc-crawls.sql`, `migrate_2026-07-20_ai-search.sql`,
-`migrate_2026-07-16_comment-mentions.sql` (all additive, safe to run, already
-applied to the live dev DB).
+The 2026-07-21 offer-sheet work is **uncommitted** — it typechecks, builds, and
+is live-verified, but nothing has been committed or pushed yet. Everything
+before it is committed and pushed to
+`feat/dashboard-retrieval-escalation-mvp` (`099d0f0`).
+
+New migrations that must be applied to a fresh/other Supabase environment
+(all additive, safe to run, all already applied to the live dev DB):
+`migrate_2026-07-18_seo-crawls.sql`, `migrate_2026-07-19_adhoc-crawls.sql`,
+`migrate_2026-07-20_ai-search.sql`, `migrate_2026-07-16_comment-mentions.sql`,
+`migrate_2026-07-21_site-health.sql`, `migrate_2026-07-21_pricing-tiers.sql`,
+`migrate_2026-07-21_local-presence.sql`.
 
 ## Where things stand — by phase
 

@@ -147,10 +147,12 @@ export default function Reports() {
           <h2 className="text-lg font-semibold">Reports</h2>
           <p className="text-sm text-muted-foreground">Performance snapshots across SEO, AI visibility, and your chatbot.</p>
         </div>
-        <Button onClick={generate} disabled={generating} size="sm">
-          <Plus className="h-3.5 w-3.5" />
-          {generating ? 'Generating…' : 'Generate report'}
-        </Button>
+        {me?.isSuperadmin && (
+          <Button onClick={generate} disabled={generating} size="sm">
+            <Plus className="h-3.5 w-3.5" />
+            {generating ? 'Generating…' : 'Generate report'}
+          </Button>
+        )}
       </div>
 
       {isLoading && <Skeleton className="h-40 w-full" />}
@@ -158,7 +160,7 @@ export default function Reports() {
       {!isLoading && reports?.length === 0 && (
         <Card>
           <CardContent>
-            <EmptyState icon={FileBarChart} title="No reports yet" description="Generate your first performance report above." />
+            <EmptyState icon={FileBarChart} title="No reports yet" description={me?.isSuperadmin ? 'Generate your first performance report above.' : 'Your monthly performance reports will appear here.'} />
           </CardContent>
         </Card>
       )}

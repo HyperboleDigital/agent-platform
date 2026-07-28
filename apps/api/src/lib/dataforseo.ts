@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import { getClientById } from './clients'
 import { complete } from './llm/complete'
 import { checkAiSearch, type AiSearchResult } from './ai-search'
+import { normalizeDomain, isPublicHost } from '@agent-platform/shared'
 
 // Phase 0 of the SEO-automation plan (docs/plans/seo-automation.md).
 // Crawls a client's site via DataForSEO's On-Page API (~$0.002/page), stores
@@ -38,9 +39,11 @@ async function dfs(path: string, body?: unknown): Promise<any> {
 }
 
 // Reduce a URL/domain to the bare host DataForSEO wants as a crawl target.
-function toTarget(input: string): string {
-  return input.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim()
-}
+// `isPublicHost` (imported above) rejects loopback/dev/private targets before
+// they're ever posted — otherwise the crawl just spins until the 10-minute
+// timeout with no useful error. This is exactly what a client whose `domain`
+// was left as "localhost" hit: every audit "ran" then failed.
+const toTarget = normalizeDomain
 
 // DataForSEO's `checks` map is check_name -> count of pages where the check is
 // TRUE, and "true" can mean good OR bad depending on the check. We only surface
@@ -234,7 +237,9 @@ export async function startCrawl(clientId: string): Promise<SeoCrawl> {
   const source = client.portalConfig?.seoPages?.[0] ?? client.domain
   if (!source) throw new Error('No domain or SEO pages configured for this client')
   const target = toTarget(source)
-  if (!target) throw new Error('Could not derive a crawl target from the client domain')
+  if (!isPublicHost(target)) {
+    throw new Error(`Can't audit "${target}" — it isn't a public website. Set this client's domain to a live public URL before running an audit.`)
+  }
 
   const { data: running } = await supabase
     .from('seo_crawls')
@@ -351,7 +356,7 @@ async function finalizeIfNeeded(crawl: CrawlRow): Promise<SeoCrawl> {
 // demand. No public exposure, no automation.
 export async function startAdhocCrawl(rawTarget: string): Promise<SeoCrawl> {
   const target = toTarget(rawTarget)
-  if (!target) throw new Error('Enter a valid website URL or domain')
+  if (!isPublicHost(target)) throw new Error('Enter a valid public website URL or domain — localhost and private addresses can’t be crawled.')
 
   const { data: running } = await supabase
     .from('seo_crawls')
@@ -416,6 +421,24 @@ async function finalizeFailed(crawlId: string, message: string): Promise<SeoCraw
   return fromRow(data as CrawlRow)
 }
 
+// Abandon a crawl that's stuck 'running' (e.g. the dashboard's poll loop died
+// — a reload or navigation — before DataForSEO finished, leaving the row, and
+// the UI's disabled button, stuck forever). We don't cancel the DataForSEO task
+// itself (there's no such API and it's already been paid for); we just release
+// our record so the operator can start a fresh crawl. Idempotent for terminal
+// rows.
+export async function cancelCrawl(clientId: string, crawlId: string): Promise<SeoCrawl> {
+  const { data: row } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .eq('id', crawlId)
+    .eq('client_id', clientId)
+    .maybeSingle()
+  if (!row) throw new Error('Crawl not found')
+  if ((row as CrawlRow).status !== 'running') return fromRow(row as CrawlRow)
+  return finalizeFailed(crawlId, 'Canceled')
+}
+
 export async function getCrawl(clientId: string, crawlId: string): Promise<SeoCrawl | null> {
   const { data } = await supabase
     .from('seo_crawls')
@@ -435,4 +458,158 @@ export async function getLatestCrawl(clientId: string): Promise<SeoCrawl | null>
     .limit(1)
     .maybeSingle()
   return data ? fromRow(data as CrawlRow) : null
+}
+
+// Every finished crawl for a client within the last `days`, oldest→newest — used
+// to build the report's on-page-score trend. This is the single source of SEO
+// scoring now that the separate PageSpeed audit is gone.
+export async function getCrawlHistory(clientId: string, days = 400): Promise<SeoCrawl[]> {
+  const since = new Date()
+  since.setDate(since.getDate() - days)
+  const { data } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('status', 'finished')
+    .gte('created_at', since.toISOString())
+    .order('created_at', { ascending: true })
+  return ((data as CrawlRow[] | null) ?? []).map(fromRow)
+}
+
+// Finalize any crawl still 'running'. Called on a timer from the server (see
+// index.ts) so a crawl completes even when no dashboard tab is open to poll it —
+// this platform has no scheduler, and the browser-only polling it used to rely
+// on is exactly what left crawls hung. finalizeIfNeeded is idempotent and
+// self-limiting (it trips the 10-min timeout on genuinely stuck rows), so this
+// is safe to run repeatedly.
+export async function finalizePendingCrawls(): Promise<void> {
+  const { data } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .eq('status', 'running')
+    .order('created_at', { ascending: true })
+    .limit(20)
+  for (const row of (data as CrawlRow[] | null) ?? []) {
+    try {
+      await finalizeIfNeeded(row)
+    } catch (err) {
+      console.error('[dataforseo] finalizePendingCrawls error', err instanceof Error ? err.message : err)
+    }
+  }
+}
+
+// ── Map-pack rank tracking ──────────────────────────────────────────────
+// Checks where a business sits in the Google Maps 3-pack for a keyword, from
+// a simulated location. Unlike GBP posts/photos, this is a real SERP result
+// DataForSEO can fetch live — no Google approval needed, reuses the same
+// account already paying for on-page crawls.
+
+export interface MapRankResult {
+  keyword: string
+  location: string
+  rankAbsolute: number | null // null = not found in the top results checked
+  checkedAt: string
+}
+
+export async function checkMapPackRank(keyword: string, location: string, placeId: string | null, businessName: string): Promise<MapRankResult> {
+  const json = await dfs('/serp/google/maps/live/advanced', [{
+    keyword,
+    location_name: location,
+    language_code: 'en',
+    depth: 20
+  }])
+
+  const items = (json.tasks?.[0]?.result?.[0]?.items ?? []) as any[]
+  // Prefer an exact place_id match; without one (no Place ID recorded yet),
+  // fall back to matching on the business name — an approximation, not proof.
+  const match = placeId
+    ? items.find(i => i.place_id === placeId)
+    : items.find(i => typeof i.title === 'string' && i.title.toLowerCase().includes(businessName.toLowerCase()))
+
+  return {
+    keyword,
+    location,
+    rankAbsolute: match?.rank_absolute ?? null,
+    checkedAt: new Date().toISOString()
+  }
+}
+
+// ── Target-keyword organic rank tracking ────────────────────────────────
+// Where a client's site ranks in Google's *organic* (blue-link) results for a
+// keyword they want to rank for. Same DataForSEO account as the crawl; the
+// organic SERP live endpoint returns ranked results we scan for the client's
+// own domain. Defaults to a US national search — organic intent is usually
+// national, unlike the map-pack which is inherently local. (Per-client organic
+// location is a future refinement; see TODO.md.)
+export const DEFAULT_ORGANIC_LOCATION = 'United States'
+
+export interface OrganicRankResult {
+  rankAbsolute: number | null // null = our domain wasn't in the results checked
+  url: string | null
+}
+
+export async function checkOrganicRank(keyword: string, domain: string, location = DEFAULT_ORGANIC_LOCATION): Promise<OrganicRankResult> {
+  const host = normalizeDomain(domain)
+  const json = await dfs('/serp/google/organic/live/advanced', [{
+    keyword,
+    location_name: location,
+    language_code: 'en',
+    depth: 100
+  }])
+
+  const items = (json.tasks?.[0]?.result?.[0]?.items ?? []) as any[]
+  // The organic result whose domain is the client's — DataForSEO tags each
+  // ranked item with a `domain`; match on the normalized host so www/subpaths
+  // don't cause misses.
+  const match = items.find(i =>
+    i.type === 'organic' &&
+    typeof i.domain === 'string' &&
+    normalizeDomain(i.domain) === host
+  )
+
+  return {
+    rankAbsolute: match?.rank_absolute ?? null,
+    url: match?.url ?? null
+  }
+}
+
+// ── Keyword research (SEMrush-style) ────────────────────────────────────
+// Expands a seed phrase into long-tail keyword ideas, each with its monthly
+// search volume and keyword difficulty (0-100). Uses DataForSEO Labs'
+// keyword_suggestions (full-text: every idea CONTAINS the seed), which is
+// exactly what surfaces winnable local long-tail — seed "web design tampa"
+// returns "affordable web design tampa", "tampa web design company", etc.
+// Same account as the crawl/rank tracking; no new vendor.
+
+export interface KeywordIdea {
+  keyword: string
+  searchVolume: number | null
+  difficulty: number | null // 0-100; lower = easier to rank
+  cpc: number | null
+}
+
+export async function researchKeywords(seed: string, location = DEFAULT_ORGANIC_LOCATION, limit = 50): Promise<KeywordIdea[]> {
+  const json = await dfs('/dataforseo_labs/google/keyword_suggestions/live', [{
+    keyword: seed.trim().toLowerCase(),
+    location_name: location,
+    language_code: 'en',
+    include_seed_keyword: true,
+    limit,
+    order_by: ['keyword_info.search_volume,desc']
+  }])
+
+  const items = (json.tasks?.[0]?.result?.[0]?.items ?? []) as any[]
+  return items.map(item => {
+    // Labs endpoints vary in nesting — the metrics live either directly on the
+    // item or under `keyword_data`. Read defensively so a shape change doesn't
+    // silently null everything.
+    const info = item.keyword_info ?? item.keyword_data?.keyword_info
+    const props = item.keyword_properties ?? item.keyword_data?.keyword_properties
+    return {
+      keyword: item.keyword ?? item.keyword_data?.keyword ?? '',
+      searchVolume: info?.search_volume ?? null,
+      difficulty: props?.keyword_difficulty ?? null,
+      cpc: info?.cpc ?? null
+    }
+  }).filter(k => k.keyword)
 }

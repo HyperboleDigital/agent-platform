@@ -1,9 +1,11 @@
+import { useState, useEffect } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import useSWR from 'swr'
+import { toast } from 'sonner'
 import type { LucideIcon } from 'lucide-react'
 import {
-  Users, Sparkles, LayoutDashboard, Plug, Search, Bot,
-  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2
+  Users, Sparkles, LayoutDashboard, Search, Bot,
+  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin
 } from 'lucide-react'
 import { UserButton } from '@clerk/react'
 import { dark } from '@clerk/themes'
@@ -13,6 +15,8 @@ import { useEntitlements } from '@/hooks/use-entitlements'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { useTheme } from 'next-themes'
 import { ServerDownScreen } from '@/components/server-down-screen'
+import { Button } from '@/components/ui/button'
+import { ContactButton } from '@/components/contact-button'
 
 const TOP_NAV = [{ label: 'Clients', to: '/', icon: Users }]
 const SUPERADMIN_TOP_NAV = [
@@ -21,8 +25,12 @@ const SUPERADMIN_TOP_NAV = [
 ]
 
 // Per-client sections. `to` is relative to /clients/:id ('' = the index/home).
-// `serviceKey` marks sections gated behind an add-on service — shown with a
-// lock icon until entitled, but always visible so clients see what's on offer.
+// `serviceKey` marks sections gated behind a service. A gated section a client
+// isn't entitled to is shown with a lock icon *only if it's something they can
+// actually add themselves* (status 'available') — that lock is a working
+// upsell. A section granted ONLY by tier ('tier_only', e.g. Local Presence) is
+// hidden entirely when not entitled: a locked, un-buyable item is a dead end
+// that just confuses (see ClientNav's `hidden`).
 interface ClientNavItem {
   label: string
   to: string
@@ -31,15 +39,15 @@ interface ClientNavItem {
 }
 const CLIENT_SECTIONS: ClientNavItem[] = [
   { label: 'Home', to: '', icon: LayoutDashboard },
-  { label: 'Chat Assistant', to: 'assistant', icon: Bot },
-  { label: 'Leads', to: 'leads', icon: Users },
-  { label: 'Connectors', to: 'connectors', icon: Plug },
   { label: 'SEO + AI Visibility', to: 'seo', icon: Search, serviceKey: 'seo' },
+  { label: 'Local Presence', to: 'local', icon: MapPin, serviceKey: 'local' },
+  { label: 'Chat Assistant', to: 'assistant', icon: Bot, serviceKey: 'chat' },
   { label: 'Content', to: 'content', icon: Sparkles, serviceKey: 'content' },
+  { label: 'Leads', to: 'leads', icon: Users },
   { label: 'Requests', to: 'requests', icon: MessageSquarePlus },
   { label: 'Reports', to: 'reports', icon: FileBarChart },
   { label: 'Billing', to: 'billing', icon: CreditCard },
-  { label: 'Config', to: 'config', icon: Settings }
+  { label: 'Config', to: 'config', icon: Settings } // includes Connectors — see ConfigSection
 ]
 
 function NavLink({ to, active, icon: Icon, label, locked }: {
@@ -72,9 +80,15 @@ function ClientNav({ clientId }: { clientId: string }) {
   return (
     <>
       {CLIENT_SECTIONS.map(item => {
+        const svc = item.serviceKey ? entitlements?.services[item.serviceKey] : undefined
+        const entitled = svc?.entitled ?? false
+        // Hide a tier-only section the client hasn't unlocked — it can't be
+        // added on its own, so a locked entry would be a dead end. Purchasable
+        // ('available') sections stay visible-but-locked as an upsell.
+        if (item.serviceKey && !entitled && svc?.status === 'tier_only') return null
         const to = item.to ? `${base}/${item.to}` : base
         const active = item.to ? location.pathname === to : location.pathname === base
-        const locked = !!item.serviceKey && !(entitlements?.services[item.serviceKey]?.entitled ?? false)
+        const locked = !!item.serviceKey && !entitled
         return <NavLink key={item.label} to={to} active={active} icon={item.icon} label={item.label} locked={locked} />
       })}
     </>
@@ -94,7 +108,7 @@ function Sidebar() {
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-card md:flex">
       <div className="flex h-14 items-center gap-2 border-b border-border px-5">
         <Sparkles className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold">Agent Platform</span>
+        <span className="text-sm font-semibold">Hyperbole Digital</span>
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
@@ -166,10 +180,13 @@ function Breadcrumb() {
 
 function Topbar() {
   const { theme } = useTheme()
+  const location = useLocation()
+  const clientId = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-5">
       <Breadcrumb />
       <div className="flex items-center gap-2">
+        {clientId && <ContactButton clientId={clientId} />}
         <ThemeToggle />
         <UserButton appearance={{ baseTheme: theme === 'light' ? undefined : dark } as never} />
       </div>

@@ -257,6 +257,13 @@
       word-wrap: break-word;
       animation: ap-msg-in 0.4s cubic-bezier(0.34,1.56,0.64,1);
     }
+    /* Structured assistant content: keep paragraphs/lists tight in the bubble */
+    .ap-msg p { margin: 0 0 8px 0 !important; }
+    .ap-msg p:last-child { margin-bottom: 0 !important; }
+    .ap-msg .ap-list { margin: 4px 0 8px 0 !important; padding-left: 20px !important; }
+    .ap-msg .ap-list:last-child { margin-bottom: 0 !important; }
+    .ap-msg .ap-list li { margin: 2px 0 !important; }
+    .ap-msg strong { font-weight: 700 !important; }
     @keyframes ap-msg-in {
       from { opacity: 0; transform: translateY(10px) scale(0.95); }
       to { opacity: 1; transform: translateY(0) scale(1); }
@@ -663,6 +670,35 @@
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
   }
 
+  // Minimal, XSS-safe formatter for assistant replies. Escapes ALL HTML first,
+  // then applies a tiny allow-list of markdown: **bold**, "- " bullet lists,
+  // and line breaks. Never inserts anything derived from raw model output as
+  // HTML without escaping it first.
+  function formatAssistant(text) {
+    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const lines = String(text).split(/\r?\n/);
+    let html = '';
+    let inList = false;
+    for (const raw of lines) {
+      const line = raw.trim();
+      const bullet = line.match(/^[-*•]\s+(.*)$/);
+      if (bullet) {
+        if (!inList) { html += '<ul class="ap-list">'; inList = true; }
+        html += '<li>' + inline(bullet[1]) + '</li>';
+      } else {
+        if (inList) { html += '</ul>'; inList = false; }
+        if (line) html += '<p>' + inline(line) + '</p>';
+      }
+    }
+    if (inList) html += '</ul>';
+    return html || esc(String(text));
+
+    // Bold only, on already-escaped text.
+    function inline(s) {
+      return esc(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    }
+  }
+
   function renderMessages() {
     messagesEl.innerHTML = '';
     let lastTs = 0, lastRole = null, group = [];
@@ -679,7 +715,14 @@
           else pos = 'middle';
         }
         div.className = `ap-msg ${m.role} ${pos}`;
-        div.textContent = m.content;
+        // User messages stay plain text; assistant messages get light,
+        // XSS-safe formatting (bold, bullet lists, line breaks) so structured
+        // replies actually render instead of showing raw ** and - .
+        if (m.role === 'assistant') {
+          div.innerHTML = formatAssistant(m.content);
+        } else {
+          div.textContent = m.content;
+        }
         wrap.appendChild(div);
       });
       messagesEl.appendChild(wrap);

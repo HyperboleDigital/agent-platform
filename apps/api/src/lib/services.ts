@@ -9,8 +9,11 @@
 //   'coming_soon' — visible but not purchasable; shows a "Coming soon" badge.
 //     A coming_soon service still appears in the marketplace so clients can see
 //     what's on the roadmap, but has no (or a placeholder) price ID.
+//   'tier_only'   — not separately purchasable at any price; granted only by
+//     being on a pricing-sheet tier that includes it (see lib/tiers.ts). Has no
+//     Stripe price, so both the checkout and add-on paths refuse it.
 
-export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social'
+export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social' | 'local' | 'chat'
 
 export interface ServiceInfo {
   key: ServiceKey
@@ -18,10 +21,22 @@ export interface ServiceInfo {
   name: string
   monthlyPriceCents: number
   description: string
-  status: 'available' | 'coming_soon'
+  status: 'available' | 'coming_soon' | 'tier_only'
 }
 
 const CATALOG: ServiceInfo[] = [
+  {
+    key: 'chat',
+    // Included in the Growth tiers; otherwise an add-on whose standalone price
+    // is still TBD (STRIPE_PRICE_CHAT unset → coming_soon, i.e. "ask us"). Set
+    // the env price + flip status to 'available' to sell it standalone.
+    priceId: process.env.STRIPE_PRICE_CHAT ?? '',
+    name: 'AI Chat Assistant',
+    monthlyPriceCents: 0,
+    description:
+      'A 24/7 AI assistant on your website that answers customer questions, captures leads, and books calls. Included on Growth plans; available as an add-on.',
+    status: process.env.STRIPE_PRICE_CHAT ? 'available' : 'coming_soon'
+  },
   {
     key: 'seo',
     priceId: process.env.STRIPE_PRICE_SEO ?? '',
@@ -39,6 +54,15 @@ const CATALOG: ServiceInfo[] = [
     description:
       'AI-drafted, keyword-targeted blog posts grounded in your business, reviewed by you and published straight to your site.',
     status: 'available'
+  },
+  {
+    key: 'local',
+    priceId: '', // tier-granted only — never sold standalone
+    name: 'Local Presence',
+    monthlyPriceCents: 0,
+    description:
+      'Google Business Profile activity and directory citations with NAP consistency tracking across 40+ listings.',
+    status: 'tier_only'
   },
   {
     key: 'reviews',
