@@ -32,7 +32,7 @@ const tools: ToolDef[] = [
   },
   {
     name: 'capture_lead',
-    description: 'Save lead info when a user is a new prospect expressing interest. If you do not yet have their email, still call this with the intent and summary — the chat will show a contact form to collect their details.',
+    description: 'Save lead info when a prospect expresses interest — wants a demo, a callback, pricing follow-up, or to be contacted. If you do NOT already have their email, still call this with intent and summary: an inline email form appears right in the chat for them to submit it. Never ask the visitor to type their name or email into a message — always call this tool instead.',
     parameters: {
       type: 'object',
       properties: {
@@ -70,6 +70,11 @@ function buildSystemPrompt(config: Partial<AgentConfig>, clientName: string): st
 - Put a blank line between distinct ideas. Short paragraphs.
 - Keep it tight overall — a few short lines beats one dense block. Never list more than 3-4 options; recommend the most likely one.
 - Always end with a clear next step: a question, an offer to book a call, or an offer to connect them with a human.
+
+## Collecting contact info — important, follow exactly
+- You CANNOT receive an email through a normal chat message. The ONLY way to collect a visitor's email is by calling the **capture_lead** tool, which opens an inline email form for them. Asking them to type their email in chat does nothing — no form appears and nothing is saved.
+- Therefore, whenever a visitor wants a demo, a callback, pricing follow-up, or to be contacted and you don't already have their email, you MUST call capture_lead (with intent and summary) in that same turn. Do not just talk about it — actually call the tool. Then add one short, friendly line inviting them to drop their email below.
+- If they already gave their email earlier in the conversation, call capture_lead with that email filled in.
 
 ## Guardrails — do not break these
 - Only help with topics related to ${clientName} — its products, services, hours, booking, and support. If asked about something unrelated (general trivia, other companies, homework, coding, etc.), politely steer back: you're here to help with ${clientName}. 😊
@@ -112,7 +117,7 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
         return 'Lead captured.'
       }
       needContact = true
-      return 'No email on file yet. A contact form will be shown to collect their details.'
+      return 'An inline email form is now shown in the chat for them to submit their email. Reply with ONE short, upbeat line inviting them to drop their email below — do NOT ask them to type it in a message, and do NOT mention a "form" or "fields".'
     }
     if (name === 'escalate_to_human') {
       intent = 'escalate'

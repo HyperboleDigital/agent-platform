@@ -293,6 +293,26 @@
     .ap-msg.assistant.middle { border-radius: 6px 20px 20px 6px; }
     .ap-msg.assistant.last { border-radius: 6px 20px 20px 20px; }
 
+    /* Inline email-capture form (rendered inside an assistant bubble) */
+    .ap-msg.assistant.ap-form-msg { max-width: 88% !important; }
+    .ap-ef-label { font-size: 14px; line-height: 1.4; margin-bottom: 10px; color: var(--text); }
+    .ap-ef-row { display: flex; gap: 8px; align-items: stretch; }
+    .ap-ef-input {
+      flex: 1; min-width: 0; border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 12px; font-size: 14px;
+      color: var(--text); background: var(--white); outline: none;
+    }
+    .ap-ef-input:focus { border-color: var(--p); box-shadow: 0 0 0 3px var(--p-glow); }
+    .ap-ef-btn {
+      border: none; background: var(--p); color: #fff; font-weight: 600;
+      font-size: 14px; padding: 0 16px; border-radius: 10px; cursor: pointer; white-space: nowrap;
+    }
+    .ap-ef-btn:hover { filter: brightness(0.96); }
+    .ap-ef-btn:disabled { opacity: 0.7; cursor: default; }
+    .ap-ef-error { color: #DC2626; font-size: 12px; margin-top: 6px; }
+    .ap-ef-error:empty { display: none; }
+    .ap-ef-done { font-size: 14px; line-height: 1.5; color: var(--text); }
+
     /* Typing */
     .ap-typing {
       background: var(--white);
@@ -709,6 +729,57 @@
     }
   }
 
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // Renders the inline email-capture form (or its submitted confirmation) into
+  // an assistant bubble. Rewired on every render since renderMessages rebuilds
+  // the DOM; per-message state (value/submitting/submitted/error) lives on `m`.
+  function renderEmailForm(div, m) {
+    if (m.submitted) {
+      div.innerHTML = '<div class="ap-ef-done">Perfect — got it! 🎉 We’ll be in touch at <strong></strong> shortly.</div>';
+      div.querySelector('strong').textContent = m.email;
+      return;
+    }
+    div.innerHTML =
+      '<div class="ap-ef-label">Pop your email in and we’ll reach out 👇</div>' +
+      '<div class="ap-ef-row">' +
+        '<input type="email" class="ap-ef-input" placeholder="you@company.com" autocomplete="email" />' +
+        '<button class="ap-ef-btn" type="button">Send</button>' +
+      '</div>' +
+      '<div class="ap-ef-error"></div>';
+    const inputEl = div.querySelector('.ap-ef-input');
+    const btn = div.querySelector('.ap-ef-btn');
+    const err = div.querySelector('.ap-ef-error');
+    inputEl.value = m.value || '';
+    if (m.error) err.textContent = m.error;
+    if (m.submitting) { btn.textContent = 'Sending…'; btn.disabled = true; inputEl.disabled = true; }
+    const submit = () => submitEmailForm(m, inputEl.value.trim());
+    btn.addEventListener('click', submit);
+    inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    if (!m._focusedOnce) { m._focusedOnce = true; setTimeout(() => inputEl.focus(), 50); }
+  }
+
+  async function submitEmailForm(m, email) {
+    if (m.submitting || m.submitted) return;
+    m.value = email;
+    if (!EMAIL_RE.test(email)) { m.error = 'Please enter a valid email address.'; renderMessages(); return; }
+    m.error = ''; m.submitting = true; renderMessages();
+    try {
+      // Reuses the /contact lead endpoint (logs the lead + notifies a human),
+      // so no extra LLM round-trip and the confirmation is deterministic.
+      const res = await fetch(`${API_URL}/contact`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: CLIENT_ID, email, message: 'Requested to be contacted via the chat assistant.' })
+      });
+      if (!res.ok) throw new Error();
+      m.submitted = true; m.email = email;
+    } catch {
+      m.error = 'Couldn’t send just now — please try again.';
+    } finally {
+      m.submitting = false; renderMessages();
+    }
+  }
+
   function renderMessages() {
     messagesEl.innerHTML = '';
     let lastTs = 0, lastRole = null, group = [];
@@ -728,7 +799,10 @@
         // User messages stay plain text; assistant messages get light,
         // XSS-safe formatting (bold, bullet lists, line breaks) so structured
         // replies actually render instead of showing raw ** and - .
-        if (m.role === 'assistant') {
+        if (m.type === 'emailForm') {
+          div.classList.add('ap-form-msg');
+          renderEmailForm(div, m);
+        } else if (m.role === 'assistant') {
           div.innerHTML = formatAssistant(m.content);
         } else {
           div.textContent = m.content;
@@ -821,7 +895,12 @@
       if (!res.ok) throw new Error();
       const data = await res.json();
       messages.push({ role: 'assistant', content: data.reply, ts: Date.now() });
-      if (data.action === 'show_contact_form') setView('contact');
+      // Lead capture without an email → show a lightweight inline email form as
+      // the next bubble (no view switch, no separate button) so the visitor can
+      // submit right in the conversation.
+      if (data.action === 'show_contact_form') {
+        messages.push({ role: 'assistant', type: 'emailForm', submitted: false, ts: Date.now() + 1 });
+      }
     } catch {
       messages.push({ role: 'assistant', content: "I'm having trouble connecting. Try the contact form and we'll reach out personally.", ts: Date.now() });
     } finally {
