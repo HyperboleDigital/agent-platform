@@ -5,27 +5,68 @@ const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
 // Set once by <AuthBridge/> (mounted inside <ClerkProvider>) so plain fetch
 // calls here can attach a fresh session token per request. No static secret
 // ever lives in this bundle — see AuthBridge.tsx.
-let getToken: (() => Promise<string | null>) | null = null
-export function setTokenGetter(fn: () => Promise<string | null>) {
+let getToken: ((opts?: { skipCache?: boolean }) => Promise<string | null>) | null = null
+export function setTokenGetter(fn: (opts?: { skipCache?: boolean }) => Promise<string | null>) {
   getToken = fn
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
-  const token = getToken ? await getToken() : null
+// Set once by <AuthBridge/> — called when a request comes back 401 even after
+// a forced-fresh token, meaning the session itself (not just Clerk's local
+// cache) is gone. Signs the user out so <ProtectedLayout/> redirects to
+// sign-in, instead of the app sitting on a permanently-broken "can't reach
+// the API" error until someone manually refreshes.
+let onSessionExpired: (() => Promise<void>) | null = null
+let signingOut = false
+export function setSessionExpiredHandler(fn: () => Promise<void>) {
+  onSessionExpired = fn
+}
+
+async function authHeaders(fresh = false): Promise<Record<string, string>> {
+  const token = getToken ? await getToken(fresh ? { skipCache: true } : undefined) : null
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+async function rawFetch(path: string, options: RequestInit | undefined, fresh: boolean): Promise<Response> {
+  return fetch(`${BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(await authHeaders()),
+      ...(await authHeaders(fresh)),
       ...options?.headers
     }
   })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+}
+
+async function toResult<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let message = `API error: ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.error) message = body.error
+    } catch { /* response wasn't JSON — keep the generic message */ }
+    throw new Error(message)
+  }
   return res.json() as Promise<T>
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let res = await rawFetch(path, options, false)
+  // Clerk caches session tokens client-side; a stale one reads as 401 here
+  // even while the underlying session is still valid. Retry once with a
+  // forced-fresh token before concluding the session is actually gone —
+  // that's the difference between "briefly stale" and "log back in".
+  if (res.status === 401 && getToken) {
+    res = await rawFetch(path, options, true)
+  }
+  if (res.status === 401 && onSessionExpired && !signingOut) {
+    signingOut = true
+    try {
+      await onSessionExpired()
+    } finally {
+      signingOut = false
+    }
+  }
+  return toResult<T>(res)
 }
 
 // Raw, unauthenticated connectivity check — used by the app shell to
@@ -93,6 +134,113 @@ export interface PlanInfo {
   conversationCap: number
 }
 
+export type CitationStatus = 'pending' | 'live' | 'inconsistent' | 'not_applicable'
+export type GbpKind = 'post' | 'photo' | 'qa' | 'category' | 'other'
+
+export interface Citation {
+  id: string
+  clientId: string
+  directory: string
+  listingUrl: string | null
+  status: CitationStatus
+  napName: string | null
+  napAddress: string | null
+  napPhone: string | null
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  napMatches: boolean | null
+}
+
+export interface CitationSummary {
+  total: number
+  live: number
+  pending: number
+  inconsistent: number
+}
+
+export interface GbpActivity {
+  id: string
+  clientId: string
+  kind: GbpKind
+  title: string
+  url: string | null
+  performedAt: string
+  notes: string | null
+  createdAt: string
+}
+
+export interface PlaceReview {
+  authorName: string
+  rating: number
+  text: string | null
+  relativeTime: string
+  publishTime: string
+}
+
+export interface PlaceSummary {
+  placeId: string
+  name: string
+  rating: number | null
+  reviewCount: number
+  mapsUrl: string | null
+  reviews: PlaceReview[]
+  fetchedAt: string
+}
+
+export interface MapRankResult {
+  keyword: string
+  location: string
+  rankAbsolute: number | null
+  checkedAt: string
+}
+
+export interface PlaceCandidate {
+  placeId: string
+  name: string
+  address: string | null
+}
+
+export interface LocalConfig {
+  placeId: string
+  localKeywords: string[]
+  localLocations: string[]
+}
+
+export interface TargetKeyword {
+  id: string
+  clientId: string
+  keyword: string
+  createdAt: string
+  latestRank: number | null
+  latestUrl: string | null
+  latestCheckedAt: string | null
+  trend: { checkedAt: string; rank: number | null }[]
+}
+
+export interface KeywordIdea {
+  keyword: string
+  searchVolume: number | null
+  difficulty: number | null
+  cpc: number | null
+}
+
+export interface TierFeature {
+  text: string
+  built: boolean
+  section?: string
+}
+
+export interface TierInfo {
+  key: string
+  vertical: 'local' | 'b2b'
+  name: string
+  monthlyPriceCents: number
+  includes: ServiceKey[]
+  quotas: { pagesPerMonth: number; contentPiecesPerMonth: number }
+  features: TierFeature[]
+}
+
 export interface SubscriptionInfo {
   id: string
   clientId: string
@@ -101,6 +249,15 @@ export interface SubscriptionInfo {
   stripePriceId: string | null
   status: string
   currentPeriodEnd: string | null
+}
+
+export interface ClientSubscriptionSummary {
+  id: string
+  priceId: string | null
+  amountCents: number | null
+  status: string
+  created: string
+  isTracked: boolean
 }
 
 export interface Identity {
@@ -136,9 +293,12 @@ export interface ClientRollup {
   planName: string | null
   subscriptionStatus: string | null
   usage: { used: number; cap: number }
+  mrrCents: number
+  comped: boolean
+  billingActive: boolean
 }
 
-export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social'
+export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social' | 'local' | 'chat' | 'ads'
 
 export interface ServiceInfo {
   key: ServiceKey
@@ -146,13 +306,13 @@ export interface ServiceInfo {
   name: string
   monthlyPriceCents: number
   description: string
-  status: 'available' | 'coming_soon'
+  status: 'available' | 'coming_soon' | 'tier_only'
 }
 
 export interface ServiceEntitlement {
   entitled: boolean
-  source: 'addon' | 'comp' | null
-  status: 'available' | 'coming_soon'
+  source: 'addon' | 'comp' | 'tier' | null
+  status: 'available' | 'coming_soon' | 'tier_only'
 }
 
 export interface Entitlements {
@@ -161,35 +321,106 @@ export interface Entitlements {
   services: Record<ServiceKey, ServiceEntitlement>
 }
 
-export interface AuditScores {
-  performance: number
-  seo: number
-  accessibility: number
-  bestPractices: number
-}
-
-export interface AuditMetrics {
-  lcpMs?: number
-  cls?: number
-  inpMs?: number
-  tbtMs?: number
-}
-
-export interface SeoAudit {
+export interface SiteHealth {
   id: string
   clientId: string
-  url: string
-  strategy: 'mobile' | 'desktop'
-  scores: AuditScores
-  metrics: AuditMetrics
-  recommendations: string
-  createdAt: string
+  checkedAt: string
+  up: boolean
+  statusCode: number | null
+  responseTimeMs: number | null
+  error: string | null
+  ssl: {
+    valid: boolean
+    issuer: string | null
+    expiresAt: string | null
+    daysRemaining: number | null
+  } | null
+  sslError: string | null
 }
 
 export interface PortalConfig {
   seoPages?: string[]
   brandTerms?: string[]
   gscProperty?: string
+  placeId?: string
+  localKeywords?: string[]
+  localLocations?: string[]
+  localLocation?: string
+  onboardedAt?: string
+}
+
+export interface CrawlIssue {
+  key?: string
+  severity: 'high' | 'medium' | 'low'
+  title: string
+  count: number
+  explanation: string
+  urls?: string[]
+}
+
+export interface SeoCrawl {
+  id: string
+  clientId: string
+  url: string
+  status: 'running' | 'finished' | 'failed'
+  taskId: string | null
+  onpageScore: number | null
+  pagesCrawled: number | null
+  checks: { key: string; label: string; count: number; urls: string[] }[] | null
+  issues: CrawlIssue[] | null
+  aiSearch: {
+    score: number
+    hasLlmsTxt: boolean
+    blockedBots: string[]
+    sitemap: { found: boolean; url: string | null; urlCount: number | null; referencedInRobots: boolean }
+    issues: { severity: 'high' | 'medium' | 'low'; title: string; detail: string }[]
+  } | null
+  cost: number | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+// ── Prospecting (cold-outreach engine, superadmin) ────────────────────────────
+export type ProspectStatus =
+  | 'new' | 'saved' | 'drafted' | 'sent' | 'replied' | 'won' | 'lost' | 'do_not_contact'
+
+export interface ProspectCandidate {
+  placeId: string
+  name: string
+  address: string | null
+  phone: string | null
+  website: string | null
+  noWebsite: boolean
+  rating: number | null
+  reviewCount: number
+  mapsUrl: string | null
+}
+
+export interface Prospect {
+  id: string
+  placeId: string | null
+  name: string
+  category: string | null
+  area: string | null
+  phone: string | null
+  email: string | null
+  website: string | null
+  noWebsite: boolean
+  mapsUrl: string | null
+  rating: number | null
+  reviewCount: number | null
+  status: ProspectStatus
+  draftPlain: string | null
+  draftLoom: string | null
+  hookSource: string | null
+  notes: string | null
+  createdAt: string
+}
+
+export interface DiscoveryResult {
+  count: number
+  candidates: ProspectCandidate[]
 }
 
 export interface GscQueryRow {
@@ -217,6 +448,48 @@ export interface GscRankings {
   connected: boolean
   trend: GscSnapshot[]
   latest: { rows: GscQueryRow[]; totals: GscTotals } | null
+}
+
+// ── Paid Ads (Google PPC) ─────────────────────────────────────────────────────
+export interface AdsTotals {
+  spendCents: number
+  impressions: number
+  clicks: number
+  conversions: number
+  conversionsValue: number
+  costPerLeadCents: number
+  avgCpcCents: number
+}
+
+export interface AdsCampaign {
+  id: string
+  name: string
+  status: string
+  spendCents: number
+  impressions: number
+  clicks: number
+  conversions: number
+}
+
+export interface AdsSnapshot {
+  date: string
+  totals: AdsTotals
+  campaigns: AdsCampaign[]
+}
+
+export interface AdsPerformance {
+  connected: boolean
+  customerId: string | null
+  trend: AdsSnapshot[]
+  latest: { totals: AdsTotals; campaigns: AdsCampaign[] } | null
+}
+
+export interface AdsFeeBreakdown {
+  floorCents: number
+  pctCents: number
+  feeCents: number
+  overageCents: number
+  pct: number
 }
 
 export interface VisibilityQuery {
@@ -278,9 +551,17 @@ export interface RequestComment {
   id: string
   requestId: string
   authorId: string
+  authorName: string
   isSuperadmin: boolean
   body: string
+  mentions: string[]
   createdAt: string
+}
+
+export interface MentionableUser {
+  id: string
+  name: string
+  isSuperadmin: boolean
 }
 
 export interface RequestAttachment {
@@ -352,6 +633,7 @@ export interface ReportData {
   clientName: string
   seo: { firstScore: number; lastScore: number; delta: number; auditsInPeriod: number } | null
   visibility: { mentionRate: number; totalChecks: number } | null
+  siteHealth: { score: number; topIssues: { title: string; severity: string; count: number }[] } | null
   chat: {
     conversationsThisMonth: number
     monthlyCap: number
@@ -383,21 +665,77 @@ export interface SendReportResult {
 
 export const api = {
   me: () => request<Identity>('/me'),
+  reconcile: () => request<{ orgId: string | null }>('/reconcile', { method: 'POST' }),
   clients: {
     list: () => request<Client[]>('/clients'),
     get: (id: string) => request<Client>(`/clients/${id}`),
     upsert: (data: Partial<Client>) =>
       request<Client>('/clients', { method: 'POST', body: JSON.stringify(data) }),
+    invite: (id: string, email: string) =>
+      request<{ ok: boolean; clerkOrgId: string; invitationId: string }>(`/clients/${id}/invite`, { method: 'POST', body: JSON.stringify({ email }) }),
+    remove: (id: string, confirmName: string) =>
+      request<{ ok: boolean }>(`/clients/${id}`, { method: 'DELETE', body: JSON.stringify({ confirmName }) }),
+    contactAgency: (id: string, message: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/contact-agency`, { method: 'POST', body: JSON.stringify({ message }) }),
     stats: (id: string) => request<DashboardStats>(`/clients/${id}/stats`),
     statsTimeseries: (id: string, days = 14) => request<DailyCount[]>(`/clients/${id}/stats/timeseries?days=${days}`),
     statsUsage: (id: string) => request<MonthlyUsage>(`/clients/${id}/stats/usage`),
+    citations: (id: string) =>
+      request<{ citations: Citation[]; summary: CitationSummary }>(`/clients/${id}/local/citations`),
+    saveCitation: (id: string, data: Partial<Citation> & { directory: string }) =>
+      request<Citation>(`/clients/${id}/local/citations`, { method: 'POST', body: JSON.stringify(data) }),
+    seedCitations: (id: string) =>
+      request<{ added: number }>(`/clients/${id}/local/citations/seed`, { method: 'POST' }),
+    deleteCitation: (id: string, citationId: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/local/citations/${citationId}`, { method: 'DELETE' }),
+    gbpActivity: (id: string, days = 90) =>
+      request<{ activity: GbpActivity[]; postsThisMonth: number }>(`/clients/${id}/local/gbp?days=${days}`),
+    addGbpActivity: (id: string, data: { kind: GbpKind; title: string; url?: string; performedAt?: string; notes?: string }) =>
+      request<GbpActivity>(`/clients/${id}/local/gbp`, { method: 'POST', body: JSON.stringify(data) }),
+    deleteGbpActivity: (id: string, activityId: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/local/gbp/${activityId}`, { method: 'DELETE' }),
+    gbpReviews: (id: string) => request<PlaceSummary>(`/clients/${id}/local/reviews`),
+    mapRank: (id: string) => request<{ results: MapRankResult[] }>(`/clients/${id}/local/map-rank`),
+    localConfig: (id: string) => request<LocalConfig>(`/clients/${id}/local/config`),
+    updateLocalConfig: (id: string, config: Partial<LocalConfig>) =>
+      request<LocalConfig>(`/clients/${id}/local/config`, { method: 'PUT', body: JSON.stringify(config) }),
+    placeSearch: (id: string, q: string) =>
+      request<{ candidates: PlaceCandidate[] }>(`/clients/${id}/local/place-search?q=${encodeURIComponent(q)}`),
+    siteHealth: (id: string) => request<SiteHealth | null>(`/clients/${id}/site-health`),
+    checkSiteHealth: (id: string) => request<SiteHealth>(`/clients/${id}/site-health/check`, { method: 'POST' }),
     entitlements: (id: string) => request<Entitlements>(`/clients/${id}/entitlements`),
     seoConfig: (id: string) => request<PortalConfig>(`/clients/${id}/seo/config`),
     updateSeoConfig: (id: string, config: Partial<PortalConfig>) =>
       request<PortalConfig>(`/clients/${id}/seo/config`, { method: 'PUT', body: JSON.stringify(config) }),
-    seoAudits: (id: string, days = 90) => request<SeoAudit[]>(`/clients/${id}/seo/audits?days=${days}`),
-    runSeoAudit: (id: string) => request<SeoAudit[]>(`/clients/${id}/seo/audits`, { method: 'POST' }),
     seoRankings: (id: string, days = 28) => request<GscRankings>(`/clients/${id}/seo/rankings?days=${days}`),
+    snapshotRankings: (id: string) => request<{ ok: boolean }>(`/clients/${id}/seo/rankings/snapshot`, { method: 'POST' }),
+    ads: (id: string, days = 30) => request<AdsPerformance>(`/clients/${id}/ads?days=${days}`),
+    snapshotAds: (id: string) => request<{ ok: boolean }>(`/clients/${id}/ads/snapshot`, { method: 'POST' }),
+    setAdsCustomerId: (id: string, googleAdsCustomerId: string) =>
+      request<PortalConfig>(`/clients/${id}/ads/config`, { method: 'PUT', body: JSON.stringify({ googleAdsCustomerId }) }),
+    adsFeePreview: (id: string, spendCents: number) =>
+      request<AdsFeeBreakdown>(`/billing/${id}/ads-fee?spendCents=${spendCents}`),
+    billAdsOverage: (id: string, spendCents: number, period: string) =>
+      request<{ billed: boolean; overageCents: number; reason?: string }>(`/billing/${id}/ads-fee`, { method: 'POST', body: JSON.stringify({ spendCents, period }) }),
+    targetKeywords: (id: string) => request<{ keywords: TargetKeyword[] }>(`/clients/${id}/seo/keywords`),
+    addTargetKeyword: (id: string, keyword: string) =>
+      request<{ keywords: TargetKeyword[] }>(`/clients/${id}/seo/keywords`, { method: 'POST', body: JSON.stringify({ keyword }) }),
+    removeTargetKeyword: (id: string, keywordId: string) =>
+      request<{ keywords: TargetKeyword[] }>(`/clients/${id}/seo/keywords/${keywordId}`, { method: 'DELETE' }),
+    checkTargetKeywords: (id: string) =>
+      request<{ keywords: TargetKeyword[] }>(`/clients/${id}/seo/keywords/check`, { method: 'POST' }),
+    keywordIdeas: (id: string, seed: string) =>
+      request<{ ideas: KeywordIdea[] }>(`/clients/${id}/seo/keyword-ideas?seed=${encodeURIComponent(seed)}`),
+    latestCrawl: (id: string) => request<SeoCrawl | null>(`/clients/${id}/seo/crawl`),
+    startCrawl: (id: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl`, { method: 'POST' }),
+    refreshCrawl: (id: string, crawlId: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl/${crawlId}`),
+    cancelCrawl: (id: string, crawlId: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl/${crawlId}/cancel`, { method: 'POST' }),
+    generateMetaFix: (id: string, crawlId: string) =>
+      request<{ requestId: string; count: number }>(`/clients/${id}/seo/crawl/${crawlId}/fix/meta`, { method: 'POST' }),
+    generateSchemaFix: (id: string) =>
+      request<{ requestId: string; count: number }>(`/clients/${id}/seo/fix/schema`, { method: 'POST' }),
+    generateLlmsTxt: (id: string) =>
+      request<{ requestId: string; count: number }>(`/clients/${id}/seo/fix/llms`, { method: 'POST' }),
     seoOpportunities: (id: string) => request<GscQueryRow[]>(`/clients/${id}/seo/opportunities`),
     visibilityQueries: (id: string) => request<VisibilityQuery[]>(`/clients/${id}/visibility/queries`),
     addVisibilityQuery: (id: string, query: string) =>
@@ -416,8 +754,9 @@ export const api = {
     requestDetail: (id: string, reqId: string) => request<RequestDetail>(`/clients/${id}/requests/${reqId}`),
     cancelRequest: (id: string, reqId: string, reason: string) =>
       request<ChangeRequest>(`/clients/${id}/requests/${reqId}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
-    addRequestComment: (id: string, reqId: string, body: string) =>
-      request<RequestComment>(`/clients/${id}/requests/${reqId}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+    addRequestComment: (id: string, reqId: string, body: string, mentions: string[] = []) =>
+      request<RequestComment>(`/clients/${id}/requests/${reqId}/comments`, { method: 'POST', body: JSON.stringify({ body, mentions }) }),
+    mentionableUsers: (id: string) => request<MentionableUser[]>(`/clients/${id}/mentionable-users`),
     uploadRequestAttachment: async (id: string, reqId: string, file: File) => {
       const form = new FormData()
       form.append('file', file)
@@ -507,13 +846,19 @@ export const api = {
     disconnectGmail: (id: string) => request<{ ok: boolean }>(`/clients/${id}/gmail`, { method: 'DELETE' })
   },
   billing: {
-    plans: () => request<PlanInfo[]>('/billing/plans'),
+    tiers: () => request<TierInfo[]>('/billing/tiers'),
     services: () => request<ServiceInfo[]>('/billing/services'),
     get: (clientId: string) => request<{ subscription: SubscriptionInfo | null; plan: PlanInfo | null }>(`/billing/${clientId}`),
     checkout: (clientId: string, priceId: string) =>
       request<{ url: string }>(`/billing/${clientId}/checkout`, { method: 'POST', body: JSON.stringify({ priceId }) }),
     portal: (clientId: string) =>
       request<{ url: string }>(`/billing/${clientId}/portal`, { method: 'POST' }),
+    tierLink: (clientId: string, tierKey: string) =>
+      request<{ url: string }>(`/billing/${clientId}/tier-link?tierKey=${encodeURIComponent(tierKey)}`),
+    subscriptions: (clientId: string) =>
+      request<ClientSubscriptionSummary[]>(`/billing/${clientId}/subscriptions`),
+    cancelSubscription: (clientId: string, subId: string) =>
+      request<{ ok: boolean }>(`/billing/${clientId}/subscriptions/${subId}/cancel`, { method: 'POST' }),
     addon: (clientId: string, serviceKey: ServiceKey, action: 'add' | 'remove') =>
       request<{ ok: boolean; entitlements: Entitlements }>(`/billing/${clientId}/addons`, {
         method: 'POST',
@@ -529,7 +874,32 @@ export const api = {
     summary: () => request<OverviewSummary>('/overview/summary'),
     clients: () => request<ClientRollup[]>('/overview/clients'),
     requests: () => request<ChangeRequestWithClient[]>('/overview/requests'),
+    audits: () => request<SeoCrawl[]>('/overview/audits'),
+    startAudit: (url: string) => request<SeoCrawl>('/overview/audits', { method: 'POST', body: JSON.stringify({ url }) }),
+    refreshAudit: (crawlId: string) => request<SeoCrawl>(`/overview/audits/${crawlId}`),
     updateRequestStatus: (clientId: string, reqId: string, status: RequestStatus) =>
       request<ChangeRequest>(`/overview/requests/${clientId}/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
+  },
+
+  prospecting: {
+    discover: (opts: { category: string; area: string; minRating?: number; minReviewCount?: number; noWebsiteOnly?: boolean }) =>
+      request<DiscoveryResult>('/prospecting/discover', { method: 'POST', body: JSON.stringify(opts) }),
+    list: (status?: ProspectStatus) =>
+      request<Prospect[]>(`/prospecting${status ? `?status=${status}` : ''}`),
+    save: (candidate: ProspectCandidate, category: string, area: string) =>
+      request<Prospect>('/prospecting', { method: 'POST', body: JSON.stringify({ candidate, category, area }) }),
+    update: (id: string, patch: { status?: ProspectStatus; email?: string | null; notes?: string | null }) =>
+      request<Prospect>(`/prospecting/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    generateDrafts: (id: string) =>
+      request<Prospect>(`/prospecting/${id}/draft`, { method: 'POST' }),
+    audit: (id: string) =>
+      request<SeoCrawl>(`/prospecting/${id}/audit`, { method: 'POST' }),
+    // CSV export needs the auth header, so it can't be a plain <a href>; fetch
+    // the text and let the caller trigger a Blob download.
+    exportCsv: async (status?: ProspectStatus): Promise<string> => {
+      const res = await rawFetch(`/prospecting/export.csv${status ? `?status=${status}` : ''}`, undefined, false)
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+      return res.text()
+    }
   }
 }

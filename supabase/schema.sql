@@ -19,7 +19,12 @@ create table if not exists clients (
   clerk_org_id  text unique,
   -- SEO/portal soft config (audit pages, brand terms, connected GSC property).
   -- jsonb rather than columns since this shape keeps growing across slices.
-  portal_config jsonb not null default '{}'::jsonb
+  portal_config jsonb not null default '{}'::jsonb,
+  -- Finalized pricing-sheet tier assignment. No FK — the tier catalog is
+  -- code-defined in lib/tiers.ts (same pattern as billing.ts's PLANS), not a
+  -- DB table, since Owen is still iterating on the sheet.
+  vertical      text check (vertical in ('local', 'b2b')),
+  tier_key      text
 );
 
 -- ── knowledge_base ───────────────────────────────────────────────────────────
@@ -227,6 +232,89 @@ create table if not exists seo_audits (
 );
 create index if not exists seo_audits_client_idx on seo_audits (client_id, created_at desc);
 
+-- ── site_health_checks ────────────────────────────────────────────────────────
+-- On-demand "Site Health" checks (Care tier: uptime + SSL) for every client,
+-- regardless of add-on services. One row per check, most-recent read by the
+-- dashboard; no scheduler — always triggered by a live page load or an
+-- explicit "Check now" click (see lib/site-health.ts).
+create table if not exists site_health_checks (
+  id                uuid primary key default gen_random_uuid(),
+  client_id         uuid not null references clients(id) on delete cascade,
+  checked_at        timestamptz not null default now(),
+  up                boolean not null,
+  status_code       integer,
+  response_time_ms  integer,
+  error             text,               -- set when `up` is false (fetch failed) — timeout, DNS, refused, etc.
+  ssl_valid         boolean,            -- null when the site isn't served over https at all
+  ssl_issuer        text,
+  ssl_expires_at    timestamptz,
+  ssl_days_remaining integer
+);
+create index if not exists site_health_checks_client_idx on site_health_checks (client_id, checked_at desc);
+alter table site_health_checks enable row level security;
+
+-- ── citations / gbp_activity ──────────────────────────────────────────────────
+-- "Local Presence" (Offer Sheet A, Tier 2). Both are maintained BY HAND for
+-- now — the Google Business Profile API needs Google-approved access, and
+-- citation building is submission work done manually anyway. These are what
+-- the client sees proving the work happened; a later API integration would
+-- populate the same shape automatically.
+create table if not exists citations (
+  id           uuid primary key default gen_random_uuid(),
+  client_id    uuid not null references clients(id) on delete cascade,
+  directory    text not null,                     -- "Yelp", "Better Business Bureau", …
+  listing_url  text,
+  status       text not null default 'pending',   -- 'pending' | 'live' | 'inconsistent' | 'not_applicable'
+  nap_name     text,                              -- name/address/phone AS LISTED on that directory
+  nap_address  text,
+  nap_phone    text,
+  notes        text,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (client_id, directory)
+);
+create index if not exists citations_client_idx on citations (client_id, directory);
+
+create table if not exists gbp_activity (
+  id           uuid primary key default gen_random_uuid(),
+  client_id    uuid not null references clients(id) on delete cascade,
+  kind         text not null,                     -- 'post' | 'photo' | 'qa' | 'category' | 'other'
+  title        text not null,
+  url          text,
+  performed_at date not null default current_date,
+  notes        text,
+  created_at   timestamptz not null default now()
+);
+create index if not exists gbp_activity_client_idx on gbp_activity (client_id, performed_at desc);
+
+-- ── prospects ─────────────────────────────────────────────────────────────────
+-- Cold-outreach prospecting engine (admin/superadmin tool). Finds local
+-- businesses via Google Places, stores personalized outreach drafts, and hands
+-- the operator a list they send themselves. The platform never sends email
+-- here — no send path, no scheduler. `place_id` dedupes across searches; a null
+-- `website` marks a prime "we'll build you one" target; `email` is manual.
+create table if not exists prospects (
+  id            uuid primary key default gen_random_uuid(),
+  place_id      text unique,
+  name          text not null,
+  category      text,
+  area          text,
+  phone         text,
+  email         text,
+  website       text,
+  maps_url      text,
+  rating        numeric,
+  review_count  integer,
+  status        text not null default 'new',  -- new|saved|drafted|sent|replied|won|lost|do_not_contact
+  draft_plain   text,
+  draft_loom    text,
+  hook_source   text,
+  notes         text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists prospects_status_idx on prospects (status, created_at);
+create index if not exists prospects_area_idx on prospects (area, category);
+
 -- ── gsc_snapshots ─────────────────────────────────────────────────────────────
 -- Daily cache of Google Search Console query performance, so trends survive
 -- GSC's data window and dashboard loads don't hit Google live.
@@ -240,6 +328,21 @@ create table if not exists gsc_snapshots (
   unique (client_id, date)
 );
 create index if not exists gsc_snapshots_client_idx on gsc_snapshots (client_id, date desc);
+
+-- ── ads_snapshots ─────────────────────────────────────────────────────────────
+-- Daily cache of a client's Google Ads (PPC) performance for the Paid Ads
+-- dashboard section + monthly fee reconciliation. Read-only pull via Hyperbole's
+-- manager (MCC) access; the client pays Google directly. Mirrors gsc_snapshots.
+create table if not exists ads_snapshots (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references clients(id) on delete cascade,
+  date       date not null,
+  totals     jsonb not null, -- { spendCents, impressions, clicks, conversions, conversionsValue, costPerLeadCents, avgCpcCents }
+  campaigns  jsonb not null, -- [{ id, name, status, spendCents, impressions, clicks, conversions }]
+  created_at timestamptz not null default now(),
+  unique (client_id, date)
+);
+create index if not exists ads_snapshots_client_idx on ads_snapshots (client_id, date desc);
 
 -- ── visibility_queries / visibility_runs ────────────────────────────────────
 -- AI-search (ChatGPT/Claude) brand-mention tracking, also part of the `seo`
@@ -429,6 +532,10 @@ alter table notification_log   enable row level security;
 alter table blog_posts         enable row level security;
 alter table framer_connections enable row level security;
 alter table reports            enable row level security;
+alter table citations          enable row level security;
+alter table gbp_activity       enable row level security;
+alter table prospects          enable row level security;
+alter table ads_snapshots      enable row level security;
 
 -- Private bucket for change-request attachments — the API is the only thing
 -- that touches it, always via short-lived signed URLs it mints itself

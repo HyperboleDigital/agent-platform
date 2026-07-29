@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { getSubscription, planForPriceId } from './billing'
+import { getSubscription, planForSubscription } from './billing'
 
 // DB-backed usage caps. These catch SUSTAINED abuse (a public clientId driving
 // paid LLM calls all day) and act as a hard cost backstop — the lesson from
@@ -61,7 +61,7 @@ export async function checkChatCaps(clientId: string): Promise<CapStatus> {
     countSince(startOfUtcMonth(), clientId),
     getSubscription(clientId)
   ])
-  const plan = sub ? planForPriceId(sub.stripePriceId) : null
+  const plan = sub ? planForSubscription(sub.stripePriceId) : null
   const monthlyCap = plan?.conversationCap ?? DEFAULT_MONTHLY_CAP
 
   if (globalToday >= GLOBAL_DAILY_LLM_CAP) return { allowed: false, reason: 'global_daily_cap' }
@@ -82,6 +82,6 @@ export async function getMonthlyUsage(clientId: string): Promise<MonthlyUsage> {
     countSince(startOfUtcMonth(), clientId),
     getSubscription(clientId)
   ])
-  const plan = sub ? planForPriceId(sub.stripePriceId) : null
+  const plan = sub ? planForSubscription(sub.stripePriceId) : null
   return { used, cap: plan?.conversationCap ?? DEFAULT_MONTHLY_CAP, planName: plan?.name ?? null }
 }

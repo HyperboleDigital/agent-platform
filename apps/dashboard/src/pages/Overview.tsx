@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AlertCircle, Building2, MessageSquarePlus } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -74,8 +74,17 @@ function OpenRequestsCard() {
 }
 
 export default function Overview() {
-  const { data: summary, error: summaryError, isLoading: summaryLoading } = useSWR('overview-summary', api.overview.summary)
-  const { data: rollups, error: rollupsError, isLoading: rollupsLoading } = useSWR('overview-clients', api.overview.clients)
+  const { data: me } = useSWR('me', api.me)
+  const { data: summary, error: summaryError, isLoading: summaryLoading } = useSWR(
+    me?.isSuperadmin ? 'overview-summary' : null, api.overview.summary
+  )
+  const { data: rollups, error: rollupsError, isLoading: rollupsLoading } = useSWR(
+    me?.isSuperadmin ? 'overview-clients' : null, api.overview.clients
+  )
+
+  // This page is platform-wide (superadmin only). A non-superadmin who somehow
+  // lands here gets sent home rather than a scary "couldn't load data" error.
+  if (me && !me.isSuperadmin) return <Navigate to="/" replace />
 
   const error = summaryError || rollupsError
 
@@ -138,6 +147,7 @@ export default function Overview() {
                 <TableHead>Client</TableHead>
                 <TableHead>Plan</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>MRR</TableHead>
                 <TableHead>Usage this month</TableHead>
               </TableRow>
             </TableHeader>
@@ -155,6 +165,15 @@ export default function Overview() {
                       <StatusDot variant={subStatusVariant(r.subscriptionStatus)} />
                       {r.subscriptionStatus ?? 'No subscription'}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {r.comped ? (
+                      <span className="text-muted-foreground">Comped</span>
+                    ) : r.mrrCents > 0 ? (
+                      formatCents(r.mrrCents)
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="min-w-48">
                     <UsageBar usage={{ used: r.usage.used, cap: r.usage.cap, planName: r.planName }} />

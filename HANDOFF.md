@@ -1,14 +1,85 @@
 # Handoff — read this first in a new chat
 
-Last updated: 2026-07-14, end of session. This doc exists so a fresh Claude
+Last updated: 2026-07-21, end of session. This doc exists so a fresh Claude
 session (or a human) can pick up instantly. Delete/replace it once it's stale
 — it's a snapshot, not permanent docs (that's `README.md`). See `TODO.md` for
 the working punch list — Owen edits that directly, treat it as authoritative.
 
-## State: everything committed, nothing pending
+## Most recent session (2026-07-21): offer-sheet alignment
 
-Unlike prior handoffs, there is **no uncommitted work**. `git status --short`
-is clean. Every phase below is committed on `feat/dashboard-retrieval-escalation-mvp`.
+Owen supplied the **finalized Local Services + B2B offer sheets** and asked for a
+gap report against the codebase, then had the top gaps built in order. Start here
+before doing anything pricing- or tier-shaped:
+
+- **`lib/tiers.ts` is the new source of truth for what we sell** — all 6 tiers,
+  real prices. **Hardcoded, no Stripe products** (Owen's explicit call — the
+  sheet may still change). Assigning a tier = a field update
+  (`clients.vertical`/`tier_key`), not a checkout.
+- **Every tier bullet carries a `built: boolean`.** The dashboard shows clients
+  which promises are live versus still coming. **If you ship a sheet feature,
+  flip its flag** — otherwise paying clients keep seeing it as unavailable.
+  Only set `true` when the *whole* bullet is true.
+- **Shipped:** Site Health (uptime + SSL, on-demand, every client), pricing
+  tiers + tier-sourced entitlements, Local Presence (citation tracker with NAP
+  drift detection + GBP activity log, both hand-maintained). Three new
+  migrations, all applied to the live dev DB — see `TODO.md`.
+- **Ads management is deliberately deferred** (Owen, 2026-07-21). It's a
+  *billing-architecture* problem: the spend-tiered fee needs usage-based Stripe
+  billing that doesn't exist, plus a Google/Meta API integration. Don't start it
+  as if it were a dashboard ticket.
+- **Trap to know about:** the sheets promise AI citation tracking across
+  ChatGPT, Perplexity and Google AI Overviews. We only track **OpenAI +
+  Anthropic**. Perplexity/Google-Extended appear in `lib/ai-search.ts` only as
+  robots.txt bot names — crawler-blocking detection, *not* citation tracking.
+  Don't mistake one for the other; the GEO bullets are `built: false` for
+  exactly this reason.
+
+## Current focus: SEO/GEO automation is LIVE (started 2026-07-15)
+
+The active initiative is **automating the SEO/GEO service** and, second, an
+**automated website-rebuild engine** on Framer. The SEO side moved from plan to
+a working, live-verified product in one session — **read the plan doc's
+checkpoint log before doing SEO work, it's the real source of truth**:
+
+- **`docs/plans/seo-automation.md`** — DONE through: DataForSEO crawl → /100
+  site-health score → AI-Search-Health/GEO score (bot blocking, llms.txt,
+  sitemap.xml) → severity-ranked issues with affected URLs → one-click AI
+  fixes (titles/meta, schema, llms.txt) as change requests → downloadable
+  branded PDF → rolled into monthly client Reports. Superadmin-only Audit Tool
+  crawls any URL on demand. **Everything is manual-trigger by deliberate
+  choice — no scheduler exists and none should be added without Owen asking.**
+  A SEMrush side-by-side comparison validated our numbers and directly
+  informed the AI-Search-Health build (see checkpoint log for specifics).
+- **`docs/plans/website-rebuild.md`** — approved, feasibility spike
+  desk-research done (Framer 3.0 Server/Canvas/Plugin APIs + MCP look viable).
+  Hands-on spike (build real pages on a throwaway Framer project) still
+  pending — needs a throwaway project + credentials from Owen. Built **after**
+  SEO work (shares the crawler); not started.
+
+Also shipped this session, off the SEO plan: **@mention notifications on
+change-request comments** (real Clerk names, guarded per-person email,
+live-verified) and a fix for a real bug where comment authors always showed
+the hardcoded "Hyperbole Digital"/"You" instead of their actual name.
+
+**Checkpoint convention (so progress is never lost across chats):** each plan
+doc has a `## Checkpoint log` at the bottom. Append a dated entry whenever you
+make meaningful progress or change a decision — and always before ending a
+session or when context runs low. The plan docs are the durable source of truth;
+this Handoff just points at them.
+
+## State (2026-07-21)
+
+The 2026-07-21 offer-sheet work is **uncommitted** — it typechecks, builds, and
+is live-verified, but nothing has been committed or pushed yet. Everything
+before it is committed and pushed to
+`feat/dashboard-retrieval-escalation-mvp` (`099d0f0`).
+
+New migrations that must be applied to a fresh/other Supabase environment
+(all additive, safe to run, all already applied to the live dev DB):
+`migrate_2026-07-18_seo-crawls.sql`, `migrate_2026-07-19_adhoc-crawls.sql`,
+`migrate_2026-07-20_ai-search.sql`, `migrate_2026-07-16_comment-mentions.sql`,
+`migrate_2026-07-21_site-health.sql`, `migrate_2026-07-21_pricing-tiers.sql`,
+`migrate_2026-07-21_local-presence.sql`.
 
 ## Where things stand — by phase
 
@@ -164,6 +235,8 @@ revert when done.
 
 ## Key files to read before continuing
 
+- `docs/plans/seo-automation.md` + `docs/plans/website-rebuild.md` — the two
+  active initiatives (see "Current focus" above); read these first for new work
 - `TODO.md` — the actual next-steps list, Owen-maintained
 - `apps/dashboard/DESIGN_SYSTEM.md` — design system spec
 - `README.md` — normal project docs (stack, onboarding, integrations)

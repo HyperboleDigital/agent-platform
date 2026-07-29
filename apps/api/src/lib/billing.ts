@@ -1,6 +1,7 @@
 import Stripe from 'stripe'
 import { supabase } from './supabase'
-import { serviceForKey, type ServiceKey } from './services'
+import { serviceForKey, adsFloorPriceId, type ServiceKey } from './services'
+import { tierForKey, tierForPriceId } from './tiers'
 
 // Pin the API version explicitly rather than inheriting the account's
 // dashboard-configured default, which may be older than what this SDK's
@@ -23,24 +24,16 @@ export interface PlanInfo {
   conversationCap: number
 }
 
-const PLANS: Record<string, PlanInfo> = {
-  [process.env.STRIPE_PRICE_STARTER ?? '']: {
-    key: 'starter', priceId: process.env.STRIPE_PRICE_STARTER ?? '',
-    name: 'Starter', monthlyPriceCents: 19900, conversationCap: 500
-  },
-  [process.env.STRIPE_PRICE_PRO ?? '']: {
-    key: 'pro', priceId: process.env.STRIPE_PRICE_PRO ?? '',
-    name: 'Pro', monthlyPriceCents: 39900, conversationCap: 2500
-  }
-}
-
-export function planForPriceId(priceId: string | null | undefined): PlanInfo | null {
-  if (!priceId) return null
-  return PLANS[priceId] ?? null
-}
-
-export function listPlans(): PlanInfo[] {
-  return Object.values(PLANS)
+// Resolve a subscription's base price to a plan-shaped object. The legacy
+// Starter/Pro plans were retired 2026-07-24 in favor of the pricing-sheet
+// tiers, so a subscription's base price is always a tier price now. Returns null
+// for an unrecognized price — callers MUST handle null (the UI degrades to "no
+// plan" rather than crashing). conversationCap: tiers don't declare one in the
+// sheet yet, so we fall back to 2500. TODO: give tiers their own cap.
+export function planForSubscription(priceId: string | null | undefined): PlanInfo | null {
+  const tier = tierForPriceId(priceId)
+  if (!tier) return null
+  return { key: tier.key, priceId: tier.stripePriceId, name: tier.name, monthlyPriceCents: tier.monthlyPriceCents, conversationCap: 2500 }
 }
 
 export interface SubscriptionRow {
@@ -131,6 +124,98 @@ export async function createCheckoutSession(
   return session.url
 }
 
+// Durable, shareable Stripe Payment Link for a tier's price — the "send the
+// client a link to switch their plan" flow. Created once per tier and cached on
+// the Stripe Price's metadata so we reuse the same link instead of spawning a
+// fresh one every time. The link is generic (not tied to a customer); the
+// caller appends ?client_reference_id=<clientId> so the webhook can attribute
+// the resulting subscription to the right client.
+export async function getOrCreateTierPaymentLink(tierKey: string): Promise<string> {
+  const tier = tierForKey(tierKey)
+  if (!tier) throw new Error(`Unknown tier: ${tierKey}`)
+  if (!tier.stripePriceId) throw new Error(`Tier "${tier.name}" has no Stripe price configured`)
+
+  const price = await stripe.prices.retrieve(tier.stripePriceId)
+  const cachedId = price.metadata?.payment_link_id
+  if (cachedId) {
+    try {
+      const existing = await stripe.paymentLinks.retrieve(cachedId)
+      if (existing.active && existing.url) return existing.url
+    } catch {
+      // cached link was deleted/invalid — fall through and make a fresh one
+    }
+  }
+
+  const link = await stripe.paymentLinks.create({
+    line_items: [{ price: tier.stripePriceId, quantity: 1 }],
+    metadata: { tier_key: tier.key },
+    subscription_data: { metadata: { tier_key: tier.key } },
+  })
+  await stripe.prices.update(tier.stripePriceId, {
+    metadata: { ...price.metadata, payment_link_id: link.id, payment_link_url: link.url },
+  })
+  return link.url
+}
+
+// A tier Payment Link is shared/generic, so per-client identity rides on the
+// checkout session's client_reference_id (appended to the link URL). On
+// completion we stamp that client_id onto the new subscription's metadata — so
+// every later subscription.* event attributes correctly — then sync as usual.
+export async function attributeCheckoutToClient(session: Stripe.Checkout.Session): Promise<void> {
+  const clientId = session.client_reference_id
+  const subId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id
+  if (!clientId || !subId) return
+  const updated = await stripe.subscriptions.update(subId, { metadata: { client_id: clientId } })
+  await syncSubscriptionFromStripe(updated)
+}
+
+export interface ClientSubscriptionSummary {
+  id: string
+  priceId: string | null
+  amountCents: number | null
+  status: string
+  created: string
+  isTracked: boolean // matches our subscriptions row's stripe_subscription_id
+}
+
+// Every active Stripe subscription attributed to this client, via the client_id
+// we stamp on each subscription's metadata. Tier Payment Links create a fresh
+// customer + subscription per payment, so a client who switches tiers can end
+// up with more than one active sub — this finds the stale ones so a superadmin
+// can cancel them. (Stripe Search is eventually consistent — a just-created sub
+// may take a moment to appear.)
+export async function listClientSubscriptions(clientId: string): Promise<ClientSubscriptionSummary[]> {
+  const tracked = await getSubscription(clientId)
+  const res = await stripe.subscriptions.search({
+    query: `metadata['client_id']:'${clientId}' AND status:'active'`,
+    limit: 100,
+  })
+  return res.data
+    .map(s => {
+      const price = s.items.data[0]?.price
+      return {
+        id: s.id,
+        priceId: price?.id ?? null,
+        amountCents: price?.unit_amount ?? null,
+        status: s.status,
+        created: new Date(s.created * 1000).toISOString(),
+        isTracked: s.id === tracked?.stripeSubscriptionId,
+      }
+    })
+    .sort((a, b) => a.created.localeCompare(b.created))
+}
+
+// Cancel a specific subscription — guarded so it can only cancel a sub actually
+// attributed to this client (never someone else's). Used to clear a stale plan
+// left over after a tier switch.
+export async function cancelClientSubscription(clientId: string, subId: string): Promise<void> {
+  const sub = await stripe.subscriptions.retrieve(subId)
+  if (sub.metadata?.client_id !== clientId) {
+    throw new Error('That subscription is not attributed to this client')
+  }
+  await stripe.subscriptions.cancel(subId)
+}
+
 export async function createPortalSession(clientId: string, returnUrl: string): Promise<string> {
   const sub = await getSubscription(clientId)
   if (!sub) throw new Error('No billing account for this client yet')
@@ -141,22 +226,11 @@ export async function createPortalSession(clientId: string, returnUrl: string): 
   return session.url
 }
 
-// Superadmin comp: grants access without a real Stripe subscription (friends
-// & family, internal test clients). Sentinel stripe_customer_id/price so
-// `isActive` and plan resolution behave sanely; a later real checkout simply
-// overwrites this row via syncSubscriptionFromStripe.
-export async function compClient(clientId: string, planKey: 'starter' | 'pro' = 'pro'): Promise<void> {
-  const priceId = Object.entries(PLANS).find(([, p]) => p.key === planKey)?.[0]
-  const { error } = await supabase.from('subscriptions').upsert({
-    client_id: clientId,
-    stripe_customer_id: 'comped',
-    stripe_subscription_id: null,
-    stripe_price_id: priceId ?? null,
-    status: 'active',
-    updated_at: new Date().toISOString()
-  }, { onConflict: 'client_id' })
-  if (error) throw error
-}
+// Note: base-plan comp (the old Starter/Pro "grant access without a Stripe
+// subscription") was removed 2026-07-24 with the plans themselves. Assigning a
+// tier via "Save tier" already grants that tier's entitlements (source: 'tier'
+// in lib/entitlements.ts) without a charge — that IS the comp path now; the
+// tier payment link is the paid path.
 
 // Upserts our local mirror of a Stripe subscription — called from the webhook
 // handler on every subscription lifecycle event. `clientId` is read from the
@@ -169,10 +243,33 @@ export async function syncSubscriptionFromStripe(subscription: Stripe.Subscripti
     console.error('[billing] webhook subscription missing client_id metadata', subscription.id)
     return
   }
+
+  // We track ONE current subscription per client, but Payment Links create a new
+  // sub per payment, so a client can transiently have several. Guard against an
+  // event for a sub that ISN'T the client's current plan clobbering the row —
+  // e.g. canceling the OLD plan after a switch fires that old sub's webhook,
+  // which would otherwise overwrite the row that correctly points at the NEW
+  // plan (the bug this fixes).
+  const incomingActive = ACTIVE_STATUSES.has(subscription.status)
+  const tracked = await getSubscription(clientId)
+  if (tracked?.stripeSubscriptionId && tracked.stripeSubscriptionId !== subscription.id) {
+    // A non-active event for a different sub (an old plan being canceled) must
+    // never touch the current plan's row.
+    if (!incomingActive) return
+    // A different ACTIVE sub: adopt it only if it's newer than the tracked one
+    // (a genuine switch), not an older sub's renewal event flipping us backward.
+    try {
+      const trackedStripe = await stripe.subscriptions.retrieve(tracked.stripeSubscriptionId)
+      if (ACTIVE_STATUSES.has(trackedStripe.status) && trackedStripe.created > subscription.created) return
+    } catch {
+      // tracked sub no longer retrievable — fall through and adopt the incoming one
+    }
+  }
+
   const items = subscription.items.data
-  // The base plan item is the one whose price is a PLAN (not an add-on
-  // service). Fall back to item 0 for legacy single-item subscriptions.
-  const baseItem = items.find(i => planForPriceId(i.price?.id) !== null) ?? items[0]
+  // The base item is the one whose price is a pricing-sheet tier (not an add-on
+  // service). Fall back to item 0 for single-item subscriptions.
+  const baseItem = items.find(i => tierForPriceId(i.price?.id) !== null) ?? items[0]
   // current_period_end lives on the subscription item in newer API versions,
   // top-level on the subscription in older ones — the account's configured
   // webhook API version determines which shape actually arrives, so accept
@@ -188,6 +285,21 @@ export async function syncSubscriptionFromStripe(subscription: Stripe.Subscripti
     updated_at: new Date().toISOString()
   }, { onConflict: 'client_id' })
   if (error) console.error('[billing] failed to sync subscription', error.message)
+
+  // If the base price is one of the pricing-sheet tiers, keep the client's
+  // tier_key/vertical in lockstep with what Stripe is actually billing — this
+  // is what stops the "Pricing-sheet tier vs Current plan" drift: once a client
+  // pays a tier's link, the label and the charge are the same object. Only
+  // while the subscription is active, so a canceled tier doesn't keep asserting
+  // the label.
+  const tier = tierForPriceId(baseItem?.price?.id)
+  if (tier && ACTIVE_STATUSES.has(subscription.status)) {
+    const { error: tierErr } = await supabase
+      .from('clients')
+      .update({ tier_key: tier.key, vertical: tier.vertical })
+      .eq('id', clientId)
+    if (tierErr) console.error('[billing] failed to sync tier_key', tierErr.message)
+  }
 
   await syncSubscriptionItems(clientId, items)
 }
@@ -267,6 +379,73 @@ export async function removeServiceFromSubscription(clientId: string, serviceKey
 
   const fresh = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId)
   await syncSubscriptionFromStripe(fresh)
+}
+
+// ── Paid Ads fee: "greater of a flat floor or a % of spend" ───────────────────
+// The floor bills automatically as the recurring `ads` add-on (above). This
+// computes the full monthly fee from a client's ad spend, and the OVERAGE — the
+// amount above the floor that must be billed as a one-off invoice item when the
+// % beats the floor. One flat percentage for all clients; the floor comes from
+// the Stripe price (source of truth), passed in.
+const ADS_FEE_PCT = Number(process.env.ADS_FEE_PCT ?? 0.15)
+
+export function adsFeePct(): number {
+  return ADS_FEE_PCT
+}
+
+// The recurring floor amount (cents), read from the single Stripe floor price so
+// the source of truth stays Stripe (not a duplicated number in code). Returns 0
+// when the price isn't configured.
+export async function getAdsFloorCents(): Promise<number> {
+  const priceId = adsFloorPriceId()
+  if (!priceId) return 0
+  try {
+    const price = await stripe.prices.retrieve(priceId)
+    return price.unit_amount ?? 0
+  } catch {
+    return 0
+  }
+}
+
+export interface AdsFeeBreakdown {
+  floorCents: number
+  pctCents: number      // pct × spend
+  feeCents: number      // max(floor, pct×spend)
+  overageCents: number  // max(0, pct×spend − floor) — the amount to bill on top of the floor
+  pct: number
+}
+
+export function computeAdsFee(spendCents: number, floorCents: number): AdsFeeBreakdown {
+  const pct = adsFeePct()
+  const pctCents = Math.round(Math.max(0, spendCents) * pct)
+  const feeCents = Math.max(floorCents, pctCents)
+  return { floorCents, pctCents, feeCents, overageCents: Math.max(0, pctCents - floorCents), pct }
+}
+
+// Bills the monthly % overage (if any) as a one-off Stripe invoice item that
+// rides onto the client's next invoice alongside the recurring floor. Superadmin
+// confirm-before-bill — NOT a scheduler. Idempotent per client+period: a second
+// call for the same YYYY-MM refuses rather than double-billing.
+export async function reconcileAdsFee(clientId: string, spendCents: number, floorCents: number, period: string): Promise<{ billed: boolean; overageCents: number; reason?: string }> {
+  const breakdown = computeAdsFee(spendCents, floorCents)
+  if (breakdown.overageCents <= 0) return { billed: false, overageCents: 0, reason: 'no_overage' }
+
+  const sub = await getSubscription(clientId)
+  if (!sub?.stripeCustomerId || sub.stripeCustomerId === 'comped') return { billed: false, overageCents: breakdown.overageCents, reason: 'no_billable_customer' }
+
+  // Idempotency: refuse a duplicate overage for the same client+period.
+  const existing = await stripe.invoiceItems.list({ customer: sub.stripeCustomerId, limit: 100 })
+  const dupe = existing.data.find(i => i.metadata?.kind === 'ads_overage' && i.metadata?.period === period && i.metadata?.client_id === clientId)
+  if (dupe) return { billed: false, overageCents: breakdown.overageCents, reason: 'already_billed' }
+
+  await stripe.invoiceItems.create({
+    customer: sub.stripeCustomerId,
+    amount: breakdown.overageCents,
+    currency: 'usd',
+    description: `Paid Ads management — ${period} performance fee (${Math.round(breakdown.pct * 100)}% of spend above floor)`,
+    metadata: { kind: 'ads_overage', period, client_id: clientId }
+  })
+  return { billed: true, overageCents: breakdown.overageCents }
 }
 
 // Superadmin comp for an individual add-on service (no Stripe purchase).

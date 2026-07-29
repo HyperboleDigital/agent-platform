@@ -4,22 +4,27 @@ import type { Request, Response } from 'express'
 import { getClientById } from '../lib/clients'
 import { getIdentity, canAccessClient } from '../lib/authz'
 import {
-  stripe, billingConfigured, listPlans, planForPriceId,
-  getSubscription, createCheckoutSession, createPortalSession, syncSubscriptionFromStripe, compClient,
-  addServiceToSubscription, removeServiceFromSubscription, grantService, revokeService
+  stripe, billingConfigured, planForSubscription,
+  getSubscription, createCheckoutSession, createPortalSession, syncSubscriptionFromStripe,
+  addServiceToSubscription, removeServiceFromSubscription, grantService, revokeService,
+  getOrCreateTierPaymentLink, attributeCheckoutToClient,
+  listClientSubscriptions, cancelClientSubscription,
+  computeAdsFee, reconcileAdsFee, getAdsFloorCents
 } from '../lib/billing'
 import { listServices, serviceForKey } from '../lib/services'
 import { getEntitlements } from '../lib/entitlements'
+import { listTiers, tierForKey } from '../lib/tiers'
 
 export const billingRouter = Router()
 
 const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5173'
 
-const SERVICE_KEYS = ['seo', 'content', 'reviews', 'social'] as const
+const SERVICE_KEYS = ['seo', 'content', 'reviews', 'social', 'local', 'chat', 'ads'] as const
 
-// Available plans (id -> name/cap), for the dashboard's pricing UI.
-billingRouter.get('/plans', (_req, res) => {
-  res.json(listPlans())
+// The finalized pricing-sheet tier catalog (Local/B2B x Care/mid/top) — see
+// lib/tiers.ts. Hardcoded, not Stripe-backed yet.
+billingRouter.get('/tiers', (_req, res) => {
+  res.json(listTiers())
 })
 
 // Add-on service catalog, for the dashboard marketplace / locked sections.
@@ -59,6 +64,62 @@ billingRouter.post('/:id/checkout', async (req, res) => {
   }
 })
 
+// Superadmin: a shareable Stripe Payment Link for a given tier, attributed to
+// this client via client_reference_id. Send it to the client to move them onto
+// that tier — when they pay, the webhook (checkout.session.completed) attaches
+// the subscription and syncs the client's tier_key to match.
+billingRouter.get('/:id/tier-link', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+
+  const tierKey = typeof req.query.tierKey === 'string' ? req.query.tierKey : ''
+  const tier = tierForKey(tierKey)
+  if (!tier) return res.status(400).json({ error: 'Unknown tier' })
+
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+
+  try {
+    const base = await getOrCreateTierPaymentLink(tierKey)
+    const sep = base.includes('?') ? '&' : '?'
+    const url = `${base}${sep}client_reference_id=${encodeURIComponent(client.id)}`
+    res.json({ url })
+  } catch (err) {
+    console.error('[billing] tier-link error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create payment link' })
+  }
+})
+
+// Superadmin: all active Stripe subs attributed to this client — used to spot a
+// stale plan still billing after a tier switch (Payment Links make a new sub
+// each time). The one matching our tracked sub is `isTracked: true`.
+billingRouter.get('/:id/subscriptions', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  try {
+    res.json(await listClientSubscriptions(req.params.id))
+  } catch (err) {
+    console.error('[billing] list subscriptions error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to list subscriptions' })
+  }
+})
+
+// Superadmin: cancel a specific (usually stale) subscription for this client.
+billingRouter.post('/:id/subscriptions/:subId/cancel', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  try {
+    await cancelClientSubscription(req.params.id, req.params.subId)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[billing] cancel subscription error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to cancel subscription' })
+  }
+})
+
 // Stripe Customer Portal — self-serve manage/cancel/update payment method.
 billingRouter.post('/:id/portal', async (req, res) => {
   const identity = getIdentity(req)
@@ -75,29 +136,8 @@ billingRouter.post('/:id/portal', async (req, res) => {
   }
 })
 
-// Superadmin-only: grant a client access without a real Stripe subscription
-// (internal test clients, friends & family). A later real checkout simply
-// overwrites this via the webhook.
-const compSchema = z.object({ plan: z.enum(['starter', 'pro']).default('pro') })
-
-billingRouter.post('/:id/comp', async (req, res) => {
-  const identity = getIdentity(req)
-  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
-
-  const parsed = compSchema.safeParse(req.body ?? {})
-  if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
-
-  const client = await getClientById(req.params.id)
-  if (!client) return res.status(404).json({ error: 'Not found' })
-
-  try {
-    await compClient(client.id, parsed.data.plan)
-    res.json({ ok: true })
-  } catch (err) {
-    console.error('[billing] comp error', err)
-    res.status(500).json({ error: 'Failed to comp client' })
-  }
-})
+// (Base-plan comp removed 2026-07-24 with Starter/Pro — assigning a tier via
+// "Save tier" now grants that tier's entitlements without a charge.)
 
 // Add or remove an add-on service on the client's existing subscription.
 const addonSchema = z.object({
@@ -157,6 +197,48 @@ billingRouter.post('/:id/services/comp', async (req, res) => {
   }
 })
 
+// ── Paid Ads monthly fee reconciliation (superadmin) ────────────────────────
+// The fee is "greater of the flat floor or % of ad spend." The floor bills
+// automatically as the recurring `ads` add-on; this handles the % overage. GET
+// previews the breakdown for a given month's spend; POST bills the overage as a
+// one-off invoice item (idempotent per client+period, confirm-before-bill).
+const adsFeeSchema = z.object({
+  spendCents: z.number().int().nonnegative(),
+  period: z.string().regex(/^\d{4}-\d{2}$/) // YYYY-MM
+})
+
+billingRouter.get('/:id/ads-fee', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  const spendCents = Math.max(0, Number(req.query.spendCents) || 0)
+  try {
+    const floorCents = await getAdsFloorCents()
+    res.json(computeAdsFee(spendCents, floorCents))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to compute fee' })
+  }
+})
+
+billingRouter.post('/:id/ads-fee', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  const parsed = adsFeeSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
+  try {
+    const floorCents = await getAdsFloorCents()
+    const result = await reconcileAdsFee(client.id, parsed.data.spendCents, floorCents, parsed.data.period)
+    res.json(result)
+  } catch (err) {
+    console.error('[billing] ads-fee error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to bill overage' })
+  }
+})
+
 // Current subscription + resolved plan info for a client.
 billingRouter.get('/:id', async (req, res) => {
   const identity = getIdentity(req)
@@ -164,7 +246,7 @@ billingRouter.get('/:id', async (req, res) => {
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
 
   const sub = await getSubscription(req.params.id)
-  res.json({ subscription: sub, plan: sub ? planForPriceId(sub.stripePriceId) : null })
+  res.json({ subscription: sub, plan: sub ? planForSubscription(sub.stripePriceId) : null })
 })
 
 // Stripe webhook — subscription lifecycle events. Mounted separately in
@@ -189,6 +271,11 @@ export function stripeWebhookHandler(req: Request, res: Response): void {
   }
 
   switch (event.type) {
+    case 'checkout.session.completed':
+      // A tier Payment Link was paid — attribute the new subscription to the
+      // client via the session's client_reference_id, then sync.
+      void attributeCheckoutToClient(event.data.object)
+      break
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':

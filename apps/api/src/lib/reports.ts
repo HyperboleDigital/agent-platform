@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import { getClientById } from './clients'
 import { getStats } from './logs'
 import { getMonthlyUsage } from './usage'
-import { getAuditHistory } from './seo'
+import { getLatestCrawl, getCrawlHistory } from './dataforseo'
 import { getRuns } from './visibility'
 import { sendGuardedEmail, type GuardedEmailResult } from './notify'
 
@@ -25,6 +25,10 @@ export interface ReportData {
   visibility: {
     mentionRate: number // 0..1
     totalChecks: number
+  } | null
+  siteHealth: {
+    score: number // 0..100 DataForSEO onpage_score
+    topIssues: { title: string; severity: string; count: number }[]
   } | null
   chat: {
     conversationsThisMonth: number
@@ -86,11 +90,12 @@ export async function buildReport(clientId: string, periodStart?: string, period
   const start = periodStart ?? isoDate(new Date(now.getFullYear(), now.getMonth(), 1))
   const end = periodEnd ?? isoDate(now)
 
-  const [stats, usage, audits, visRuns, closedRes] = await Promise.all([
+  const [stats, usage, crawlHistory, visRuns, latestCrawl, closedRes] = await Promise.all([
     getStats(clientId),
     getMonthlyUsage(clientId),
-    getAuditHistory(clientId, 400),
+    getCrawlHistory(clientId, 400),
     getRuns(clientId, 400),
+    getLatestCrawl(clientId),
     supabase
       .from('change_requests')
       .select('id', { count: 'exact', head: true })
@@ -100,15 +105,19 @@ export async function buildReport(clientId: string, periodStart?: string, period
       .lte('completed_at', `${end}T23:59:59Z`)
   ])
 
-  // SEO: earliest vs latest audit whose created_at falls in the period.
+  // SEO: on-page health-score trend — earliest vs latest finished crawl whose
+  // created_at falls in the period. Sourced from crawls now that the crawl is
+  // the single audit engine.
   const inPeriod = (ts: string) => ts.slice(0, 10) >= start && ts.slice(0, 10) <= end
-  const periodAudits = audits.filter(a => inPeriod(a.createdAt)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const seo = periodAudits.length
+  const periodCrawls = crawlHistory
+    .filter(c => c.onpageScore != null && inPeriod(c.createdAt))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const seo = periodCrawls.length
     ? {
-        firstScore: periodAudits[0].scores.seo,
-        lastScore: periodAudits[periodAudits.length - 1].scores.seo,
-        delta: periodAudits[periodAudits.length - 1].scores.seo - periodAudits[0].scores.seo,
-        auditsInPeriod: periodAudits.length
+        firstScore: Math.round(periodCrawls[0].onpageScore!),
+        lastScore: Math.round(periodCrawls[periodCrawls.length - 1].onpageScore!),
+        delta: Math.round(periodCrawls[periodCrawls.length - 1].onpageScore!) - Math.round(periodCrawls[0].onpageScore!),
+        auditsInPeriod: periodCrawls.length
       }
     : null
 
@@ -118,10 +127,20 @@ export async function buildReport(clientId: string, periodStart?: string, period
     ? { mentionRate: periodRuns.filter(r => r.mentioned).length / periodRuns.length, totalChecks: periodRuns.length }
     : null
 
+  // Site health: current crawl-based health score + top issues (point-in-time,
+  // from the latest finished crawl — not period-bounded).
+  const siteHealth = latestCrawl && latestCrawl.status === 'finished' && latestCrawl.onpageScore != null
+    ? {
+        score: Math.round(latestCrawl.onpageScore),
+        topIssues: (latestCrawl.issues ?? []).slice(0, 3).map(i => ({ title: i.title, severity: i.severity, count: i.count }))
+      }
+    : null
+
   const data: ReportData = {
     clientName: client.name,
     seo,
     visibility,
+    siteHealth,
     chat: {
       conversationsThisMonth: usage.used,
       monthlyCap: usage.cap,
@@ -180,6 +199,11 @@ export function renderReportEmail(report: Report): { subject: string; body: stri
       `  Site SEO score: ${d.seo.lastScore}/100 (${d.seo.delta >= 0 ? '+' : ''}${d.seo.delta} over the period)`,
       ``
     )
+  }
+  if (d.siteHealth) {
+    lines.push(`SITE HEALTH`, `  Overall health score: ${d.siteHealth.score}/100`)
+    for (const iss of d.siteHealth.topIssues) lines.push(`  • [${iss.severity}] ${iss.title}`)
+    lines.push(``)
   }
   if (d.visibility) {
     lines.push(

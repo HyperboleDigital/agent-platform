@@ -44,6 +44,21 @@ function ReportView({ report }: { report: Report }) {
         <StatTile label="Questions answered" value={d.chat.questionsAnswered} />
         <StatTile label="Leads captured" value={d.chat.totalLeadsCaptured} />
       </div>
+      {d.siteHealth && (
+        <div className="rounded-md border border-border bg-muted/30 p-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-medium">Site health</span>
+            <span className="text-lg font-semibold">{d.siteHealth.score}/100</span>
+          </div>
+          {d.siteHealth.topIssues.length > 0 && (
+            <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-muted-foreground">
+              {d.siteHealth.topIssues.map((iss, i) => (
+                <li key={i}>[{iss.severity}] {iss.title}{iss.count ? ` · ${iss.count}` : ''}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -132,10 +147,12 @@ export default function Reports() {
           <h2 className="text-lg font-semibold">Reports</h2>
           <p className="text-sm text-muted-foreground">Performance snapshots across SEO, AI visibility, and your chatbot.</p>
         </div>
-        <Button onClick={generate} disabled={generating} size="sm">
-          <Plus className="h-3.5 w-3.5" />
-          {generating ? 'Generating…' : 'Generate report'}
-        </Button>
+        {me?.isSuperadmin && (
+          <Button onClick={generate} disabled={generating} size="sm">
+            <Plus className="h-3.5 w-3.5" />
+            {generating ? 'Generating…' : 'Generate report'}
+          </Button>
+        )}
       </div>
 
       {isLoading && <Skeleton className="h-40 w-full" />}
@@ -143,7 +160,7 @@ export default function Reports() {
       {!isLoading && reports?.length === 0 && (
         <Card>
           <CardContent>
-            <EmptyState icon={FileBarChart} title="No reports yet" description="Generate your first performance report above." />
+            <EmptyState icon={FileBarChart} title="No reports yet" description={me?.isSuperadmin ? 'Generate your first performance report above.' : 'Your monthly performance reports will appear here.'} />
           </CardContent>
         </Card>
       )}

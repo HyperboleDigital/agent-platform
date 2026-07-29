@@ -26,7 +26,7 @@ export function ConversationsChart({ data }: { data: DailyCount[] }) {
 
   if (empty) {
     return (
-      <div className="flex h-56 items-center justify-center text-sm text-muted-foreground">
+      <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
         No conversations in this period yet.
       </div>
     )

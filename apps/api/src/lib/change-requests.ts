@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { getClientById } from './clients'
-import { notify } from './notify'
+import { notify, sendGuardedEmail } from './notify'
+import { getDisplayNames, getUserEmail } from './users'
 
 export type RequestStatus = 'open' | 'in_progress' | 'done' | 'declined' | 'cancelled'
 
@@ -81,8 +82,10 @@ export interface RequestComment {
   id: string
   requestId: string
   authorId: string
+  authorName: string
   isSuperadmin: boolean
   body: string
+  mentions: string[]
   createdAt: string
 }
 
@@ -92,16 +95,19 @@ interface CommentRow {
   author_id: string
   is_superadmin: boolean
   body: string
+  mentions: string[] | null
   created_at: string
 }
 
-function commentFromRow(r: CommentRow): RequestComment {
+function commentFromRow(r: CommentRow, authorName: string): RequestComment {
   return {
     id: r.id,
     requestId: r.request_id,
     authorId: r.author_id,
+    authorName,
     isSuperadmin: r.is_superadmin,
     body: r.body,
+    mentions: r.mentions ?? [],
     createdAt: r.created_at
   }
 }
@@ -255,17 +261,54 @@ export async function listComments(requestId: string): Promise<RequestComment[]>
     .eq('request_id', requestId)
     .order('created_at', { ascending: true })
   if (error) { console.error('[change-requests] listComments error', error.message); return [] }
-  return (data as CommentRow[]).map(commentFromRow)
+  const rows = data as CommentRow[]
+  const names = await getDisplayNames(rows.map(r => r.author_id))
+  return rows.map(r => commentFromRow(r, names[r.author_id] ?? 'Unknown user'))
 }
 
-export async function addComment(requestId: string, authorId: string, isSuperadmin: boolean, body: string): Promise<RequestComment> {
+// mentions: Clerk user IDs explicitly picked in the compose UI's @ picker (not
+// parsed from free text — see users.ts). Each mentioned person (other than the
+// author) gets a guarded, best-effort email; one failure never blocks another
+// or the comment itself from saving.
+export async function addComment(requestId: string, authorId: string, isSuperadmin: boolean, body: string, mentions: string[] = []): Promise<RequestComment> {
   const { data, error } = await supabase
     .from('change_request_comments')
-    .insert({ request_id: requestId, author_id: authorId, is_superadmin: isSuperadmin, body })
+    .insert({ request_id: requestId, author_id: authorId, is_superadmin: isSuperadmin, body, mentions })
     .select()
     .single()
   if (error) throw error
-  return commentFromRow(data as CommentRow)
+  const row = data as CommentRow
+
+  const request = await getRequest(await clientIdForRequest(requestId) ?? '', requestId).catch(() => null)
+  const names = await getDisplayNames([authorId, ...mentions])
+  const toNotify = mentions.filter(id => id !== authorId)
+  if (toNotify.length) {
+    const authorName = names[authorId] ?? 'Someone'
+    for (const userId of toNotify) {
+      try {
+        const email = await getUserEmail(userId)
+        if (!email) continue
+        await sendGuardedEmail({
+          clientId: null,
+          event: 'comment.mention',
+          to: email,
+          subject: `${authorName} mentioned you on "${request?.title ?? 'a request'}"`,
+          body: `${authorName} mentioned you in a comment:\n\n"${body}"\n\nRequest: ${request?.title ?? requestId}`
+        })
+      } catch (err) {
+        console.error('[change-requests] mention notify failed', userId, err instanceof Error ? err.message : err)
+      }
+    }
+  }
+
+  return commentFromRow(row, names[authorId] ?? 'Unknown user')
+}
+
+// change_request_comments doesn't carry client_id directly — look it up via
+// the parent request so mention emails can link back with real context.
+async function clientIdForRequest(requestId: string): Promise<string | null> {
+  const { data } = await supabase.from('change_requests').select('client_id').eq('id', requestId).maybeSingle()
+  return data?.client_id ?? null
 }
 
 export interface RequestDetail {

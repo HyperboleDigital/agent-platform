@@ -6,6 +6,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "backfill": "tsx src/scripts/backfill-embeddings.ts",
+    "ads-token": "tsx src/scripts/google-ads-refresh-token.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src"
   },

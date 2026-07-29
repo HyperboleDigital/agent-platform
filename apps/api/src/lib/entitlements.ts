@@ -1,6 +1,8 @@
 import { supabase } from './supabase'
-import { getSubscription, isActive, planForPriceId } from './billing'
+import { getSubscription, isActive, planForSubscription } from './billing'
 import { listServices, serviceForPriceId, type ServiceKey, type ServiceInfo } from './services'
+import { getClientById } from './clients'
+import { tierForKey } from './tiers'
 
 // Resolves what a client is actually entitled to, from three sources:
 //   1. Base plan  — the active subscription's plan (lib/billing.ts).
@@ -15,7 +17,7 @@ import { listServices, serviceForPriceId, type ServiceKey, type ServiceInfo } fr
 
 export interface ServiceEntitlement {
   entitled: boolean
-  source: 'addon' | 'comp' | null
+  source: 'addon' | 'comp' | 'tier' | null
   status: ServiceInfo['status']
 }
 
@@ -34,17 +36,18 @@ interface GrantRow {
 }
 
 export async function getEntitlements(clientId: string): Promise<Entitlements> {
-  const [sub, itemsRes, grantsRes] = await Promise.all([
+  const [sub, itemsRes, grantsRes, client] = await Promise.all([
     getSubscription(clientId),
     supabase.from('subscription_items').select('stripe_price_id').eq('client_id', clientId),
-    supabase.from('service_grants').select('service_key').eq('client_id', clientId).is('revoked_at', null)
+    supabase.from('service_grants').select('service_key').eq('client_id', clientId).is('revoked_at', null),
+    getClientById(clientId)
   ])
 
   if (itemsRes.error) console.error('[entitlements] subscription_items error', itemsRes.error.message)
   if (grantsRes.error) console.error('[entitlements] service_grants error', grantsRes.error.message)
 
   const baseActive = isActive(sub)
-  const plan = sub ? planForPriceId(sub.stripePriceId) : null
+  const plan = sub ? planForSubscription(sub.stripePriceId) : null
 
   // Add-on service keys purchased via Stripe — only count while the base
   // subscription is active.
@@ -58,11 +61,19 @@ export async function getEntitlements(clientId: string): Promise<Entitlements> {
 
   const grantedKeys = new Set<string>((grantsRes.data ?? []).map((g: GrantRow) => g.service_key))
 
+  // Third entitlement source: the finalized pricing-sheet tier a client is
+  // assigned to (clients.tier_key — see lib/tiers.ts). No Stripe subscription
+  // required, since these tiers aren't wired to Stripe yet — a tier grants its
+  // included services outright, independent of `baseActive`.
+  const tier = tierForKey(client?.tierKey)
+  const tierKeys = new Set<string>(tier?.includes ?? [])
+
   const services = {} as Record<ServiceKey, ServiceEntitlement>
   for (const svc of listServices()) {
-    let source: 'addon' | 'comp' | null = null
+    let source: 'addon' | 'comp' | 'tier' | null = null
     if (addonKeys.has(svc.key)) source = 'addon'
     else if (grantedKeys.has(svc.key)) source = 'comp'
+    else if (tierKeys.has(svc.key)) source = 'tier'
     services[svc.key] = { entitled: source !== null, source, status: svc.status }
   }
 

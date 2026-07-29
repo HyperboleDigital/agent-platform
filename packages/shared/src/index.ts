@@ -22,6 +22,28 @@ export interface AgentResponse {
   metadata?: Record<string, unknown>
 }
 
+export type Vertical = 'local' | 'b2b'
+
+// A client's `domain` is the one persistent website URL used across the
+// platform — Site Health (uptime/SSL), the SEO audit crawl target, and the
+// Search Console default. Shared here (not duplicated in the API and the
+// dashboard) so "what counts as a real, checkable domain" can't drift between
+// the server-side save validation, the crawler's target normalization, and the
+// dashboard's inline form feedback.
+export function normalizeDomain(input: string): string {
+  return input.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim().toLowerCase()
+}
+
+export function isPublicHost(host: string): boolean {
+  const h = host.toLowerCase()
+  if (!h || !h.includes('.')) return false // no TLD, e.g. "localhost"
+  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.localhost')) return false
+  if (h === '::1' || h === '0.0.0.0') return false
+  if (/^(127\.|0\.|10\.|192\.168\.|169\.254\.)/.test(h)) return false
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false // 172.16.0.0–172.31.255.255
+  return true
+}
+
 export interface Client {
   id: string
   name: string
@@ -32,6 +54,8 @@ export interface Client {
   createdAt: string
   clerkOrgId?: string | null   // Clerk Organization that owns this client (tenant boundary)
   portalConfig: PortalConfig
+  vertical: Vertical | null    // which pricing-sheet ladder this client is on
+  tierKey: string | null       // key into lib/tiers.ts's TIER catalog
 }
 
 // SEO/portal soft config — audit target pages, brand terms for AI-visibility
@@ -40,6 +64,31 @@ export interface PortalConfig {
   seoPages?: string[]
   brandTerms?: string[]
   gscProperty?: string // e.g. "sc-domain:example.com" or "https://example.com/"
+  // Canonical NAP (name/address/phone) for local clients — the single source
+  // of truth every directory listing is diffed against to catch drift.
+  napName?: string
+  napAddress?: string
+  napPhone?: string
+  // Google Place ID for the business — powers the auto-pulled reviews card
+  // and is the anchor DataForSEO map-pack rank checks match against.
+  placeId?: string
+  // Keywords to check the business's Google Maps 3-pack position for, e.g.
+  // "plumber", checked from `localLocation`.
+  localKeywords?: string[]
+  // ISO timestamp of when the client finished (or skipped) first-login
+  // onboarding. Unset = show the onboarding flow on their next visit.
+  onboardedAt?: string
+  // City/state DataForSEO should simulate the map search from, e.g.
+  // "Austin,Texas,United States". Multiple = the business is tracked across
+  // several cities; every map-pack keyword is checked from each.
+  localLocations?: string[]
+  // Legacy single-location field, superseded by localLocations. Kept so old
+  // records still resolve a location; new writes go to localLocations.
+  localLocation?: string
+  // Google Ads customer id for the Paid Ads (PPC) reporting section, e.g.
+  // "123-456-7890". Hyperbole has manager (MCC) access; the client pays Google
+  // directly. Unset = the Paid Ads section shows its "connect account" state.
+  googleAdsCustomerId?: string
 }
 
 export interface AgentConfig {

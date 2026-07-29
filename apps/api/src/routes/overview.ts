@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { getIdentity } from '../lib/authz'
 import { getOverviewSummary, getClientRollups } from '../lib/overview'
 import { listOpenRequests, updateRequestStatus } from '../lib/change-requests'
+import { startAdhocCrawl, refreshAdhocCrawl, listAdhocCrawls, crawlConfigured } from '../lib/dataforseo'
 
 export const overviewRouter = Router()
 
@@ -34,5 +35,29 @@ overviewRouter.patch('/requests/:clientId/:requestId', async (req, res) => {
     res.json(await updateRequestStatus(req.params.clientId, req.params.requestId, status as never, identity?.userId ?? null))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update status' })
+  }
+})
+
+// ── Ad-hoc audit tool: crawl any URL on demand (superadmin, manual only) ──────
+overviewRouter.get('/audits', async (_req, res) => {
+  res.json(await listAdhocCrawls(20))
+})
+
+overviewRouter.post('/audits', async (req, res) => {
+  const url = req.body?.url
+  if (typeof url !== 'string' || !url.trim()) return res.status(400).json({ error: 'A URL is required' })
+  if (!crawlConfigured()) return res.status(400).json({ error: 'Crawl auditing is not configured on this deployment' })
+  try {
+    res.json(await startAdhocCrawl(url))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to start audit' })
+  }
+})
+
+overviewRouter.get('/audits/:crawlId', async (req, res) => {
+  try {
+    res.json(await refreshAdhocCrawl(req.params.crawlId))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to refresh audit' })
   }
 })
