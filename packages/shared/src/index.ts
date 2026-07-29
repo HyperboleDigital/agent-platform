@@ -85,6 +85,10 @@ export interface PortalConfig {
   // Legacy single-location field, superseded by localLocations. Kept so old
   // records still resolve a location; new writes go to localLocations.
   localLocation?: string
+  // Google Ads customer id for the Paid Ads (PPC) reporting section, e.g.
+  // "123-456-7890". Hyperbole has manager (MCC) access; the client pays Google
+  // directly. Unset = the Paid Ads section shows its "connect account" state.
+  googleAdsCustomerId?: string
 }
 
 export interface AgentConfig {

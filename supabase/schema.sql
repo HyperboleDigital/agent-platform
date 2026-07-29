@@ -287,6 +287,34 @@ create table if not exists gbp_activity (
 );
 create index if not exists gbp_activity_client_idx on gbp_activity (client_id, performed_at desc);
 
+-- ── prospects ─────────────────────────────────────────────────────────────────
+-- Cold-outreach prospecting engine (admin/superadmin tool). Finds local
+-- businesses via Google Places, stores personalized outreach drafts, and hands
+-- the operator a list they send themselves. The platform never sends email
+-- here — no send path, no scheduler. `place_id` dedupes across searches; a null
+-- `website` marks a prime "we'll build you one" target; `email` is manual.
+create table if not exists prospects (
+  id            uuid primary key default gen_random_uuid(),
+  place_id      text unique,
+  name          text not null,
+  category      text,
+  area          text,
+  phone         text,
+  email         text,
+  website       text,
+  maps_url      text,
+  rating        numeric,
+  review_count  integer,
+  status        text not null default 'new',  -- new|saved|drafted|sent|replied|won|lost|do_not_contact
+  draft_plain   text,
+  draft_loom    text,
+  hook_source   text,
+  notes         text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists prospects_status_idx on prospects (status, created_at);
+create index if not exists prospects_area_idx on prospects (area, category);
+
 -- ── gsc_snapshots ─────────────────────────────────────────────────────────────
 -- Daily cache of Google Search Console query performance, so trends survive
 -- GSC's data window and dashboard loads don't hit Google live.
@@ -300,6 +328,21 @@ create table if not exists gsc_snapshots (
   unique (client_id, date)
 );
 create index if not exists gsc_snapshots_client_idx on gsc_snapshots (client_id, date desc);
+
+-- ── ads_snapshots ─────────────────────────────────────────────────────────────
+-- Daily cache of a client's Google Ads (PPC) performance for the Paid Ads
+-- dashboard section + monthly fee reconciliation. Read-only pull via Hyperbole's
+-- manager (MCC) access; the client pays Google directly. Mirrors gsc_snapshots.
+create table if not exists ads_snapshots (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references clients(id) on delete cascade,
+  date       date not null,
+  totals     jsonb not null, -- { spendCents, impressions, clicks, conversions, conversionsValue, costPerLeadCents, avgCpcCents }
+  campaigns  jsonb not null, -- [{ id, name, status, spendCents, impressions, clicks, conversions }]
+  created_at timestamptz not null default now(),
+  unique (client_id, date)
+);
+create index if not exists ads_snapshots_client_idx on ads_snapshots (client_id, date desc);
 
 -- ── visibility_queries / visibility_runs ────────────────────────────────────
 -- AI-search (ChatGPT/Claude) brand-mention tracking, also part of the `seo`
@@ -491,6 +534,8 @@ alter table framer_connections enable row level security;
 alter table reports            enable row level security;
 alter table citations          enable row level security;
 alter table gbp_activity       enable row level security;
+alter table prospects          enable row level security;
+alter table ads_snapshots      enable row level security;
 
 -- Private bucket for change-request attachments — the API is the only thing
 -- that touches it, always via short-lived signed URLs it mints itself

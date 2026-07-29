@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import type { LucideIcon } from 'lucide-react'
 import {
   Users, Sparkles, LayoutDashboard, Search, Bot,
-  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin
+  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin, Target, Megaphone
 } from 'lucide-react'
 import { UserButton } from '@clerk/react'
 import { dark } from '@clerk/themes'
@@ -22,6 +22,7 @@ const TOP_NAV = [{ label: 'Clients', to: '/', icon: Users }]
 const SUPERADMIN_TOP_NAV = [
   { label: 'Overview', to: '/overview', icon: LayoutDashboard },
   { label: 'Audit Tool', to: '/audit-tool', icon: Search },
+  { label: 'Prospecting', to: '/prospecting', icon: Target },
 ]
 
 // Per-client sections. `to` is relative to /clients/:id ('' = the index/home).
@@ -43,6 +44,7 @@ const CLIENT_SECTIONS: ClientNavItem[] = [
   { label: 'Local Presence', to: 'local', icon: MapPin, serviceKey: 'local' },
   { label: 'Chat Assistant', to: 'assistant', icon: Bot, serviceKey: 'chat' },
   { label: 'Content', to: 'content', icon: Sparkles, serviceKey: 'content' },
+  { label: 'Paid Ads', to: 'ads', icon: Megaphone, serviceKey: 'ads' },
   { label: 'Leads', to: 'leads', icon: Users },
   { label: 'Requests', to: 'requests', icon: MessageSquarePlus },
   { label: 'Reports', to: 'reports', icon: FileBarChart },
@@ -132,9 +134,11 @@ function Sidebar() {
         )}
       </nav>
 
-      <div className="border-t border-border p-3 text-xs text-muted-foreground">
-        {me?.isSuperadmin ? 'Superadmin' : me?.orgId ? 'Client account' : 'No client linked'}
-      </div>
+      {me?.isSuperadmin && (
+        <div className="border-t border-border p-3 text-xs text-muted-foreground">
+          Superadmin
+        </div>
+      )}
     </aside>
   )
 }
@@ -166,6 +170,15 @@ function Breadcrumb() {
       <div className="flex items-center gap-2 text-sm">
         <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
         <span className="font-medium">Platform Overview</span>
+      </div>
+    )
+  }
+
+  if (location.pathname === '/prospecting') {
+    return (
+      <div className="flex items-center gap-2 text-sm">
+        <Target className="h-4 w-4 text-muted-foreground" />
+        <span className="font-medium">Prospecting</span>
       </div>
     )
   }

@@ -15,6 +15,7 @@ import { fetchPlaceSummary, placesConfigured, searchBusinesses } from '../lib/pl
 import { listTargetKeywords, addTargetKeyword, removeTargetKeyword, checkKeywordRanks } from '../lib/seo-keywords'
 import { createMetaFixRequest, createSchemaFixRequest, createLlmsTxtRequest } from '../lib/seo-fixes'
 import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities, snapshotGsc } from '../lib/gsc'
+import { googleAdsConfigured, fetchAdsPerformance, getAdsTrend, snapshotAds, getConnectedCustomerId } from '../lib/google-ads'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
 import {
   listRequests, createRequest, updateRequestStatus, cancelRequest, getRequestDetail, addComment
@@ -595,6 +596,71 @@ clientsRouter.get('/:id/local/place-search', async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to search' })
   }
+})
+
+// ── Paid Ads (the `ads` add-on service) ─────────────────────────────────────
+// Read-only Google Ads (PPC) reporting. Delivery of the campaigns is manual;
+// the client pays Google directly. The googleAdsCustomerId is superadmin-set.
+
+async function requireAdsAccess(req: Request, res: import('express').Response): Promise<string | null> {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) {
+    res.status(403).json({ error: 'Forbidden' })
+    return null
+  }
+  if (!(await isEntitled(req.params.id, 'ads'))) {
+    res.status(403).json({ error: 'Not entitled', service: 'ads' })
+    return null
+  }
+  return req.params.id
+}
+
+// Live performance + trend. `connected` is false when the deployment has no
+// Google Ads creds OR the client has no customer id linked yet — the UI shows a
+// "connect your account" state, same contract as GSC rankings.
+clientsRouter.get('/:id/ads', async (req, res) => {
+  const id = await requireAdsAccess(req, res)
+  if (!id) return
+  const customerId = await getConnectedCustomerId(id)
+  if (!googleAdsConfigured() || !customerId) return res.json({ connected: false, customerId: customerId ?? null, trend: [], latest: null })
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 30))
+  try {
+    const [trend, live] = await Promise.all([getAdsTrend(id, days), fetchAdsPerformance(id, days)])
+    res.json({ connected: !!live, customerId, trend, latest: live })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to load ads performance' })
+  }
+})
+
+// Manually persist today's ads snapshot for the trend chart (no scheduler —
+// same click-driven stand-in as GSC).
+clientsRouter.post('/:id/ads/snapshot', async (req, res) => {
+  const id = await requireAdsAccess(req, res)
+  if (!id) return
+  if (!googleAdsConfigured()) return res.status(400).json({ error: 'Google Ads is not configured on this deployment' })
+  try {
+    await snapshotAds(id)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to snapshot ads' })
+  }
+})
+
+// Link the client's Google Ads customer id — superadmin only (set during
+// onboarding when granting manager access).
+clientsRouter.put('/:id/ads/config', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  const { googleAdsCustomerId } = req.body ?? {}
+  const portalConfig = {
+    ...client.portalConfig,
+    ...(typeof googleAdsCustomerId === 'string' ? { googleAdsCustomerId: googleAdsCustomerId.trim() } : {})
+  }
+  const updated = await upsertClient({ id: req.params.id, portalConfig })
+  res.json(updated.portalConfig)
 })
 
 // ── SEO + AI visibility (the `seo` add-on service) ──────────────────────────

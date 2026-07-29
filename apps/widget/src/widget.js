@@ -244,7 +244,7 @@
     }
     .ap-time-divider:first-child { margin-top: 0; }
 
-    .ap-msg-group { display: flex; flex-direction: column; gap: 3px; margin-bottom: 14px; }
+    .ap-msg-group { display: flex; flex-direction: column; gap: 3px; margin-bottom: 20px; }
     .ap-msg-group.user { align-items: flex-end; }
     .ap-msg-group.assistant { align-items: flex-start; }
     .ap-msg-group:last-child { margin-bottom: 0; }
@@ -283,7 +283,13 @@
       border-radius: 20px 20px 20px 6px;
       border: 1px solid var(--border) !important;
       box-shadow: none !important;
+      /* Render regular-weight body text at full darkness instead of the thinned,
+         grey look macOS grayscale-AA gives it — so paragraphs match the weight
+         of bold labels/bullets and the bubble reads as one consistent color. */
+      -webkit-font-smoothing: auto !important;
+      -moz-osx-font-smoothing: auto !important;
     }
+    .ap-msg.assistant p, .ap-msg.assistant li { color: var(--text) !important; }
     .ap-msg.assistant.middle { border-radius: 6px 20px 20px 6px; }
     .ap-msg.assistant.last { border-radius: 6px 20px 20px 20px; }
 
@@ -681,8 +687,12 @@
     let inList = false;
     for (const raw of lines) {
       const line = raw.trim();
+      const heading = line.match(/^#{1,6}\s+(.*)$/);
       const bullet = line.match(/^[-*•]\s+(.*)$/);
-      if (bullet) {
+      if (heading) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += '<p class="ap-heading"><strong>' + inline(heading[1]) + '</strong></p>';
+      } else if (bullet) {
         if (!inList) { html += '<ul class="ap-list">'; inList = true; }
         html += '<li>' + inline(bullet[1]) + '</li>';
       } else {

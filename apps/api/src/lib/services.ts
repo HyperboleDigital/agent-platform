@@ -13,7 +13,18 @@
 //     being on a pricing-sheet tier that includes it (see lib/tiers.ts). Has no
 //     Stripe price, so both the checkout and add-on paths refuse it.
 
-export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social' | 'local' | 'chat'
+export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social' | 'local' | 'chat' | 'ads'
+
+// Paid Ads (Google PPC) management. Its fee is "greater of a flat floor or % of
+// spend" (see lib/billing.ts computeAdsFee). The recurring FLOOR bills via this
+// single Stripe price; the % overage rides on as a monthly invoice item.
+const ADS_PRICE = process.env.STRIPE_PRICE_ADS ?? ''
+
+// The recurring floor price ('' when unset → not purchasable yet, same
+// convention as every other price).
+export function adsFloorPriceId(): string {
+  return ADS_PRICE
+}
 
 export interface ServiceInfo {
   key: ServiceKey
@@ -63,6 +74,15 @@ const CATALOG: ServiceInfo[] = [
     description:
       'Google Business Profile activity and directory citations with NAP consistency tracking across 40+ listings.',
     status: 'tier_only'
+  },
+  {
+    key: 'ads',
+    priceId: ADS_PRICE,
+    name: 'Paid Ads Management',
+    monthlyPriceCents: 0, // "greater of floor or % of spend" — see billing.computeAdsFee
+    description:
+      'We plan, launch, and manage your Google Ads — keyword targeting, ad copy, and ongoing optimization. You pay Google directly for the ad spend; our fee is the greater of a flat monthly floor or a percentage of that spend. Live spend, clicks, and cost-per-lead show up right here.',
+    status: ADS_PRICE ? 'available' : 'coming_soon'
   },
   {
     key: 'reviews',

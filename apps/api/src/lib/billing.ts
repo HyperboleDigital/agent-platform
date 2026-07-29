@@ -1,6 +1,6 @@
 import Stripe from 'stripe'
 import { supabase } from './supabase'
-import { serviceForKey, type ServiceKey } from './services'
+import { serviceForKey, adsFloorPriceId, type ServiceKey } from './services'
 import { tierForKey, tierForPriceId } from './tiers'
 
 // Pin the API version explicitly rather than inheriting the account's
@@ -379,6 +379,73 @@ export async function removeServiceFromSubscription(clientId: string, serviceKey
 
   const fresh = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId)
   await syncSubscriptionFromStripe(fresh)
+}
+
+// ── Paid Ads fee: "greater of a flat floor or a % of spend" ───────────────────
+// The floor bills automatically as the recurring `ads` add-on (above). This
+// computes the full monthly fee from a client's ad spend, and the OVERAGE — the
+// amount above the floor that must be billed as a one-off invoice item when the
+// % beats the floor. One flat percentage for all clients; the floor comes from
+// the Stripe price (source of truth), passed in.
+const ADS_FEE_PCT = Number(process.env.ADS_FEE_PCT ?? 0.15)
+
+export function adsFeePct(): number {
+  return ADS_FEE_PCT
+}
+
+// The recurring floor amount (cents), read from the single Stripe floor price so
+// the source of truth stays Stripe (not a duplicated number in code). Returns 0
+// when the price isn't configured.
+export async function getAdsFloorCents(): Promise<number> {
+  const priceId = adsFloorPriceId()
+  if (!priceId) return 0
+  try {
+    const price = await stripe.prices.retrieve(priceId)
+    return price.unit_amount ?? 0
+  } catch {
+    return 0
+  }
+}
+
+export interface AdsFeeBreakdown {
+  floorCents: number
+  pctCents: number      // pct × spend
+  feeCents: number      // max(floor, pct×spend)
+  overageCents: number  // max(0, pct×spend − floor) — the amount to bill on top of the floor
+  pct: number
+}
+
+export function computeAdsFee(spendCents: number, floorCents: number): AdsFeeBreakdown {
+  const pct = adsFeePct()
+  const pctCents = Math.round(Math.max(0, spendCents) * pct)
+  const feeCents = Math.max(floorCents, pctCents)
+  return { floorCents, pctCents, feeCents, overageCents: Math.max(0, pctCents - floorCents), pct }
+}
+
+// Bills the monthly % overage (if any) as a one-off Stripe invoice item that
+// rides onto the client's next invoice alongside the recurring floor. Superadmin
+// confirm-before-bill — NOT a scheduler. Idempotent per client+period: a second
+// call for the same YYYY-MM refuses rather than double-billing.
+export async function reconcileAdsFee(clientId: string, spendCents: number, floorCents: number, period: string): Promise<{ billed: boolean; overageCents: number; reason?: string }> {
+  const breakdown = computeAdsFee(spendCents, floorCents)
+  if (breakdown.overageCents <= 0) return { billed: false, overageCents: 0, reason: 'no_overage' }
+
+  const sub = await getSubscription(clientId)
+  if (!sub?.stripeCustomerId || sub.stripeCustomerId === 'comped') return { billed: false, overageCents: breakdown.overageCents, reason: 'no_billable_customer' }
+
+  // Idempotency: refuse a duplicate overage for the same client+period.
+  const existing = await stripe.invoiceItems.list({ customer: sub.stripeCustomerId, limit: 100 })
+  const dupe = existing.data.find(i => i.metadata?.kind === 'ads_overage' && i.metadata?.period === period && i.metadata?.client_id === clientId)
+  if (dupe) return { billed: false, overageCents: breakdown.overageCents, reason: 'already_billed' }
+
+  await stripe.invoiceItems.create({
+    customer: sub.stripeCustomerId,
+    amount: breakdown.overageCents,
+    currency: 'usd',
+    description: `Paid Ads management — ${period} performance fee (${Math.round(breakdown.pct * 100)}% of spend above floor)`,
+    metadata: { kind: 'ads_overage', period, client_id: clientId }
+  })
+  return { billed: true, overageCents: breakdown.overageCents }
 }
 
 // Superadmin comp for an individual add-on service (no Stripe purchase).

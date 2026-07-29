@@ -298,7 +298,7 @@ export interface ClientRollup {
   billingActive: boolean
 }
 
-export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social' | 'local' | 'chat'
+export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social' | 'local' | 'chat' | 'ads'
 
 export interface ServiceInfo {
   key: ServiceKey
@@ -381,6 +381,48 @@ export interface SeoCrawl {
   updatedAt: string
 }
 
+// ── Prospecting (cold-outreach engine, superadmin) ────────────────────────────
+export type ProspectStatus =
+  | 'new' | 'saved' | 'drafted' | 'sent' | 'replied' | 'won' | 'lost' | 'do_not_contact'
+
+export interface ProspectCandidate {
+  placeId: string
+  name: string
+  address: string | null
+  phone: string | null
+  website: string | null
+  noWebsite: boolean
+  rating: number | null
+  reviewCount: number
+  mapsUrl: string | null
+}
+
+export interface Prospect {
+  id: string
+  placeId: string | null
+  name: string
+  category: string | null
+  area: string | null
+  phone: string | null
+  email: string | null
+  website: string | null
+  noWebsite: boolean
+  mapsUrl: string | null
+  rating: number | null
+  reviewCount: number | null
+  status: ProspectStatus
+  draftPlain: string | null
+  draftLoom: string | null
+  hookSource: string | null
+  notes: string | null
+  createdAt: string
+}
+
+export interface DiscoveryResult {
+  count: number
+  candidates: ProspectCandidate[]
+}
+
 export interface GscQueryRow {
   query: string
   clicks: number
@@ -406,6 +448,48 @@ export interface GscRankings {
   connected: boolean
   trend: GscSnapshot[]
   latest: { rows: GscQueryRow[]; totals: GscTotals } | null
+}
+
+// ── Paid Ads (Google PPC) ─────────────────────────────────────────────────────
+export interface AdsTotals {
+  spendCents: number
+  impressions: number
+  clicks: number
+  conversions: number
+  conversionsValue: number
+  costPerLeadCents: number
+  avgCpcCents: number
+}
+
+export interface AdsCampaign {
+  id: string
+  name: string
+  status: string
+  spendCents: number
+  impressions: number
+  clicks: number
+  conversions: number
+}
+
+export interface AdsSnapshot {
+  date: string
+  totals: AdsTotals
+  campaigns: AdsCampaign[]
+}
+
+export interface AdsPerformance {
+  connected: boolean
+  customerId: string | null
+  trend: AdsSnapshot[]
+  latest: { totals: AdsTotals; campaigns: AdsCampaign[] } | null
+}
+
+export interface AdsFeeBreakdown {
+  floorCents: number
+  pctCents: number
+  feeCents: number
+  overageCents: number
+  pct: number
 }
 
 export interface VisibilityQuery {
@@ -625,6 +709,14 @@ export const api = {
       request<PortalConfig>(`/clients/${id}/seo/config`, { method: 'PUT', body: JSON.stringify(config) }),
     seoRankings: (id: string, days = 28) => request<GscRankings>(`/clients/${id}/seo/rankings?days=${days}`),
     snapshotRankings: (id: string) => request<{ ok: boolean }>(`/clients/${id}/seo/rankings/snapshot`, { method: 'POST' }),
+    ads: (id: string, days = 30) => request<AdsPerformance>(`/clients/${id}/ads?days=${days}`),
+    snapshotAds: (id: string) => request<{ ok: boolean }>(`/clients/${id}/ads/snapshot`, { method: 'POST' }),
+    setAdsCustomerId: (id: string, googleAdsCustomerId: string) =>
+      request<PortalConfig>(`/clients/${id}/ads/config`, { method: 'PUT', body: JSON.stringify({ googleAdsCustomerId }) }),
+    adsFeePreview: (id: string, spendCents: number) =>
+      request<AdsFeeBreakdown>(`/billing/${id}/ads-fee?spendCents=${spendCents}`),
+    billAdsOverage: (id: string, spendCents: number, period: string) =>
+      request<{ billed: boolean; overageCents: number; reason?: string }>(`/billing/${id}/ads-fee`, { method: 'POST', body: JSON.stringify({ spendCents, period }) }),
     targetKeywords: (id: string) => request<{ keywords: TargetKeyword[] }>(`/clients/${id}/seo/keywords`),
     addTargetKeyword: (id: string, keyword: string) =>
       request<{ keywords: TargetKeyword[] }>(`/clients/${id}/seo/keywords`, { method: 'POST', body: JSON.stringify({ keyword }) }),
@@ -787,5 +879,27 @@ export const api = {
     refreshAudit: (crawlId: string) => request<SeoCrawl>(`/overview/audits/${crawlId}`),
     updateRequestStatus: (clientId: string, reqId: string, status: RequestStatus) =>
       request<ChangeRequest>(`/overview/requests/${clientId}/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
+  },
+
+  prospecting: {
+    discover: (opts: { category: string; area: string; minRating?: number; minReviewCount?: number; noWebsiteOnly?: boolean }) =>
+      request<DiscoveryResult>('/prospecting/discover', { method: 'POST', body: JSON.stringify(opts) }),
+    list: (status?: ProspectStatus) =>
+      request<Prospect[]>(`/prospecting${status ? `?status=${status}` : ''}`),
+    save: (candidate: ProspectCandidate, category: string, area: string) =>
+      request<Prospect>('/prospecting', { method: 'POST', body: JSON.stringify({ candidate, category, area }) }),
+    update: (id: string, patch: { status?: ProspectStatus; email?: string | null; notes?: string | null }) =>
+      request<Prospect>(`/prospecting/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    generateDrafts: (id: string) =>
+      request<Prospect>(`/prospecting/${id}/draft`, { method: 'POST' }),
+    audit: (id: string) =>
+      request<SeoCrawl>(`/prospecting/${id}/audit`, { method: 'POST' }),
+    // CSV export needs the auth header, so it can't be a plain <a href>; fetch
+    // the text and let the caller trigger a Blob download.
+    exportCsv: async (status?: ProspectStatus): Promise<string> => {
+      const res = await rawFetch(`/prospecting/export.csv${status ? `?status=${status}` : ''}`, undefined, false)
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+      return res.text()
+    }
   }
 }

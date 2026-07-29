@@ -7,6 +7,7 @@ import { Toaster } from 'sonner'
 import Dashboard from './pages/Dashboard'
 import Overview from './pages/Overview'
 import AuditTool from './pages/AuditTool'
+import Prospecting from './pages/Prospecting'
 import ClientLayout from './pages/client/ClientLayout'
 import {
   ClientHome, LeadsSection, BillingSection, ConfigSection
@@ -16,6 +17,7 @@ import Assistant from './pages/client/Assistant'
 import SeoVisibility from './pages/client/SeoVisibility'
 import LocalPresence from './pages/client/LocalPresence'
 import Content from './pages/client/Content'
+import PaidAds from './pages/client/PaidAds'
 import Requests from './pages/client/Requests'
 import Reports from './pages/client/Reports'
 import SignInPage from './pages/SignInPage'
@@ -43,6 +45,7 @@ const router = createBrowserRouter([
           { path: '/', element: <Dashboard /> },
           { path: '/overview', element: <Overview /> },
           { path: '/audit-tool', element: <AuditTool /> },
+          { path: '/prospecting', element: <Prospecting /> },
           {
             path: '/clients/:id',
             element: <ClientLayout />,
@@ -52,6 +55,7 @@ const router = createBrowserRouter([
               { path: 'local', element: <Gate service="local"><LocalPresence /></Gate> },
               { path: 'assistant', element: <Gate service="chat"><Assistant /></Gate> },
               { path: 'content', element: <Gate service="content"><Content /></Gate> },
+              { path: 'ads', element: <Gate service="ads"><PaidAds /></Gate> },
               { path: 'leads', element: <LeadsSection /> },
               { path: 'requests', element: <Requests /> },
               { path: 'reports', element: <Reports /> },

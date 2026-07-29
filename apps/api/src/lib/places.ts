@@ -97,3 +97,94 @@ export async function searchBusinesses(query: string): Promise<PlaceCandidate[]>
     address: p.formattedAddress ?? null
   }))
 }
+
+// ── Prospecting discovery ─────────────────────────────────────────────────────
+// Bulk business discovery for the cold-outreach tool: find businesses by
+// category + area, with the fields outreach needs (phone, website presence,
+// rating). Deliberately separate from searchBusinesses/fetchPlaceSummary — the
+// website + phone fields sit in the Places "Enterprise" SKU (pricier per call
+// than the reviews call), so we don't widen those cheap paths. Page count is
+// capped to bound cost; result count is surfaced so spend stays visible.
+
+const DISCOVERY_FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.formattedAddress',
+  'places.nationalPhoneNumber',
+  'places.websiteUri',
+  'places.rating',
+  'places.userRatingCount',
+  'places.googleMapsUri',
+].join(',')
+
+const MAX_DISCOVERY_PAGES = 3 // Places returns 20/page → ~60 results max per search
+
+export interface ProspectCandidate {
+  placeId: string
+  name: string
+  address: string | null
+  phone: string | null
+  website: string | null
+  noWebsite: boolean
+  rating: number | null
+  reviewCount: number
+  mapsUrl: string | null
+}
+
+export interface DiscoveryOptions {
+  category: string          // e.g. "med spa"
+  area: string              // e.g. "Tampa, FL"
+  minRating?: number
+  minReviewCount?: number
+  noWebsiteOnly?: boolean
+}
+
+export async function discoverBusinesses(opts: DiscoveryOptions): Promise<ProspectCandidate[]> {
+  const apiKey = process.env.PLACES_API_KEY
+  if (!apiKey) throw new Error('Places API not configured')
+
+  const category = opts.category.trim()
+  const area = opts.area.trim()
+  if (!category || !area) return []
+  const textQuery = `${category} in ${area}`
+
+  const out: ProspectCandidate[] = []
+  let pageToken: string | undefined
+  for (let page = 0; page < MAX_DISCOVERY_PAGES; page++) {
+    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': `${DISCOVERY_FIELD_MASK},nextPageToken`,
+      },
+      body: JSON.stringify(pageToken ? { textQuery, pageToken } : { textQuery }),
+    })
+    const json = await res.json() as any
+    if (!res.ok) throw new Error(`Places API: ${json?.error?.message ?? res.statusText}`)
+
+    for (const p of (json.places ?? []) as any[]) {
+      out.push({
+        placeId: p.id,
+        name: p.displayName?.text ?? 'Unknown business',
+        address: p.formattedAddress ?? null,
+        phone: p.nationalPhoneNumber ?? null,
+        website: p.websiteUri ?? null,
+        noWebsite: !p.websiteUri,
+        rating: p.rating ?? null,
+        reviewCount: p.userRatingCount ?? 0,
+        mapsUrl: p.googleMapsUri ?? null,
+      })
+    }
+
+    pageToken = json.nextPageToken
+    if (!pageToken) break
+  }
+
+  return out.filter(c => {
+    if (opts.noWebsiteOnly && !c.noWebsite) return false
+    if (opts.minRating != null && (c.rating ?? 0) < opts.minRating) return false
+    if (opts.minReviewCount != null && c.reviewCount < opts.minReviewCount) return false
+    return true
+  })
+}

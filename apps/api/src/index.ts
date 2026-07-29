@@ -12,6 +12,7 @@ import { clientsRouter } from './routes/clients'
 import { webhookRouter } from './routes/webhooks'
 import { billingRouter, stripeWebhookHandler } from './routes/billing'
 import { overviewRouter } from './routes/overview'
+import { prospectingRouter } from './routes/prospecting'
 import { getIdentity } from './lib/authz'
 import { reconcileUserMembership } from './lib/clients'
 import { finalizePendingCrawls } from './lib/dataforseo'
@@ -57,6 +58,7 @@ app.use('/clients', requireAuth, clientsRouter) // dashboard CRUD (auth + per-te
 app.use('/webhooks', requireAuth, webhookRouter) // external triggers (auth)
 app.use('/billing', requireAuth, billingRouter) // Stripe checkout/portal/status (auth + per-tenant authz)
 app.use('/overview', requireAuth, overviewRouter) // platform-wide rollups (auth + superadmin-only)
+app.use('/prospecting', requireAuth, prospectingRouter) // cold-outreach prospecting (auth + superadmin-only)
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }))
 

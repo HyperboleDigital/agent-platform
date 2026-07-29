@@ -8,7 +8,8 @@ import {
   getSubscription, createCheckoutSession, createPortalSession, syncSubscriptionFromStripe,
   addServiceToSubscription, removeServiceFromSubscription, grantService, revokeService,
   getOrCreateTierPaymentLink, attributeCheckoutToClient,
-  listClientSubscriptions, cancelClientSubscription
+  listClientSubscriptions, cancelClientSubscription,
+  computeAdsFee, reconcileAdsFee, getAdsFloorCents
 } from '../lib/billing'
 import { listServices, serviceForKey } from '../lib/services'
 import { getEntitlements } from '../lib/entitlements'
@@ -18,7 +19,7 @@ export const billingRouter = Router()
 
 const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5173'
 
-const SERVICE_KEYS = ['seo', 'content', 'reviews', 'social', 'local', 'chat'] as const
+const SERVICE_KEYS = ['seo', 'content', 'reviews', 'social', 'local', 'chat', 'ads'] as const
 
 // The finalized pricing-sheet tier catalog (Local/B2B x Care/mid/top) — see
 // lib/tiers.ts. Hardcoded, not Stripe-backed yet.
@@ -193,6 +194,48 @@ billingRouter.post('/:id/services/comp', async (req, res) => {
   } catch (err) {
     console.error('[billing] service comp error', err)
     res.status(500).json({ error: 'Failed to update service grant' })
+  }
+})
+
+// ── Paid Ads monthly fee reconciliation (superadmin) ────────────────────────
+// The fee is "greater of the flat floor or % of ad spend." The floor bills
+// automatically as the recurring `ads` add-on; this handles the % overage. GET
+// previews the breakdown for a given month's spend; POST bills the overage as a
+// one-off invoice item (idempotent per client+period, confirm-before-bill).
+const adsFeeSchema = z.object({
+  spendCents: z.number().int().nonnegative(),
+  period: z.string().regex(/^\d{4}-\d{2}$/) // YYYY-MM
+})
+
+billingRouter.get('/:id/ads-fee', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  const spendCents = Math.max(0, Number(req.query.spendCents) || 0)
+  try {
+    const floorCents = await getAdsFloorCents()
+    res.json(computeAdsFee(spendCents, floorCents))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to compute fee' })
+  }
+})
+
+billingRouter.post('/:id/ads-fee', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  const parsed = adsFeeSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
+  try {
+    const floorCents = await getAdsFloorCents()
+    const result = await reconcileAdsFee(client.id, parsed.data.spendCents, floorCents, parsed.data.period)
+    res.json(result)
+  } catch (err) {
+    console.error('[billing] ads-fee error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to bill overage' })
   }
 })
 
