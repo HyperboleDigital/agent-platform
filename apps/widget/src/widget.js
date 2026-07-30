@@ -293,21 +293,24 @@
     .ap-msg.assistant.middle { border-radius: 6px 20px 20px 6px; }
     .ap-msg.assistant.last { border-radius: 6px 20px 20px 20px; }
 
-    /* Inline email-capture form (rendered inside an assistant bubble) */
-    .ap-msg.assistant.ap-form-msg { max-width: 92% !important; width: 100%; }
-    .ap-ef-label { font-size: 14px; line-height: 1.45; margin-bottom: 12px; color: var(--text); }
-    .ap-ef-row { display: flex; flex-direction: column; gap: 8px; }
-    .ap-ef-input {
+    /* Inline contact/intake form (rendered inside an assistant bubble) */
+    .ap-msg.assistant.ap-form-msg { max-width: 94% !important; width: 100%; }
+    .ap-ef-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+    .ap-ef-sub { font-size: 13px; color: var(--muted); margin-bottom: 14px; line-height: 1.4; }
+    .ap-ef-field { margin-bottom: 10px; }
+    .ap-ef-lbl { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
+    .ap-ef-opt { font-weight: 400; color: var(--faded); }
+    .ap-ef-name, .ap-ef-input, .ap-ef-msg {
       width: 100%; border: 1px solid var(--border); border-radius: 10px;
-      padding: 11px 13px; font-size: 14px; color: var(--text);
+      padding: 10px 12px; font-size: 14px; color: var(--text);
       background: var(--white); outline: none; transition: border-color .15s, box-shadow .15s;
     }
-    .ap-ef-input::placeholder { color: var(--faded); }
-    .ap-ef-input:focus { border-color: var(--p); box-shadow: 0 0 0 3px var(--p-glow); }
+    .ap-ef-name::placeholder, .ap-ef-input::placeholder, .ap-ef-msg::placeholder { color: var(--faded); }
+    .ap-ef-name:focus, .ap-ef-input:focus, .ap-ef-msg:focus { border-color: var(--p); box-shadow: 0 0 0 3px var(--p-glow); }
+    .ap-ef-msg { resize: none; min-height: 58px; font-family: inherit; line-height: 1.4; }
     .ap-ef-btn {
-      width: 100%; border: none; background: var(--p); color: #fff; font-weight: 600;
-      font-size: 14px; padding: 11px 16px; border-radius: 10px; cursor: pointer;
-      transition: filter .15s;
+      width: 100%; margin-top: 4px; border: none; background: var(--p); color: #fff; font-weight: 600;
+      font-size: 14px; padding: 11px 16px; border-radius: 10px; cursor: pointer; transition: filter .15s;
     }
     .ap-ef-btn:hover { filter: brightness(0.96); }
     .ap-ef-btn:disabled { opacity: 0.6; cursor: default; }
@@ -738,17 +741,17 @@
   // records it. `btn` is the button label; `donePre`/`donePost` wrap the email
   // in the confirmation; `msg` is the summary stored on the lead.
   const REASON_COPY = {
-    lead:     { label: 'Pop your email in and we’ll set up your demo 👇', btn: 'Request demo', donePre: 'Perfect — your demo request is in! 🎉 We’ll reach out at ', donePost: ' to get it scheduled.', msg: 'Requested a demo via the chat assistant.' },
-    booking:  { label: 'Drop your email and we’ll set up your call 👇', btn: 'Book call', donePre: 'Got it! 🎉 We’ll email ', donePost: ' to arrange your call.', msg: 'Requested to book a call via the chat assistant.' },
-    escalate: { label: 'Leave your email and a teammate will follow up 👇', btn: 'Send', donePre: 'Thanks! 🙌 A teammate will follow up with you at ', donePost: ' shortly.', msg: 'Requested a human follow-up via the chat assistant.' },
-    contact:  { label: 'Drop your email and we’ll get back to you 👇', btn: 'Send', donePre: 'Thanks! 🎉 We’ll be in touch at ', donePost: ' soon.', msg: 'Reached out via the chat contact button.' },
-    default:  { label: 'Pop your email in and we’ll reach out 👇', btn: 'Send', donePre: 'Perfect — got it! 🎉 We’ll be in touch at ', donePost: ' shortly.', msg: 'Requested to be contacted via the chat assistant.' }
+    lead:     { title: 'Let’s set up your demo', sub: 'Drop your details and we’ll reach out to get it scheduled.', btn: 'Request demo', donePre: 'Perfect — your demo request is in! 🎉 We’ll reach out at ', donePost: ' to get it scheduled.', msg: 'Requested a demo via the chat assistant.' },
+    booking:  { title: 'Let’s book your call', sub: 'Leave your details and we’ll set up a time.', btn: 'Book call', donePre: 'Got it! 🎉 We’ll email ', donePost: ' to arrange your call.', msg: 'Requested to book a call via the chat assistant.' },
+    escalate: { title: 'Connect with our team', sub: 'Leave your details and a teammate will follow up.', btn: 'Send', donePre: 'Thanks! 🙌 A teammate will follow up with you at ', donePost: ' shortly.', msg: 'Requested a human follow-up via the chat assistant.' },
+    contact:  { title: 'Get in touch', sub: 'Leave a message and we’ll get back to you shortly.', btn: 'Send message', donePre: 'Thanks! 🎉 We’ll be in touch at ', donePost: ' soon.', msg: 'Reached out via the chat contact button.' },
+    default:  { title: 'Get in touch', sub: 'Leave your details and we’ll reach out.', btn: 'Send', donePre: 'Perfect — got it! 🎉 We’ll be in touch at ', donePost: ' shortly.', msg: 'Requested to be contacted via the chat assistant.' }
   };
   const copyFor = (m) => REASON_COPY[m.reason] || REASON_COPY.default;
 
-  // Renders the inline email-capture form (or its submitted confirmation) into
-  // an assistant bubble. Rewired on every render since renderMessages rebuilds
-  // the DOM; per-message state (value/submitting/submitted/error) lives on `m`.
+  // Renders the inline contact/intake form (name + email + message) — or its
+  // submitted confirmation — into an assistant bubble. Rewired on every render
+  // since renderMessages rebuilds the DOM; per-field state lives on `m`.
   function renderEmailForm(div, m) {
     const copy = copyFor(m);
     if (m.submitted) {
@@ -759,41 +762,45 @@
       return;
     }
     div.innerHTML =
-      '<div class="ap-ef-label"></div>' +
-      '<div class="ap-ef-row">' +
-        '<input type="email" class="ap-ef-input" placeholder="you@company.com" autocomplete="email" />' +
-        '<button class="ap-ef-btn" type="button"></button>' +
-      '</div>' +
+      '<div class="ap-ef-title"></div>' +
+      '<div class="ap-ef-sub"></div>' +
+      '<div class="ap-ef-field"><label class="ap-ef-lbl">Name</label><input class="ap-ef-name" type="text" placeholder="Jane Smith" autocomplete="name" /></div>' +
+      '<div class="ap-ef-field"><label class="ap-ef-lbl">Email</label><input class="ap-ef-input" type="email" placeholder="jane@company.com" autocomplete="email" /></div>' +
+      '<div class="ap-ef-field"><label class="ap-ef-lbl">Message <span class="ap-ef-opt">(optional)</span></label><textarea class="ap-ef-msg" placeholder="Anything we should know?"></textarea></div>' +
+      '<button class="ap-ef-btn" type="button"></button>' +
       '<div class="ap-ef-error"></div>';
-    const inputEl = div.querySelector('.ap-ef-input');
+    div.querySelector('.ap-ef-title').textContent = copy.title;
+    div.querySelector('.ap-ef-sub').textContent = copy.sub;
+    const nameEl = div.querySelector('.ap-ef-name');
+    const emailEl = div.querySelector('.ap-ef-input');
+    const msgEl = div.querySelector('.ap-ef-msg');
     const btn = div.querySelector('.ap-ef-btn');
     const err = div.querySelector('.ap-ef-error');
-    div.querySelector('.ap-ef-label').textContent = copy.label;
     btn.textContent = copy.btn;
-    inputEl.value = m.value || '';
+    nameEl.value = m.name || ''; emailEl.value = m.value || ''; msgEl.value = m.msg || '';
     if (m.error) err.textContent = m.error;
-    if (m.submitting) { btn.textContent = 'Sending…'; btn.disabled = true; inputEl.disabled = true; }
-    const submit = () => submitEmailForm(m, inputEl.value.trim());
+    if (m.submitting) { btn.textContent = 'Sending…'; btn.disabled = true; nameEl.disabled = emailEl.disabled = msgEl.disabled = true; }
+    const submit = () => submitEmailForm(m, { name: nameEl.value.trim(), email: emailEl.value.trim(), msg: msgEl.value.trim() });
     btn.addEventListener('click', submit);
-    inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-    if (!m._focusedOnce) { m._focusedOnce = true; setTimeout(() => inputEl.focus(), 50); }
+    emailEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    if (!m._focusedOnce) { m._focusedOnce = true; setTimeout(() => (m.name ? emailEl : nameEl).focus(), 50); }
   }
 
-  async function submitEmailForm(m, email) {
+  async function submitEmailForm(m, fields) {
     if (m.submitting || m.submitted) return;
-    m.value = email;
-    if (!EMAIL_RE.test(email)) { m.error = 'Please enter a valid email address.'; renderMessages(); return; }
+    m.name = fields.name; m.value = fields.email; m.msg = fields.msg;
+    if (!EMAIL_RE.test(fields.email)) { m.error = 'Please enter a valid email address.'; renderMessages(); return; }
     m.error = ''; m.submitting = true; renderMessages();
     try {
-      // Reuses the /contact lead endpoint (logs the lead + notifies a human),
-      // so no extra LLM round-trip and the confirmation is deterministic. The
-      // message records WHY they submitted (demo / call / follow-up).
+      // Reuses the /contact lead endpoint (logs the lead + notifies a human).
+      // Message falls back to the context reason so the lead records WHY they
+      // submitted (demo / call / follow-up) even if they leave it blank.
       const res = await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: CLIENT_ID, email, message: copyFor(m).msg })
+        body: JSON.stringify({ clientId: CLIENT_ID, name: fields.name || undefined, email: fields.email, message: fields.msg || copyFor(m).msg })
       });
       if (!res.ok) throw new Error();
-      m.submitted = true; m.email = email;
+      m.submitted = true; m.email = fields.email;
     } catch {
       m.error = 'Couldn’t send just now — please try again.';
     } finally {
