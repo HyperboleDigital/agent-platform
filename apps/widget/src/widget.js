@@ -293,27 +293,11 @@
     .ap-msg.assistant.middle { border-radius: 6px 20px 20px 6px; }
     .ap-msg.assistant.last { border-radius: 6px 20px 20px 20px; }
 
-    /* Inline contact/intake form (rendered inside an assistant bubble) */
+    /* Inline contact/intake form — reuses the contact view's cf-* classes so it
+       is pixel-identical to the form the header contact button opens. Only the
+       bubble width, optional-label, error, and confirmation are widget-specific. */
     .ap-msg.assistant.ap-form-msg { max-width: 94% !important; width: 100%; }
-    .ap-ef-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
-    .ap-ef-sub { font-size: 13px; color: var(--muted); margin-bottom: 14px; line-height: 1.4; }
-    .ap-ef-field { margin-bottom: 10px; }
-    .ap-ef-lbl { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
     .ap-ef-opt { font-weight: 400; color: var(--faded); }
-    .ap-ef-name, .ap-ef-input, .ap-ef-msg {
-      width: 100%; border: 1px solid var(--border); border-radius: 10px;
-      padding: 10px 12px; font-size: 14px; color: var(--text);
-      background: var(--white); outline: none; transition: border-color .15s, box-shadow .15s;
-    }
-    .ap-ef-name::placeholder, .ap-ef-input::placeholder, .ap-ef-msg::placeholder { color: var(--faded); }
-    .ap-ef-name:focus, .ap-ef-input:focus, .ap-ef-msg:focus { border-color: var(--p); box-shadow: 0 0 0 3px var(--p-glow); }
-    .ap-ef-msg { resize: none; min-height: 58px; font-family: inherit; line-height: 1.4; }
-    .ap-ef-btn {
-      width: 100%; margin-top: 4px; border: none; background: var(--p); color: #fff; font-weight: 600;
-      font-size: 14px; padding: 11px 16px; border-radius: 10px; cursor: pointer; transition: filter .15s;
-    }
-    .ap-ef-btn:hover { filter: brightness(0.96); }
-    .ap-ef-btn:disabled { opacity: 0.6; cursor: default; }
     .ap-ef-error { color: #DC2626; font-size: 12.5px; margin-top: 8px; }
     .ap-ef-error:empty { display: none; }
     .ap-ef-done { font-size: 14px; line-height: 1.5; color: var(--text); }
@@ -761,20 +745,21 @@
       div.querySelector('.post').textContent = copy.donePost;
       return;
     }
+    // Reuses the contact form's cf-* classes so the inline form is pixel-identical
+    // to the one the header contact button opens.
     div.innerHTML =
-      '<div class="ap-ef-title"></div>' +
-      '<div class="ap-ef-sub"></div>' +
-      '<div class="ap-ef-field"><label class="ap-ef-lbl">Name</label><input class="ap-ef-name" type="text" placeholder="Jane Smith" autocomplete="name" /></div>' +
-      '<div class="ap-ef-field"><label class="ap-ef-lbl">Email</label><input class="ap-ef-input" type="email" placeholder="jane@company.com" autocomplete="email" /></div>' +
-      '<div class="ap-ef-field"><label class="ap-ef-lbl">Message <span class="ap-ef-opt">(optional)</span></label><textarea class="ap-ef-msg" placeholder="Anything we should know?"></textarea></div>' +
-      '<button class="ap-ef-btn" type="button"></button>' +
+      '<div class="cf-header"><div class="cf-title"></div><div class="cf-sub"></div></div>' +
+      '<div class="cf-field"><label class="cf-label">Name</label><input class="ap-ef-name" type="text" placeholder="Jane Smith" autocomplete="name" /></div>' +
+      '<div class="cf-field"><label class="cf-label">Email</label><input class="ap-ef-input" type="email" placeholder="jane@company.com" autocomplete="email" /></div>' +
+      '<div class="cf-field"><label class="cf-label">Message <span class="ap-ef-opt">(optional)</span></label><textarea class="ap-ef-msg" placeholder="Anything we should know?"></textarea></div>' +
+      '<button class="cf-submit" type="button"></button>' +
       '<div class="ap-ef-error"></div>';
-    div.querySelector('.ap-ef-title').textContent = copy.title;
-    div.querySelector('.ap-ef-sub').textContent = copy.sub;
+    div.querySelector('.cf-title').textContent = copy.title;
+    div.querySelector('.cf-sub').textContent = copy.sub;
     const nameEl = div.querySelector('.ap-ef-name');
     const emailEl = div.querySelector('.ap-ef-input');
     const msgEl = div.querySelector('.ap-ef-msg');
-    const btn = div.querySelector('.ap-ef-btn');
+    const btn = div.querySelector('.cf-submit');
     const err = div.querySelector('.ap-ef-error');
     btn.textContent = copy.btn;
     nameEl.value = m.name || ''; emailEl.value = m.value || ''; msgEl.value = m.msg || '';
@@ -959,17 +944,8 @@
   root.addEventListener('click', e => e.stopPropagation());
   bubble.addEventListener('click', openChat);
   closeBtn.addEventListener('click', closeChat);
-  // The header contact button drops the same inline email form into the chat
-  // (rather than switching to a separate full-page view), so every "leave your
-  // contact" moment looks and behaves identically.
-  contactTrigger.addEventListener('click', () => {
-    setView('chat');
-    const last = messages[messages.length - 1];
-    if (!(last && last.type === 'emailForm' && !last.submitted)) {
-      messages.push({ role: 'assistant', type: 'emailForm', reason: 'contact', submitted: false, ts: Date.now() });
-    }
-    renderMessages();
-  });
+  // The header contact button opens the full contact form view.
+  contactTrigger.addEventListener('click', () => setView('contact'));
   cfBack.addEventListener('click', () => setView('chat'));
   backToChat.addEventListener('click', () => {
     setView('chat');
