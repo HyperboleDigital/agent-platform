@@ -724,12 +724,15 @@
   // so the visitor always knows what they're submitting for and the saved lead
   // records it. `btn` is the button label; `donePre`/`donePost` wrap the email
   // in the confirmation; `msg` is the summary stored on the lead.
+  // `reason` is the human-readable escalation reason sent to the team's
+  // notification (email subject + "Reason:" line), so a demo request reads as a
+  // demo request — not a generic "requested a human".
   const REASON_COPY = {
-    lead:     { title: 'Let’s set up your demo', sub: 'Drop your details and we’ll reach out to get it scheduled.', btn: 'Request demo', donePre: 'Perfect — your demo request is in! 🎉 We’ll reach out at ', donePost: ' to get it scheduled.', msg: 'Requested a demo via the chat assistant.' },
-    booking:  { title: 'Let’s book your call', sub: 'Leave your details and we’ll set up a time.', btn: 'Book call', donePre: 'Got it! 🎉 We’ll email ', donePost: ' to arrange your call.', msg: 'Requested to book a call via the chat assistant.' },
-    escalate: { title: 'Connect with our team', sub: 'Leave your details and a teammate will follow up.', btn: 'Send', donePre: 'Thanks! 🙌 A teammate will follow up with you at ', donePost: ' shortly.', msg: 'Requested a human follow-up via the chat assistant.' },
-    contact:  { title: 'Get in touch', sub: 'Leave a message and we’ll get back to you shortly.', btn: 'Send message', donePre: 'Thanks! 🎉 We’ll be in touch at ', donePost: ' soon.', msg: 'Reached out via the chat contact button.' },
-    default:  { title: 'Get in touch', sub: 'Leave your details and we’ll reach out.', btn: 'Send', donePre: 'Perfect — got it! 🎉 We’ll be in touch at ', donePost: ' shortly.', msg: 'Requested to be contacted via the chat assistant.' }
+    lead:     { title: 'Let’s set up your demo', sub: 'Drop your details and we’ll reach out to get it scheduled.', btn: 'Request demo', donePre: 'Perfect — your demo request is in! 🎉 We’ll reach out at ', donePost: ' to get it scheduled.', reason: 'Visitor requested a demo' },
+    booking:  { title: 'Let’s book your call', sub: 'Leave your details and we’ll set up a time.', btn: 'Book call', donePre: 'Got it! 🎉 We’ll email ', donePost: ' to arrange your call.', reason: 'Visitor wants to book a call' },
+    escalate: { title: 'Connect with our team', sub: 'Leave your details and a teammate will follow up.', btn: 'Send', donePre: 'Thanks! 🙌 A teammate will follow up with you at ', donePost: ' shortly.', reason: 'Visitor asked to speak with a human' },
+    contact:  { title: 'Get in touch', sub: 'Leave a message and we’ll get back to you shortly.', btn: 'Send message', donePre: 'Thanks! 🎉 We’ll be in touch at ', donePost: ' soon.', reason: 'Visitor reached out via the contact form' },
+    default:  { title: 'Get in touch', sub: 'Leave your details and we’ll reach out.', btn: 'Send', donePre: 'Perfect — got it! 🎉 We’ll be in touch at ', donePost: ' shortly.', reason: 'Visitor requested to be contacted' }
   };
   const copyFor = (m) => REASON_COPY[m.reason] || REASON_COPY.default;
 
@@ -778,11 +781,17 @@
     m.error = ''; m.submitting = true; renderMessages();
     try {
       // Reuses the /contact lead endpoint (logs the lead + notifies a human).
-      // Message falls back to the context reason so the lead records WHY they
-      // submitted (demo / call / follow-up) even if they leave it blank.
+      // `reason` carries WHY they submitted (demo / call / follow-up) so the
+      // team's notification says exactly that instead of a generic escalation.
       const res = await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: CLIENT_ID, name: fields.name || undefined, email: fields.email, message: fields.msg || copyFor(m).msg })
+        body: JSON.stringify({
+          clientId: CLIENT_ID,
+          name: fields.name || undefined,
+          email: fields.email,
+          message: fields.msg || '(No additional message provided.)',
+          reason: copyFor(m).reason
+        })
       });
       if (!res.ok) throw new Error();
       m.submitted = true; m.email = fields.email;
@@ -934,7 +943,7 @@
       // Explicit "I want a human" — goes to the escalation endpoint, not the agent.
       await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: CLIENT_ID, name: name || undefined, email, message })
+        body: JSON.stringify({ clientId: CLIENT_ID, name: name || undefined, email, message, reason: 'Visitor reached out via the contact form' })
       });
     } catch {}
     setView('success');
