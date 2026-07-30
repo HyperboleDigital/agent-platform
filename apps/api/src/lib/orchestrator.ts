@@ -141,10 +141,40 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
 
   const { reply } = await runToolLoop({ system: systemPrompt, userMessage: message.body, tools, execute })
 
+  // Safety net for probabilistic tool-calling: BOTH gpt-4o-mini and gpt-4o
+  // sometimes ask for an email in prose (or narrate "calling the form") instead
+  // of actually calling the tool. If the model tried to collect contact info but
+  // no tool fired, force the inline form anyway so "ask for email" always means
+  // "show the form". Infer the reason from the user's message for correct copy.
+  const asksForContact =
+    /\byour email\b/i.test(reply) ||
+    /(provide|share|drop|enter|give|need|send|grab|get)[^.!?]{0,24}\bemail\b/i.test(reply) ||
+    /gather (your )?details|calling the form now|set (you|that) up for a demo/i.test(reply)
+  if (!needContact && !captureLead && asksForContact) {
+    needContact = true
+    const b = message.body.toLowerCase()
+    intent = /\b(book|call|schedule|meeting|appointment|demo)\b/.test(b) && /\b(book|call|schedule|meeting|appointment)\b/.test(b)
+      ? 'booking'
+      : /\b(human|person|representative|agent|someone|team|support)\b/.test(b)
+        ? 'escalate'
+        : 'lead'
+  }
+
+  // When the inline form is being shown, DON'T trust the model's free text —
+  // gpt-4o-mini tends to ramble or narrate ("let me gather your details… calling
+  // the form now"). Replace it with a short, controlled lead-in; the form's own
+  // label carries the actual ask. Deterministic, model-independent.
+  const FORM_LEAD_IN: Record<string, string> = {
+    lead: 'Love it — let’s get your demo set up. 🎉',
+    booking: 'Happy to help you book a call. 📅',
+    escalate: 'Let me get a teammate on this for you. 🙌',
+  }
+  const finalReply = needContact ? (FORM_LEAD_IN[intent] ?? 'Sure — happy to help. 😊') : reply
+
   const confidence = escalate ? 0.2 : intent === 'unknown' ? 0.4 : 0.9
 
   return {
-    intent, reply,
+    intent, reply: finalReply,
     // Show the inline email form whenever we need the visitor's contact info —
     // lead capture, booking with no link, or an escalation/can't-answer. It wins
     // over 'escalate' so the form actually renders (escalation still notifies a
