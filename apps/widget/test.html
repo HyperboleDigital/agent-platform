@@ -26,21 +26,27 @@
   data-tagline="How can we help today?"
   data-color="#C05B28"
   data-logo="./img/Spec-ID Mark White.svg"
-  data-logo-inverse="./img/Spec-ID Mark Bonfire.svg"
 &gt;&lt;/script&gt;</code>
   </div>
 
   <!--
-    Widget config:
+    Widget config. Every attribute below is OPTIONAL — anything omitted falls
+    back to the client's saved settings (dashboard → Chat Assistant → Widget
+    setup, served from /widget-config/:clientId), then to a built-in default.
+    Attributes always win, which is why this page overrides most of them: it's
+    for testing the widget itself, not the stored config.
     - data-color:          primary brand color
     - data-color-2:        optional secondary for gradients (defaults to primary)
-    - data-logo:           logo for bubble (designed for colored bg — usually white)
-    - data-logo-inverse:   logo for header (designed for white bg — usually colored)
+    - data-logo:           logo shown on the bubble and in the header. Both sit
+                           on the brand-colored gradient, so this wants to be a
+                           light/white mark.
     - data-title:          company name
     - data-tagline:        subtitle under name
     - data-welcome:        first bot message
     - data-prompts:        pipe-separated short questions that rotate above the
                            closed bubble (falls back to a generic default set)
+    - data-chips:          not an attribute — the in-panel quick-reply buttons
+                           are configured per client in the dashboard.
   -->
   <script
     src="./src/widget.js"
@@ -51,7 +57,6 @@
     data-welcome="Hey 👋 What brings you in?"
     data-color="#C05B28"
     data-logo="./img/Spec-ID Mark White.svg"
-    data-logo-inverse="./img/Spec-ID Mark Bonfire.svg"
     data-prompts="What's your pricing?|How does Spec-ID work?|Can I book a call?|What services do you offer?|Need support?"
   ></script>
 </body>

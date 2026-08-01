@@ -1,40 +1,116 @@
-(function () {
+(async function () {
   'use strict';
 
+  // ─── Attributes: read SYNCHRONOUSLY, before any await ────────────────────
+  // `document.currentScript` is only meaningful during this script's initial
+  // synchronous execution — it is null once we resume after an await. The
+  // element reference captured here stays valid, but the read must happen
+  // first, so every attribute is pulled into a plain object up front.
   const script = document.currentScript;
-  const CLIENT_ID = script?.getAttribute('data-client-id') || '';
-  const API_URL = script?.getAttribute('data-api-url') || 'http://localhost:3001';
-  const TITLE = script?.getAttribute('data-title') || 'Support';
-  const TAGLINE = script?.getAttribute('data-tagline') || 'You can ask me anything';
-  const WELCOME = script?.getAttribute('data-welcome') || "How can I help you today?";
-  const LOGO = script?.getAttribute('data-logo') || '';
-  const AVATAR_EMOJI = script?.getAttribute('data-avatar-emoji') || '';
-  const INPUT_PLACEHOLDER = script?.getAttribute('data-placeholder') || 'Type a message...';
+  const attrs = {};
+  if (script) {
+    for (const { name, value } of Array.from(script.attributes)) {
+      if (name.startsWith('data-')) attrs[name] = value;
+    }
+  }
+  const attr = name => (attrs[name] != null && attrs[name] !== '' ? attrs[name] : undefined);
+
+  const CLIENT_ID = attr('data-client-id') || '';
+  const API_URL = attr('data-api-url') || 'http://localhost:3001';
+
+  // ─── Remote config ───────────────────────────────────────────────────────
+  // Appearance lives in the database so the operator can rebrand a client's
+  // widget from the dashboard without them re-pasting the script tag.
+  //
+  // This must never be able to stop the widget rendering: a slow or down API
+  // would otherwise leave a blank corner on the client's site. Bounded by a
+  // short timeout, and every failure path falls through to `{}` so we render
+  // with built-in defaults instead of nothing.
+  const CONFIG_TIMEOUT_MS = 2000;
+  async function fetchRemoteConfig() {
+    if (!CLIENT_ID) return {};
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), CONFIG_TIMEOUT_MS);
+      const res = await fetch(`${API_URL}/widget-config/${encodeURIComponent(CLIENT_ID)}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!res.ok) return {};
+      return (await res.json()) || {};
+    } catch {
+      return {};
+    }
+  }
+  const remote = await fetchRemoteConfig();
+
+  // Resolution order everywhere below: script attribute → stored config →
+  // built-in default. Attributes win so existing installs and test.html keep
+  // working, and so a single site can always hard-pin a value if it needs to.
+  const TITLE = attr('data-title') ?? remote.title ?? remote.name ?? 'Support';
+  const TAGLINE = attr('data-tagline') ?? remote.tagline ?? 'How can we help today?';
+  const WELCOME = attr('data-welcome') ?? remote.welcome ?? 'Hey 👋 What brings you in?';
+  const LOGO = attr('data-logo') ?? remote.logo ?? '';
+  const AVATAR_EMOJI = attr('data-avatar-emoji') ?? remote.avatarEmoji ?? '';
+  const INPUT_PLACEHOLDER = attr('data-placeholder') ?? remote.placeholder ?? 'Type a message...';
 
   // ─── Teaser bubble prompts (rotate above the closed bubble) ──────────────
   // `data-prompts` takes precedence — pipe-separated short questions, e.g.
   // data-prompts="What's your pricing?|How does Acme work?|Can I book a call?"
-  // Falls back to the older single-string `data-prompt`, then to a generic
-  // default set (client-branded via TITLE) so every install has at least 5.
-  const promptsAttr = script?.getAttribute('data-prompts')
-  const singlePromptAttr = script?.getAttribute('data-prompt')
+  // Then the stored config, then the older single-string `data-prompt`, then a
+  // generic default set (client-branded via TITLE) so every install has at
+  // least 5.
+  const promptsAttr = attr('data-prompts')
+  const singlePromptAttr = attr('data-prompt')
+  const remotePrompts = Array.isArray(remote.prompts)
+    ? remote.prompts.map(s => String(s).trim()).filter(Boolean)
+    : []
   const PROMPT_LABELS = promptsAttr
     ? promptsAttr.split('|').map(s => s.trim()).filter(Boolean)
-    : singlePromptAttr
-      ? [singlePromptAttr]
-      : [
-          'Questions?',
-          "What's your pricing?",
-          `How does ${TITLE} work?`,
-          'Can I book a call?',
-          'Need support?'
-        ]
+    : remotePrompts.length
+      ? remotePrompts
+      : singlePromptAttr
+        ? [singlePromptAttr]
+        : [
+            'Questions?',
+            "What's your pricing?",
+            `How does ${TITLE} work?`,
+            'Can I book a call?',
+            'Need support?'
+          ]
+
+  // ─── In-panel chips (buttons shown inside the panel on first open) ───────
+  // Capped at 4: the #ap-chips grid and the staggered nth-child animations
+  // below are written for exactly four.
+  const remoteChips = Array.isArray(remote.chips)
+    ? remote.chips
+        .map(c => ({ label: String(c?.label ?? '').trim(), message: String(c?.message ?? '').trim() }))
+        .filter(c => c.label && c.message)
+        .slice(0, 4)
+    : []
+  // ⚠️ This default set is mirrored in the dashboard's widget editor
+  // (apps/dashboard/src/pages/client/Assistant.tsx → DEFAULT_CHIPS), which
+  // seeds the form with it so an operator edits a full set instead of a blank
+  // list. Change one, change both — same for PROMPT_LABELS above.
+  const CHIPS = remoteChips.length ? remoteChips : [
+    { label: 'What do you offer?', message: 'What services do you offer?' },
+    { label: 'Pricing', message: 'How much does it cost?' },
+    { label: 'Book a call', message: 'Can I book a call?' },
+    { label: 'Contact us', message: 'I want to contact support' }
+  ];
+
+  // Operator-authored strings interpolated into innerHTML below.
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
 
   // ─── Theme colors (override via data-color / data-color-2) ───────────────
   // data-color    → primary brand color (e.g. data-color="#C05B28")
   // data-color-2  → secondary (used in gradients, defaults to primary if not set)
-  const COLOR_PRIMARY = script?.getAttribute('data-color') || '#6C5CE7';
-  const COLOR_SECONDARY = script?.getAttribute('data-color-2') || COLOR_PRIMARY;
+  const COLOR_PRIMARY = attr('data-color') ?? remote.color ?? '#6C5CE7';
+  const COLOR_SECONDARY = attr('data-color-2') ?? remote.color2 ?? COLOR_PRIMARY;
 
   // ─── Darken helper for hover/active states ───────────────────────────────
   function darken(hex, amount) {
@@ -860,12 +936,9 @@
   function renderChips() {
     if (messages.length !== 1 || isTyping) { chipsEl.innerHTML = ''; chipsEl.style.display = 'none'; return; }
     chipsEl.style.display = 'grid';
-    chipsEl.innerHTML = `
-      <button class="ap-chip" data-msg="What services do you offer?">What do you offer?</button>
-      <button class="ap-chip" data-msg="How much does it cost?">Pricing</button>
-      <button class="ap-chip" data-msg="Can I book a call?">Book a call</button>
-      <button class="ap-chip" data-msg="I want to contact support">Contact us</button>
-    `;
+    chipsEl.innerHTML = CHIPS
+      .map(c => `<button class="ap-chip" data-msg="${esc(c.message)}">${esc(c.label)}</button>`)
+      .join('');
     chipsEl.querySelectorAll('.ap-chip').forEach(c => {
       c.addEventListener('click', (e) => { e.stopPropagation(); input.value = c.dataset.msg; sendMessage(); });
     });
