@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: agent-platform-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    region: ohio
+    healthCheckPath: /health
+    # Env vars are NOT declared here on purpose. There are ~60 of them and all
+    # but a couple are secrets, so they live in the Render dashboard
+    # (Environment -> "Add from .env", paste apps/api/.env). Listing them here
+    # would only create a second place to keep in sync.
+    #
+    # Two must differ from local values once deployed:
+    #   API_PUBLIC_URL   = https://api.hyperboledigital.com
+    #   ALLOWED_ORIGINS  = https://app.hyperboledigital.com
+    #
+    # Do NOT set PORT — Render injects it and src/index.ts already reads it.
+    envVars:
+      - key: NODE_ENV
+        value: production
