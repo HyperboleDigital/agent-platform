@@ -13,6 +13,7 @@ import { StatTile } from '@/components/stat-tile'
 import { EmptyState } from '@/components/empty-state'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { KnowledgeFilePreview } from '@/components/attachment-preview'
+import { ReorderableList } from '@/components/reorderable-list'
 
 function AssistantCard() {
   return (
@@ -577,24 +578,26 @@ function WidgetTab({ client }: { client: Client }) {
             Short questions that rotate above the widget while it's closed, to invite a click.
             {usingDefaultPrompts && ' Showing the built-in defaults — edit them and save to make them this client\'s own.'}
           </p>
-          {prompts.map((p, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Input
-                value={p}
-                onChange={e => {
-                  const next = [...prompts]; next[i] = e.target.value; set('prompts', next)
-                }}
-                placeholder="Can I book a call?"
-              />
-              <button
-                onClick={() => set('prompts', prompts.filter((_, j) => j !== i))}
-                aria-label={`Remove prompt ${i + 1}`}
-                className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
+          <ReorderableList items={prompts} itemLabel="prompt" onReorder={next => set('prompts', next)}>
+            {(p, i) => (
+              <>
+                <Input
+                  value={p}
+                  onChange={e => {
+                    const next = [...prompts]; next[i] = e.target.value; set('prompts', next)
+                  }}
+                  placeholder="Can I book a call?"
+                />
+                <button
+                  onClick={() => set('prompts', prompts.filter((_, j) => j !== i))}
+                  aria-label={`Remove prompt ${i + 1}`}
+                  className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+          </ReorderableList>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => set('prompts', [...prompts, ''])}>
               <Plus className="h-3.5 w-3.5" /> Add prompt
@@ -662,8 +665,9 @@ function WidgetTab({ client }: { client: Client }) {
             see; <strong>message</strong> is what actually gets sent to the assistant. Four maximum.
             {usingDefaultChips && ' Showing the built-in defaults — edit them and save to make them this client\'s own.'}
           </p>
-          {chips.map((c, i) => (
-            <div key={i} className="flex items-center gap-2">
+          <ReorderableList items={chips} itemLabel="button" onReorder={next => set('chips', next)}>
+            {(c, i) => (
+              <>
               <Input
                 value={c.label}
                 onChange={e => {
@@ -687,8 +691,9 @@ function WidgetTab({ client }: { client: Client }) {
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
-            </div>
-          ))}
+              </>
+            )}
+          </ReorderableList>
           <div className="flex flex-wrap items-center gap-2">
             {chips.length < 4 && (
               <Button variant="outline" size="sm" onClick={() => set('chips', [...chips, { label: '', message: '' }])}>
