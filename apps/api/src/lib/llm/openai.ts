@@ -13,6 +13,7 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<ToolLoopResult
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: 'system', content: opts.system },
+    ...(opts.history ?? []).map(t => ({ role: t.role, content: t.content } as OpenAI.Chat.Completions.ChatCompletionMessageParam)),
     { role: 'user', content: opts.userMessage }
   ]
   let reply = ''

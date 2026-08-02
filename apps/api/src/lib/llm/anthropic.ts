@@ -12,7 +12,10 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<ToolLoopResult
     input_schema: t.parameters as Anthropic.Tool.InputSchema
   }))
 
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.userMessage }]
+  const messages: Anthropic.MessageParam[] = [
+    ...(opts.history ?? []).map(t => ({ role: t.role, content: t.content } as Anthropic.MessageParam)),
+    { role: 'user', content: opts.userMessage }
+  ]
   let reply = ''
   const maxTurns = opts.maxTurns ?? 6
 

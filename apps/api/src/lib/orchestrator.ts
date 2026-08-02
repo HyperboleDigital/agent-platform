@@ -5,6 +5,7 @@ import { logLead } from '../tools/crm'
 import { notifyEscalation } from './escalation'
 import { getClientById } from './clients'
 import { runToolLoop } from './llm'
+import { getHistory, appendTurn } from './chat-memory'
 import type { ToolDef } from './llm'
 
 // Provider-neutral tool definitions (converted per-provider in lib/llm).
@@ -139,7 +140,13 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
     return `Unknown tool: ${name}`
   }
 
-  const { reply } = await runToolLoop({ system: systemPrompt, userMessage: message.body, tools, execute })
+  const { reply } = await runToolLoop({
+    system: systemPrompt,
+    userMessage: message.body,
+    history: getHistory(message.clientId, message.from),
+    tools,
+    execute
+  })
 
   // Safety net for probabilistic tool-calling: BOTH gpt-4o-mini and gpt-4o
   // sometimes ask for an email in prose (or narrate "calling the form") instead
@@ -172,6 +179,12 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
   const finalReply = needContact ? (FORM_LEAD_IN[intent] ?? 'Sure — happy to help. 😊') : reply
 
   const confidence = escalate ? 0.2 : intent === 'unknown' ? 0.4 : 0.9
+
+  // Record what was actually said, so the next message in this session has
+  // context. Stores finalReply rather than `reply`: when the inline form is
+  // showing, finalReply is what the visitor really saw, and feeding the model
+  // its own discarded rambling would make follow-ups worse.
+  appendTurn(message.clientId, message.from, message.body, finalReply)
 
   return {
     intent, reply: finalReply,

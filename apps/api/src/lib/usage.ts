@@ -34,16 +34,17 @@ function startOfUtcMonth(): string {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString()
 }
 
-async function countSince(sinceIso: string, clientId?: string): Promise<number> {
+// Returns null when the count could NOT be established. Callers must decide
+// what an unknown count means for their specific cap — returning 0 here would
+// silently mean "no usage yet", which reads as "under every limit" and turns a
+// database blip into uncapped spend.
+async function countSince(sinceIso: string, clientId?: string): Promise<number | null> {
   let q = supabase.from('message_logs').select('*', { count: 'exact', head: true }).gte('created_at', sinceIso)
   if (clientId) q = q.eq('client_id', clientId)
   const { count, error } = await q
   if (error) {
-    // Fail OPEN on a counting error would risk unbounded spend; fail toward the
-    // cap being "unknown" — treat as at-limit only for the global breaker,
-    // and allow per-client (a DB blip shouldn't lock out a paying client).
     console.error('[usage] count error', error.message)
-    return 0
+    return null
   }
   return count ?? 0
 }
@@ -64,9 +65,24 @@ export async function checkChatCaps(clientId: string): Promise<CapStatus> {
   const plan = sub ? planForSubscription(sub.stripePriceId) : null
   const monthlyCap = plan?.conversationCap ?? DEFAULT_MONTHLY_CAP
 
-  if (globalToday >= GLOBAL_DAILY_LLM_CAP) return { allowed: false, reason: 'global_daily_cap' }
-  if (clientToday >= DAILY_CONVERSATION_CAP) return { allowed: false, reason: 'client_daily_cap' }
-  if (clientThisMonth >= monthlyCap) return { allowed: false, reason: 'client_monthly_cap' }
+  // Asymmetric on purpose, and this is the whole point of the null:
+  //
+  // The global breaker FAILS CLOSED. It is the last line of defence against
+  // unbounded spend across every client at once, and an unknown count is
+  // exactly when it most needs to hold.
+  //
+  // The per-client caps FAIL OPEN. They protect a business limit, not the
+  // platform, and a transient database error must not take a paying client's
+  // assistant offline on their own website.
+  if (globalToday === null || globalToday >= GLOBAL_DAILY_LLM_CAP) {
+    return { allowed: false, reason: 'global_daily_cap' }
+  }
+  if (clientToday !== null && clientToday >= DAILY_CONVERSATION_CAP) {
+    return { allowed: false, reason: 'client_daily_cap' }
+  }
+  if (clientThisMonth !== null && clientThisMonth >= monthlyCap) {
+    return { allowed: false, reason: 'client_monthly_cap' }
+  }
   return { allowed: true }
 }
 
@@ -83,5 +99,6 @@ export async function getMonthlyUsage(clientId: string): Promise<MonthlyUsage> {
     getSubscription(clientId)
   ])
   const plan = sub ? planForSubscription(sub.stripePriceId) : null
-  return { used, cap: plan?.conversationCap ?? DEFAULT_MONTHLY_CAP, planName: plan?.name ?? null }
+  // Display-only, so an unknown count shows as 0 rather than breaking the card.
+  return { used: used ?? 0, cap: plan?.conversationCap ?? DEFAULT_MONTHLY_CAP, planName: plan?.name ?? null }
 }
