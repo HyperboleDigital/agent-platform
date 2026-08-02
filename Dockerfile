@@ -9,7 +9,6 @@ FROM mcr.microsoft.com/playwright:v1.62.1-jammy
 
 WORKDIR /app
 
-ENV NODE_ENV=production
 # The base image preinstalls browsers here as root; the app must look in the
 # same place rather than re-downloading into a home dir that may not exist.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
@@ -23,7 +22,11 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/shared/package.json ./packages/shared/
 
-# Dev dependencies are required at this stage: the build runs `tsc`.
+# Dev dependencies are required at this stage: the build runs `tsc`, and the
+# CMD below runs `tsx` at runtime. NODE_ENV=production is deliberately NOT set
+# yet — pnpm honors it during install and silently skips devDependencies,
+# which is where both of those live. Setting it only after the build (below)
+# keeps runtime behavior correct without breaking the build that produces it.
 RUN pnpm install --frozen-lockfile --filter api...
 
 COPY packages/shared ./packages/shared
@@ -32,6 +35,8 @@ COPY apps/api ./apps/api
 # Not an artifact step — nothing here ships `dist`. This runs so a type error
 # fails the image build instead of the deploy.
 RUN pnpm --filter api build
+
+ENV NODE_ENV=production
 
 EXPOSE 3001
 
