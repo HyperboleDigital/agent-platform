@@ -5,6 +5,7 @@ import { logLead } from '../tools/crm'
 import { notifyEscalation } from '../lib/escalation'
 import { overLimit } from '../lib/rate-limit'
 import { CONTACT_PER_HOUR } from '../lib/usage'
+import { isOriginAllowed } from '@agent-platform/shared'
 
 export const contactRouter = Router()
 
@@ -33,6 +34,12 @@ contactRouter.post('/', async (req, res) => {
 
   const client = await getClientById(clientId)
   if (!client) return res.status(404).json({ error: 'Unknown client' })
+
+  // Domain lock — same reasoning as /chat. This endpoint writes a lead and
+  // emails/Slacks a human, so an unauthorised embed here is a spam vector.
+  if (!isOriginAllowed(req.get('origin'), client.widgetConfig?.allowedDomains)) {
+    return res.status(403).json({ error: 'This form is not authorised for this domain.' })
+  }
 
   try {
     await logLead({ clientId, name, email, intent: reason ?? 'contact_form', summary: message })

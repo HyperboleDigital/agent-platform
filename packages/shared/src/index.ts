@@ -129,6 +129,57 @@ export interface WidgetConfig {
   // `message` is what actually gets sent as the visitor's message. Max 4 — the
   // grid and staggered animations in widget.js assume four.
   chips?: { label: string; message: string }[]
+  // Hostnames this client's widget may run on, e.g. ["spec-id.com"]. Matching
+  // covers the host and all its subdomains (see isOriginAllowed).
+  //
+  // EMPTY OR UNSET MEANS "ANY DOMAIN" — that is the backward-compatible
+  // default, so an existing install keeps working until an operator opts in.
+  allowedDomains?: string[]
+}
+
+// Is `origin` (a browser Origin header, e.g. "https://www.spec-id.com") allowed
+// to use this client's widget?
+//
+// ⚠️ This is the ONLY real enforcement point for domain locking. The widget
+// script is public and trivially editable, so any check performed inside
+// widget.js is advisory UX at best — the server must reject the request. Call
+// this on every public per-client route (/chat, /contact, /widget-config).
+//
+// The Origin header is set by the browser and is not writable by page JS, so
+// this reliably stops the realistic threat: someone copying the script tag onto
+// their own site. It does NOT stop a non-browser client (curl, a script) that
+// forges the header — those are handled by the per-client rate limits and
+// spend caps, not by this.
+export function isOriginAllowed(origin: string | undefined, allowed: string[] | undefined): boolean {
+  // Not configured = open, so adding this field never breaks a live client.
+  if (!allowed || allowed.length === 0) return true
+  // Configured but no Origin means a non-browser caller; deny, since a real
+  // embed always sends one (the widget is cross-origin to this API).
+  if (!origin) return false
+
+  let host: string
+  try {
+    host = new URL(origin).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+
+  return allowed.some(entry => {
+    // Operators paste all of "spec-id.com", "https://spec-id.com/",
+    // "*.spec-id.com" — normalise to a bare hostname rather than making them
+    // learn a format.
+    const domain = entry
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^\*\./, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '')
+    if (!domain) return false
+    // The leading dot is what makes this safe: it matches real subdomains but
+    // not a lookalike registration like "evil-spec-id.com".
+    return host === domain || host.endsWith(`.${domain}`)
+  })
 }
 
 export type LeadStatus = 'new' | 'followed_up'

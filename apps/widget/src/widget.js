@@ -22,13 +22,21 @@
   // Appearance lives in the database so the operator can rebrand a client's
   // widget from the dashboard without them re-pasting the script tag.
   //
-  // This must never be able to stop the widget rendering: a slow or down API
-  // would otherwise leave a blank corner on the client's site. Bounded by a
-  // short timeout, and every failure path falls through to `{}` so we render
-  // with built-in defaults instead of nothing.
+  // Two different failure modes, deliberately handled differently:
+  //
+  //   * The API is slow, down, or unreachable  -> render with built-in
+  //     defaults. A transient outage must never leave a blank corner on a
+  //     paying client's site, which is why this is bounded by a short timeout.
+  //
+  //   * The server answers 404 (no such client) or 403 (this domain isn't
+  //     authorised) -> render NOTHING. Those are definitive answers, not
+  //     glitches, and falling back to default branding there is exactly the
+  //     wrong thing: it's what made a bogus client id still show a widget.
+  //
+  // Returns null to mean "do not render".
   const CONFIG_TIMEOUT_MS = 2000;
   async function fetchRemoteConfig() {
-    if (!CLIENT_ID) return {};
+    if (!CLIENT_ID) return null;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CONFIG_TIMEOUT_MS);
@@ -36,6 +44,7 @@
         signal: controller.signal
       });
       clearTimeout(timer);
+      if (res.status === 404 || res.status === 403) return null;
       if (!res.ok) return {};
       return (await res.json()) || {};
     } catch {
@@ -43,6 +52,8 @@
     }
   }
   const remote = await fetchRemoteConfig();
+  // Bail before injecting any DOM or styles.
+  if (remote === null) return;
 
   // Resolution order everywhere below: script attribute → stored config →
   // built-in default. Attributes win so existing installs and test.html keep

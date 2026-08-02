@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { isOriginAllowed } from '@agent-platform/shared'
 import { getClientById } from '../lib/clients'
 import { getLogo, logoUrl } from '../lib/widget-logo'
 
@@ -25,8 +26,17 @@ widgetConfigRouter.get('/:clientId', async (req, res) => {
 
   const cfg = client.widgetConfig ?? {}
 
+  // Domain lock. Refusing the config here is what makes an unauthorised embed
+  // render *nothing* rather than falling back to default branding: widget.js
+  // treats a 403 as "stop", unlike a network error.
+  if (!isOriginAllowed(req.get('origin'), cfg.allowedDomains)) {
+    return res.status(403).json({ error: 'This widget is not authorised for this domain.' })
+  }
+
   // Long enough to absorb repeat page loads, short enough that a dashboard
-  // edit reaches a live site promptly.
+  // edit reaches a live site promptly. Varies on Origin so a cache can never
+  // hand an allowed origin's config to a blocked one.
+  res.set('Vary', 'Origin')
   res.set('Cache-Control', 'public, max-age=60')
 
   res.json({

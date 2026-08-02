@@ -5,6 +5,8 @@ import { logMessage } from '../lib/logs'
 import { overLimit } from '../lib/rate-limit'
 import { checkChatCaps, CHAT_BURST_PER_MIN } from '../lib/usage'
 import { billingConfigured, getSubscription, isActive } from '../lib/billing'
+import { getClientById } from '../lib/clients'
+import { isOriginAllowed } from '@agent-platform/shared'
 import type { IncomingMessage } from '@agent-platform/shared'
 
 export const chatRouter = Router()
@@ -28,6 +30,14 @@ chatRouter.post('/', async (req, res) => {
   // 1. Per-client burst (in-memory) — stops a flood from one public clientId.
   if (overLimit(`chat:${message.clientId}`, CHAT_BURST_PER_MIN, 60_000)) {
     return res.status(429).json({ error: 'Too many messages — please slow down.' })
+  }
+  // 1b. Domain lock. Enforced here as well as on /widget-config because the
+  // config fetch is skippable: a stolen script can hard-pin every setting via
+  // data-* attributes and never call it. This is the check that actually
+  // protects the paid LLM call.
+  const originClient = await getClientById(message.clientId)
+  if (!isOriginAllowed(req.get('origin'), originClient?.widgetConfig?.allowedDomains)) {
+    return res.status(403).json({ error: 'This assistant is not authorised for this domain.' })
   }
   // 2. Subscription must be active (paid, trialing, or superadmin-comped) —
   // only enforced when this deployment has billing configured at all, so

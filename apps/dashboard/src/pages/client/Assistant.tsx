@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw } from 'lucide-react'
+import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw, ShieldCheck } from 'lucide-react'
 import type { KnowledgeDoc, KnowledgeFile } from '@/lib/api'
 import type { Client, WidgetConfig } from '@agent-platform/shared'
 import { api } from '@/lib/api'
@@ -420,6 +420,7 @@ function WidgetTab({ client }: { client: Client }) {
   const fallbackPrompts = defaultPrompts(draft.title || client.name)
   const prompts = draft.prompts?.length ? draft.prompts : fallbackPrompts
   const usingDefaultChips = !draft.chips?.length
+  const domains = draft.allowedDomains ?? []
   const usingDefaultPrompts = !draft.prompts?.length
 
   const snippet = `<script
@@ -447,7 +448,8 @@ function WidgetTab({ client }: { client: Client }) {
         logoPath: client.widgetConfig?.logoPath,
         logoContentType: client.widgetConfig?.logoContentType,
         prompts: (draft.prompts ?? []).map(p => p.trim()).filter(Boolean),
-        chips: (draft.chips ?? []).filter(c => c.label.trim() && c.message.trim()).slice(0, 4)
+        chips: (draft.chips ?? []).filter(c => c.label.trim() && c.message.trim()).slice(0, 4),
+        allowedDomains: (draft.allowedDomains ?? []).map(d => d.trim()).filter(Boolean)
       }
       await api.clients.upsert({ id: client.id, widgetConfig: clean })
       mutate(['client', client.id])
@@ -592,6 +594,47 @@ function WidgetTab({ client }: { client: Client }) {
               </Button>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /> Allowed domains</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 pt-0">
+          <p className="text-sm text-muted-foreground">
+            Lock this widget to the client's own site. Subdomains are included automatically, so{' '}
+            <code className="rounded bg-muted px-1">spec-id.com</code> also covers{' '}
+            <code className="rounded bg-muted px-1">www.spec-id.com</code>. Anywhere else, the widget
+            refuses to load and the assistant returns an error.
+          </p>
+          {domains.length === 0 && (
+            <p className="text-xs text-warning">
+              No domains set — this widget currently runs on <strong>any</strong> website that has the
+              script and this client's ID.
+            </p>
+          )}
+          {domains.map((d, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                value={d}
+                onChange={e => {
+                  const next = [...domains]; next[i] = e.target.value; set('allowedDomains', next)
+                }}
+                placeholder="spec-id.com"
+              />
+              <button
+                onClick={() => set('allowedDomains', domains.filter((_, j) => j !== i))}
+                aria-label={`Remove domain ${i + 1}`}
+                className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <Button variant="outline" size="sm" className="w-fit" onClick={() => set('allowedDomains', [...domains, ''])}>
+            <Plus className="h-3.5 w-3.5" /> Add domain
+          </Button>
         </CardContent>
       </Card>
 
