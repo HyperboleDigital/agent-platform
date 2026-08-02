@@ -20,7 +20,9 @@ import Content from './pages/client/Content'
 import PaidAds from './pages/client/PaidAds'
 import Requests from './pages/client/Requests'
 import Reports from './pages/client/Reports'
+import Team from './pages/client/Team'
 import SignInPage from './pages/SignInPage'
+import SignUpPage from './pages/SignUpPage'
 import { ProtectedLayout } from './ProtectedLayout'
 import { AuthBridge } from './AuthBridge'
 import { OrgActivator } from './OrgActivator'
@@ -36,6 +38,7 @@ if (!CLERK_PUBLISHABLE_KEY) {
 
 const router = createBrowserRouter([
   { path: '/sign-in/*', element: <SignInPage /> },
+  { path: '/sign-up/*', element: <SignUpPage /> },
   {
     element: <ProtectedLayout />,
     children: [
@@ -54,11 +57,12 @@ const router = createBrowserRouter([
               { path: 'seo', element: <Gate service="seo"><SeoVisibility /></Gate> },
               { path: 'local', element: <Gate service="local"><LocalPresence /></Gate> },
               { path: 'assistant', element: <Gate service="chat"><Assistant /></Gate> },
+              { path: 'leads', element: <LeadsSection /> },
               { path: 'content', element: <Gate service="content"><Content /></Gate> },
               { path: 'ads', element: <Gate service="ads"><PaidAds /></Gate> },
-              { path: 'leads', element: <LeadsSection /> },
               { path: 'requests', element: <Requests /> },
               { path: 'reports', element: <Reports /> },
+              { path: 'team', element: <Team /> },
               { path: 'billing', element: <BillingSection /> },
               { path: 'config', element: <ConfigSection /> }
             ]
@@ -72,7 +76,12 @@ const router = createBrowserRouter([
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} signInUrl="/sign-in" appearance={{ baseTheme: dark } as never}>
+      <ClerkProvider
+        publishableKey={CLERK_PUBLISHABLE_KEY}
+        signInUrl="/sign-in"
+        signUpUrl="/sign-up"
+        appearance={{ baseTheme: dark } as never}
+      >
         <AuthBridge />
         <OrgActivator />
         <RouterProvider router={router} />

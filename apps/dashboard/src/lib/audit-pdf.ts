@@ -43,20 +43,31 @@ export function buildAuditPdf(crawl: SeoCrawl): jsPDF {
   doc.setDrawColor(...ACCENT); doc.setLineWidth(1.5); doc.line(M, y, M + CW, y); y += 24
 
   // Score boxes
-  const boxW = (CW - 16) / 2, boxH = 62
-  const drawScore = (x: number, label: string, score: number) => {
+  const boxW = (CW - 16) / 2, boxH = 78 // tall enough for the score + a two-line caption
+  // Keep the caption in sync with ScoreCard in components/audit-report.tsx —
+  // this PDF goes to the client, so an unqualified "95/100" is the version
+  // most likely to be misread as an overall SEO or keyword score.
+  const drawScore = (x: number, label: string, score: number, hint: string) => {
     doc.setDrawColor(229, 229, 229); doc.setLineWidth(1); doc.rect(x, y, boxW, boxH)
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...GRAY)
     doc.text(label, x + 14, y + 20)
     const n = String(Math.round(score))
     doc.setFont('helvetica', 'bold'); doc.setFontSize(26); doc.setTextColor(...scoreRGB(score))
     const nW = doc.getTextWidth(n)
-    doc.text(n, x + 14, y + 48)
+    doc.text(n, x + 14, y + 44)
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...FAINT)
-    doc.text('/100', x + 14 + nW + 6, y + 48)
+    doc.text('/100', x + 14 + nW + 6, y + 44)
+    doc.setFontSize(7); doc.setTextColor(...FAINT)
+    for (const [i, line] of doc.splitTextToSize(hint, boxW - 28).slice(0, 2).entries()) {
+      doc.text(line, x + 14, y + 54 + i * 8)
+    }
   }
-  if (crawl.onpageScore != null) drawScore(M, 'Site Health', crawl.onpageScore)
-  if (crawl.aiSearch) drawScore(M + boxW + 16, 'AI Search Health', crawl.aiSearch.score)
+  if (crawl.onpageScore != null) {
+    drawScore(M, 'Technical Health', crawl.onpageScore, 'On-page issues only — not keywords or rankings')
+  }
+  if (crawl.aiSearch) {
+    drawScore(M + boxW + 16, 'AI Search Health', crawl.aiSearch.score, 'Whether AI engines can crawl and read the site')
+  }
   y += boxH + 22
 
   const rows = buildAuditRows(crawl)

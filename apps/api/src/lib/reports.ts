@@ -201,7 +201,7 @@ export function renderReportEmail(report: Report): { subject: string; body: stri
     )
   }
   if (d.siteHealth) {
-    lines.push(`SITE HEALTH`, `  Overall health score: ${d.siteHealth.score}/100`)
+    lines.push(`TECHNICAL HEALTH`, `  On-page technical score: ${d.siteHealth.score}/100 (crawl issues only — not keywords or rankings)`)
     for (const iss of d.siteHealth.topIssues) lines.push(`  • [${iss.severity}] ${iss.title}`)
     lines.push(``)
   }

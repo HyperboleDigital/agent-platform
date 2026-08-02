@@ -401,6 +401,21 @@ export async function refreshAdhocCrawl(crawlId: string): Promise<SeoCrawl> {
   return finalizeIfNeeded(row as CrawlRow)
 }
 
+// Read-only fetch of an ad-hoc crawl. getCrawl() above requires a clientId and
+// so can't reach these (client_id is null by definition); refreshAdhocCrawl()
+// can, but it also polls DataForSEO and finalizes. This is the plain getter,
+// used by the public prospect preview page to render an audit it must never
+// mutate or pay to refresh.
+export async function getAdhocCrawl(crawlId: string): Promise<SeoCrawl | null> {
+  const { data } = await supabase
+    .from('seo_crawls')
+    .select('*')
+    .eq('id', crawlId)
+    .is('client_id', null)
+    .maybeSingle()
+  return data ? fromRow(data as CrawlRow) : null
+}
+
 export async function listAdhocCrawls(limit = 20): Promise<SeoCrawl[]> {
   const { data } = await supabase
     .from('seo_crawls')

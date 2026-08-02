@@ -13,6 +13,8 @@ import { webhookRouter } from './routes/webhooks'
 import { billingRouter, stripeWebhookHandler } from './routes/billing'
 import { overviewRouter } from './routes/overview'
 import { prospectingRouter } from './routes/prospecting'
+import { previewRouter } from './routes/preview'
+import { widgetConfigRouter } from './routes/widget-config'
 import { getIdentity } from './lib/authz'
 import { reconcileUserMembership } from './lib/clients'
 import { finalizePendingCrawls } from './lib/dataforseo'
@@ -23,13 +25,31 @@ const PORT = process.env.PORT ?? 3001
 // ── Security middleware ───────────────────────────────────────────────────────
 app.use(helmet())
 
-// Fail closed: an explicit allow-list is required. A wildcard CORS default on
-// an API that also serves authenticated admin routes is a real hole.
+// CORS is deliberately split in two, and the split is load-bearing.
+//
+// The embeddable chat widget runs on ARBITRARY client domains — every customer
+// site that pastes the script tag is a different origin, and we can't know them
+// in advance. So the widget's own public routes accept any origin. They are
+// already anonymous and per-client rate-limited, so allowing cross-origin calls
+// doesn't widen what an unauthenticated caller can reach; it only stops the
+// browser from blocking a request the server would have served anyway.
+//
+// Everything else — /clients, /overview, /prospecting, /billing — stays behind
+// a fail-closed allow-list, because those ARE authenticated and a wildcard
+// there would be a real hole. Do not "simplify" this into one app.use(cors()).
+const WIDGET_PUBLIC_PATHS = ['/chat', '/contact', '/widget-config']
+const widgetCors = cors({ origin: '*' })
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean)
 if (!allowedOrigins?.length) {
-  console.warn('[cors] ALLOWED_ORIGINS is not set — cross-origin requests will be rejected. Set it for the dashboard/widget origins that need access.')
+  console.warn('[cors] ALLOWED_ORIGINS is not set — cross-origin requests will be rejected. Set it for the dashboard origins that need access.')
 }
-app.use(cors({ origin: allowedOrigins ?? [] }))
+const strictCors = cors({ origin: allowedOrigins ?? [] })
+
+app.use((req, res, next) => {
+  const isWidgetPath = WIDGET_PUBLIC_PATHS.some(p => req.path === p || req.path.startsWith(`${p}/`))
+  return isWidgetPath ? widgetCors(req, res, next) : strictCors(req, res, next)
+})
 
 // Stripe webhook signature verification needs the exact raw bytes Stripe
 // signed — must be registered with express.raw() BEFORE the global
@@ -39,9 +59,21 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), stripeWe
 app.use(express.json({ limit: '1mb' }))
 app.use(clerkMiddleware()) // attaches req.auth when a Clerk session is present; doesn't block anonymous requests
 
-// Rate limit: 60 requests/min per IP (baseline; per-client limits live on
-// /chat and /contact specifically — see those routers)
-app.use(rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true }))
+// Baseline abuse limit per IP; per-client limits live on /chat and /contact
+// specifically (see those routers), which is where untrusted public traffic
+// actually arrives. This ceiling has to clear normal *dashboard* usage: one
+// client page fans out a dozen authenticated calls, so a low cap here reads to
+// the user as "the API is down" rather than "you were throttled".
+//
+// /health is exempt deliberately. The app shell polls it every 15s to tell
+// "API is down" apart from "you're logged out" — throttling that turns a
+// burst of ordinary navigation into a full-screen server-down error.
+app.use(rateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.API_RATE_LIMIT_PER_MIN ?? 300),
+  standardHeaders: true,
+  skip: req => req.path === '/health'
+}))
 
 // Requires a signed-in Clerk user (any authenticated identity — per-resource
 // tenant scoping happens inside the routers via lib/authz).
@@ -53,7 +85,9 @@ const requireAuth: RequestHandler = (req, res, next) => {
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/chat', chatRouter)                    // widget → agent (public)
 app.use('/contact', contactRouter)              // widget contact form → human (public)
+app.use('/widget-config', widgetConfigRouter)   // widget appearance config (public, read-only)
 app.use('/auth', authRouter)                    // Gmail OAuth callback only (public — Google redirects here)
+app.use('/p', previewRouter)                    // prospect mockup preview pages (public — prospects have no login)
 app.use('/clients', requireAuth, clientsRouter) // dashboard CRUD (auth + per-tenant authz)
 app.use('/webhooks', requireAuth, webhookRouter) // external triggers (auth)
 app.use('/billing', requireAuth, billingRouter) // Stripe checkout/portal/status (auth + per-tenant authz)
@@ -66,7 +100,12 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }))
 // console vs. scoped client view).
 app.get('/me', requireAuth, (req, res) => {
   const identity = getIdentity(req)!
-  res.json({ userId: identity.userId, orgId: identity.orgId, isSuperadmin: identity.isSuperadmin })
+  res.json({
+    userId: identity.userId,
+    orgId: identity.orgId,
+    orgRole: identity.orgRole,
+    isSuperadmin: identity.isSuperadmin
+  })
 })
 
 // Best-effort self-heal for a signed-in user with no org: if they have a

@@ -20,6 +20,11 @@ create table if not exists clients (
   -- SEO/portal soft config (audit pages, brand terms, connected GSC property).
   -- jsonb rather than columns since this shape keeps growing across slices.
   portal_config jsonb not null default '{}'::jsonb,
+  -- Chat widget appearance (title, colours, teaser prompts, in-panel chips).
+  -- Fetched by the widget at load via the PUBLIC /widget-config/:clientId, so
+  -- everything in here is world-readable — no secrets. Empty {} renders the
+  -- widget's built-in defaults.
+  widget_config jsonb not null default '{}'::jsonb,
   -- Finalized pricing-sheet tier assignment. No FK — the tier catalog is
   -- code-defined in lib/tiers.ts (same pattern as billing.ts's PLANS), not a
   -- DB table, since Owen is still iterating on the sheet.
@@ -315,6 +320,80 @@ create table if not exists prospects (
 create index if not exists prospects_status_idx on prospects (status, created_at);
 create index if not exists prospects_area_idx on prospects (area, category);
 
+-- ── design_references ────────────────────────────────────────────────────────
+-- The operator's inspo library — uploaded images (Figma comps, Dribbble shots,
+-- screenshots of sites they like) that steer concept generation. This is the
+-- ONLY mechanism directing design, deliberately: the operator's taste governs,
+-- not the model's. With an empty library, generation has nothing to imitate.
+--
+-- `vertical` is a coarse tag (trades, medical, hospitality, ...). NULL means
+-- "applies to any business" and acts as the fallback pool when a prospect's
+-- vertical has no references of its own. `notes` is fed to the model verbatim.
+create table if not exists design_references (
+  id            uuid primary key default gen_random_uuid(),
+  label         text not null,
+  vertical      text,
+  notes         text,
+  storage_path  text not null,                 -- design-inspo bucket
+  content_type  text not null,
+  size_bytes    integer,
+  active        boolean not null default true, -- retire without losing provenance
+  created_at    timestamptz not null default now()
+);
+create index if not exists design_references_active_idx
+  on design_references (active, vertical, created_at desc);
+
+-- ── prospect_mockups / prospect_previews ─────────────────────────────────────
+-- Prospecting: a "here's what your homepage could look like" concept, plus a
+-- tokenized public page the operator pastes into their own email. Still no
+-- send path — the operator sends it themselves. The audit shown on the preview
+-- page is the EXISTING ad-hoc DataForSEO crawl (seo_crawls with
+-- client_id = null), not a second audit engine.
+-- Regenerating makes a NEW mockup row rather than overwriting, so an already-
+-- shared preview keeps showing what was actually sent.
+--
+-- format='html' (current) stores a full generated page in `html`. format='image'
+-- is the legacy gpt-image-1 path — a single 1536x1024 PNG in `storage_path`,
+-- which could only ever depict a fold. Old rows keep rendering as sent.
+create table if not exists prospect_mockups (
+  id              uuid primary key default gen_random_uuid(),
+  prospect_id     uuid not null references prospects(id) on delete cascade,
+  style_key       text not null default 'modern-service-v1',
+  brand           jsonb not null default '{}'::jsonb,  -- extracted name/services/colors/logo
+  prompt          text not null,
+  direction_notes text,
+  storage_path    text,                                 -- prospect-mockups bucket; image format only
+  html            text,                                 -- the generated page; html format only
+  format          text not null default 'image' check (format in ('image', 'html')),
+  current_screenshot_path text,                         -- prospect-screenshots: their site today
+  reference_ids   uuid[],                               -- design_references that steered this
+  model           text,
+  created_at      timestamptz not null default now()
+);
+create index if not exists prospect_mockups_prospect_idx
+  on prospect_mockups (prospect_id, created_at desc);
+
+-- preview_token (192 bits, base64url) is the ONLY credential — the prospect
+-- has no login, so treat this page as public. revoked_at kills a link without
+-- deleting the record of what was shared.
+create table if not exists prospect_previews (
+  id              uuid primary key default gen_random_uuid(),
+  prospect_id     uuid not null references prospects(id) on delete cascade,
+  mockup_id       uuid references prospect_mockups(id) on delete set null,
+  crawl_id        uuid references seo_crawls(id) on delete set null,
+  preview_token   text not null,
+  expires_at      timestamptz,
+  revoked_at      timestamptz,
+  view_count      integer not null default 0,
+  first_viewed_at timestamptz,
+  last_viewed_at  timestamptz,
+  created_at      timestamptz not null default now()
+);
+create unique index if not exists prospect_previews_token_key
+  on prospect_previews (preview_token);
+create index if not exists prospect_previews_prospect_idx
+  on prospect_previews (prospect_id, created_at desc);
+
 -- ── gsc_snapshots ─────────────────────────────────────────────────────────────
 -- Daily cache of Google Search Console query performance, so trends survive
 -- GSC's data window and dashboard loads don't hit Google live.
@@ -535,6 +614,9 @@ alter table reports            enable row level security;
 alter table citations          enable row level security;
 alter table gbp_activity       enable row level security;
 alter table prospects          enable row level security;
+alter table prospect_mockups   enable row level security;
+alter table prospect_previews  enable row level security;
+alter table design_references  enable row level security;
 alter table ads_snapshots      enable row level security;
 
 -- Private bucket for change-request attachments — the API is the only thing
@@ -546,4 +628,30 @@ on conflict (id) do nothing;
 
 insert into storage.buckets (id, name, public)
 values ('knowledge-files', 'knowledge-files', false)
+on conflict (id) do nothing;
+
+-- Generated prospect mockup PNGs. NOT public — a public bucket URL is
+-- permanent and unrevokable, and a *.supabase.co link reads as phishing in a
+-- cold email. Served via GET /p/:token/image instead (revocable, view-tracked).
+insert into storage.buckets (id, name, public)
+values ('prospect-mockups', 'prospect-mockups', false)
+on conflict (id) do nothing;
+
+-- Uploaded chat-widget logos. Private in Supabase, but the bytes ARE served
+-- publicly via GET /widget-config/:clientId/logo — an API route on our own
+-- origin, since a signed URL would expire while the widget is still live on a
+-- client's site.
+insert into storage.buckets (id, name, public)
+values ('widget-logos', 'widget-logos', false)
+on conflict (id) do nothing;
+
+-- The operator's uploaded design inspiration. Private — these may be licensed
+-- or third-party work and must never be publicly addressable.
+insert into storage.buckets (id, name, public)
+values ('design-inspo', 'design-inspo', false)
+on conflict (id) do nothing;
+
+-- Screenshots of prospects' current sites, for the before/after comparison.
+insert into storage.buckets (id, name, public)
+values ('prospect-screenshots', 'prospect-screenshots', false)
 on conflict (id) do nothing;

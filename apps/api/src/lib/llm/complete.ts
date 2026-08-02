@@ -52,3 +52,55 @@ export async function complete(prompt: string, opts: CompleteOptions = {}): Prom
   const block = res.content.find(b => b.type === 'text')
   return block?.type === 'text' ? block.text : ''
 }
+
+// ── Vision ───────────────────────────────────────────────────────────────────
+// Anthropic-only, unlike complete() above: this exists for prospect concept
+// generation, which needs to *look* at design references and a screenshot of
+// the prospect's current site. Routing it through the provider switch would
+// mean maintaining an OpenAI vision path that nothing calls.
+
+export type VisionMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+export interface VisionImage {
+  buffer: Buffer
+  mediaType: VisionMediaType
+  // Shown to the model immediately before the image, so it knows what it's
+  // looking at and how to treat it — a reference to imitate reads very
+  // differently from the prospect's current site.
+  caption: string
+}
+
+export interface CompleteWithImagesOptions {
+  system?: string
+  maxTokens?: number
+}
+
+// Streams rather than awaiting a single response: a full HTML page runs to
+// several thousand tokens, and non-streaming requests at this maxTokens hit
+// the SDK's HTTP timeout.
+export async function completeWithImages(
+  prompt: string,
+  images: VisionImage[],
+  opts: CompleteWithImagesOptions = {}
+): Promise<string> {
+  const content: Anthropic.MessageParam['content'] = []
+  for (const image of images) {
+    content.push({ type: 'text', text: image.caption })
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: image.mediaType, data: image.buffer.toString('base64') }
+    })
+  }
+  content.push({ type: 'text', text: prompt })
+
+  const stream = anthropic.messages.stream({
+    model: STRONG_ANTHROPIC_MODEL,
+    max_tokens: opts.maxTokens ?? 16000,
+    ...(opts.system ? { system: opts.system } : {}),
+    messages: [{ role: 'user', content }]
+  })
+
+  const res = await stream.finalMessage()
+  const block = res.content.find(b => b.type === 'text')
+  return block?.type === 'text' ? block.text : ''
+}

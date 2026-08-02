@@ -24,7 +24,13 @@ function barColor(score: number): string {
   return 'bg-destructive'
 }
 
-function ScoreCard({ label, score }: { label: string; score: number }) {
+// `hint` names what the number actually measures. Both scores sit under a card
+// titled "SEO Audit", where a bare "95/100" reads as an overall SEO grade —
+// it isn't. Technical Health is on-page crawl issues only (nothing to do with
+// keywords, rankings or traffic), and AI Search Health is a crawler-access
+// check. The caption is the difference between a client reading this correctly
+// and assuming their keywords are at 95.
+function ScoreCard({ label, score, hint }: { label: string; score: number; hint?: string }) {
   const s = Math.round(score)
   return (
     <div className="min-w-[190px] rounded-lg border border-border bg-card px-5 py-4">
@@ -36,6 +42,7 @@ function ScoreCard({ label, score }: { label: string; score: number }) {
       <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
         <div className={`h-full rounded-full ${barColor(score)}`} style={{ width: `${s}%` }} />
       </div>
+      {hint && <div className="mt-2 text-[11px] leading-tight text-muted-foreground">{hint}</div>}
     </div>
   )
 }
@@ -85,8 +92,20 @@ export function AuditReport({ crawl, showCost = false }: { crawl: SeoCrawl; show
     <div className="flex flex-col gap-5">
       {/* Score gauges */}
       <div className="flex flex-wrap items-center gap-3">
-        {crawl.onpageScore != null && <ScoreCard label="Site Health" score={crawl.onpageScore} />}
-        {crawl.aiSearch && <ScoreCard label="AI Search Health" score={crawl.aiSearch.score} />}
+        {crawl.onpageScore != null && (
+          <ScoreCard
+            label="Technical Health"
+            score={crawl.onpageScore}
+            hint="On-page issues only — not keywords or rankings"
+          />
+        )}
+        {crawl.aiSearch && (
+          <ScoreCard
+            label="AI Search Health"
+            score={crawl.aiSearch.score}
+            hint="Whether AI engines can crawl and read the site"
+          />
+        )}
         <div className="text-xs text-muted-foreground">
           {crawl.pagesCrawled != null && <div>{crawl.pagesCrawled} pages crawled</div>}
           {showCost && crawl.cost != null && <div>${crawl.cost.toFixed(3)} crawl cost</div>}

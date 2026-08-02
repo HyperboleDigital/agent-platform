@@ -54,6 +54,7 @@ export interface Client {
   createdAt: string
   clerkOrgId?: string | null   // Clerk Organization that owns this client (tenant boundary)
   portalConfig: PortalConfig
+  widgetConfig: WidgetConfig   // public chat-widget appearance — no secrets
   vertical: Vertical | null    // which pricing-sheet ladder this client is on
   tierKey: string | null       // key into lib/tiers.ts's TIER catalog
 }
@@ -99,6 +100,35 @@ export interface AgentConfig {
   escalationEmail?: string   // where human-needed items (escalations, contact form) are sent
   autoSendThreshold: number
   emailDraft: boolean
+}
+
+// Chat widget appearance, per client. Every field is optional and an empty
+// object must render exactly the widget's built-in defaults, so a client with
+// no config still gets a working widget.
+//
+// ⚠️ This is served UNAUTHENTICATED from GET /widget-config/:clientId — the
+// client UUID is visible in the page source of every site embedding the widget,
+// so treat everything here as world-readable. Never add a secret to this type.
+export interface WidgetConfig {
+  title?: string
+  tagline?: string
+  welcome?: string
+  placeholder?: string
+  color?: string        // primary brand colour, e.g. "#1D9E75"
+  color2?: string       // secondary, used in gradients; defaults to `color`
+  logo?: string         // externally-hosted logo URL for the bubble/header avatar
+  // Storage path of an uploaded logo (widget-logos bucket). Takes precedence
+  // over `logo` — the public config endpoint resolves it to an absolute URL on
+  // our own origin, so the widget never sees the raw path.
+  logoPath?: string
+  logoContentType?: string
+  avatarEmoji?: string  // fallback avatar when there's no logo
+  // Short questions that rotate above the CLOSED bubble to invite a click.
+  prompts?: string[]
+  // Buttons shown inside the panel on first open. `label` is the button text,
+  // `message` is what actually gets sent as the visitor's message. Max 4 — the
+  // grid and staggered animations in widget.js assume four.
+  chips?: { label: string; message: string }[]
 }
 
 export type LeadStatus = 'new' | 'followed_up'

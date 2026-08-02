@@ -139,6 +139,15 @@ export async function updateProspect(
   return fromRow(data as ProspectRow)
 }
 
+// Hard delete. prospect_mockups and prospect_previews both reference
+// prospect_id with ON DELETE CASCADE, so removing a prospect removes its
+// generated concepts and share links with it — there's no separate cleanup
+// step and no "undo" here, only re-discovering and re-saving.
+export async function deleteProspect(id: string): Promise<void> {
+  const { error } = await supabase.from('prospects').delete().eq('id', id)
+  if (error) throw new Error(`Failed to delete prospect: ${error.message}`)
+}
+
 // ── Draft generation ──────────────────────────────────────────────────────────
 // One LLM call returns BOTH variants (plain + Loom) so the operator can A/B test
 // with/without a video. The personalization hook is a light homepage fetch for

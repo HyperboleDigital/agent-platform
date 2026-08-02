@@ -4,6 +4,7 @@ import multer from 'multer'
 import { getAllClients, upsertClient, getClientById, inviteClientUser, deleteClient } from '../lib/clients'
 import { addDocument, listDocuments, deleteDocument, updateDocumentDescription } from '../tools/knowledge-base'
 import { extractText, isSupportedFile, SUPPORTED_EXTENSIONS } from '../lib/file-extract'
+import { uploadLogo, deleteLogo, ALLOWED_LOGO_TYPES, MAX_LOGO_BYTES } from '../lib/widget-logo'
 import { getLeads, updateLeadStatus, deleteLead } from '../tools/crm'
 import { getStats, getDailyMessageCounts } from '../lib/logs'
 import { getConnectorStatus } from '../lib/connectors'
@@ -31,7 +32,10 @@ import {
   getFramerConnection, saveFramerConnection, deleteFramerConnection, listCollectionFields, publishToFramer
 } from '../lib/framer'
 import { listReports, getReport, buildReport, sendReport } from '../lib/reports'
-import { getIdentity, canAccessClient } from '../lib/authz'
+import {
+  getTeam, inviteMember, revokeInvitation, removeMember, updateMemberRole, isTeamRole, TeamError
+} from '../lib/team'
+import { getIdentity, canAccessClient, canManageTeam } from '../lib/authz'
 import type { Identity } from '../lib/authz'
 import { getLatestSiteHealth, recordSiteHealthCheck } from '../lib/site-health'
 import {
@@ -278,6 +282,66 @@ clientsRouter.post('/:id/knowledge', async (req, res) => {
 })
 
 // Upload a document file to a client's knowledge base
+// Upload a chat-widget logo. Writes the bytes to the widget-logos bucket and
+// records the path on widget_config, which makes it win over any manually
+// entered logo URL. The old file is cleaned up so replacing a logo repeatedly
+// doesn't accumulate orphans.
+clientsRouter.post('/:id/widget-logo', upload.single('file'), async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+
+  const file = req.file
+  if (!file) return res.status(400).json({ error: 'file required (multipart field "file")' })
+  if (!ALLOWED_LOGO_TYPES.includes(file.mimetype)) {
+    return res.status(400).json({ error: `Unsupported image type: ${file.mimetype}. Use PNG, JPEG, WebP, SVG, or GIF.` })
+  }
+  if (file.buffer.length > MAX_LOGO_BYTES) {
+    return res.status(400).json({ error: `Logo is too large (${Math.round(file.buffer.length / 1024)}KB). Max ${MAX_LOGO_BYTES / 1024}KB — every visitor loads this.` })
+  }
+
+  try {
+    const client = await getClientById(req.params.id)
+    if (!client) return res.status(404).json({ error: 'Client not found' })
+
+    const previous = client.widgetConfig?.logoPath
+    const { storagePath, contentType } = await uploadLogo(req.params.id, file.mimetype, file.buffer)
+
+    const updated = await upsertClient({
+      id: req.params.id,
+      widgetConfig: { ...(client.widgetConfig ?? {}), logoPath: storagePath, logoContentType: contentType }
+    })
+    if (previous) await deleteLogo(previous)
+
+    res.json(updated)
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to upload logo' })
+  }
+})
+
+// Clears the uploaded logo (falls back to the manual URL, then the emoji /
+// first-letter avatar).
+clientsRouter.delete('/:id/widget-logo', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+
+  try {
+    const client = await getClientById(req.params.id)
+    if (!client) return res.status(404).json({ error: 'Client not found' })
+
+    const previous = client.widgetConfig?.logoPath
+    const next = { ...(client.widgetConfig ?? {}) }
+    delete next.logoPath
+    delete next.logoContentType
+
+    const updated = await upsertClient({ id: req.params.id, widgetConfig: next })
+    if (previous) await deleteLogo(previous)
+
+    res.json(updated)
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to remove logo' })
+  }
+})
+
 clientsRouter.post('/:id/knowledge/upload', upload.single('file'), async (req, res) => {
   const identity = identityOf(req)
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
@@ -1257,5 +1321,98 @@ clientsRouter.post('/:id/reports/:reportId/send', async (req, res) => {
     res.json(await sendReport(req.params.id, req.params.reportId, to))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to send report' })
+  }
+})
+
+// ── Team (Clerk org members + invitations) ───────────────────────────────────
+// The team is the Clerk Organization that owns this client, so seats are read
+// from `client.clerkOrgId` rather than the caller's own org — that way a
+// superadmin can manage a client's team from the console too.
+async function resolveTeamOrg(identity: Identity, clientId: string): Promise<
+  { ok: true; orgId: string } | { ok: false; status: number; error: string }
+> {
+  if (!(await canAccessClient(identity, clientId))) return { ok: false, status: 403, error: 'Forbidden' }
+  const client = await getClientById(clientId)
+  if (!client) return { ok: false, status: 404, error: 'Not found' }
+  if (!client.clerkOrgId) {
+    return { ok: false, status: 409, error: 'This client isn\'t linked to an organization yet' }
+  }
+  return { ok: true, orgId: client.clerkOrgId }
+}
+
+function teamFailed(err: unknown, fallback: string) {
+  if (err instanceof TeamError) return { status: 400, error: err.message }
+  console.error('[team]', err)
+  return { status: 500, error: fallback }
+}
+
+clientsRouter.get('/:id/team', async (req, res) => {
+  const identity = identityOf(req)
+  const org = await resolveTeamOrg(identity, req.params.id)
+  if (!org.ok) return res.status(org.status).json({ error: org.error })
+  try {
+    const team = await getTeam(org.orgId)
+    res.json({ ...team, canManage: canManageTeam(identity), currentUserId: identity.userId })
+  } catch (err) {
+    const { status, error } = teamFailed(err, 'Failed to load team')
+    res.status(status).json({ error })
+  }
+})
+
+clientsRouter.post('/:id/team/invitations', async (req, res) => {
+  const identity = identityOf(req)
+  const org = await resolveTeamOrg(identity, req.params.id)
+  if (!org.ok) return res.status(org.status).json({ error: org.error })
+  if (!canManageTeam(identity)) return res.status(403).json({ error: 'Only an admin can invite team members' })
+
+  const email = typeof req.body?.email === 'string' ? req.body.email : ''
+  const role = isTeamRole(req.body?.role) ? req.body.role : 'org:member'
+  try {
+    res.json(await inviteMember(org.orgId, identity.userId, email, role))
+  } catch (err) {
+    const { status, error } = teamFailed(err, 'Failed to send invite')
+    res.status(status).json({ error })
+  }
+})
+
+clientsRouter.delete('/:id/team/invitations/:invitationId', async (req, res) => {
+  const identity = identityOf(req)
+  const org = await resolveTeamOrg(identity, req.params.id)
+  if (!org.ok) return res.status(org.status).json({ error: org.error })
+  if (!canManageTeam(identity)) return res.status(403).json({ error: 'Only an admin can revoke invites' })
+  try {
+    await revokeInvitation(org.orgId, req.params.invitationId, identity.userId)
+    res.json({ ok: true })
+  } catch (err) {
+    const { status, error } = teamFailed(err, 'Failed to revoke invite')
+    res.status(status).json({ error })
+  }
+})
+
+clientsRouter.patch('/:id/team/members/:userId', async (req, res) => {
+  const identity = identityOf(req)
+  const org = await resolveTeamOrg(identity, req.params.id)
+  if (!org.ok) return res.status(org.status).json({ error: org.error })
+  if (!canManageTeam(identity)) return res.status(403).json({ error: 'Only an admin can change roles' })
+  if (!isTeamRole(req.body?.role)) return res.status(400).json({ error: 'Invalid role' })
+  try {
+    res.json(await updateMemberRole(org.orgId, req.params.userId, req.body.role))
+  } catch (err) {
+    const { status, error } = teamFailed(err, 'Failed to update role')
+    res.status(status).json({ error })
+  }
+})
+
+clientsRouter.delete('/:id/team/members/:userId', async (req, res) => {
+  const identity = identityOf(req)
+  const org = await resolveTeamOrg(identity, req.params.id)
+  if (!org.ok) return res.status(org.status).json({ error: org.error })
+  if (!canManageTeam(identity)) return res.status(403).json({ error: 'Only an admin can remove team members' })
+  try {
+    await removeMember(org.orgId, req.params.userId)
+    res.json({ ok: true })
+  } catch (err) {
+    const { status, error } = teamFailed(err, 'Failed to remove member')
+    res.status(status).json({ error })
   }
 })

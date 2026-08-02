@@ -13,6 +13,7 @@ const SUPERADMIN_USER_IDS = (process.env.SUPERADMIN_USER_IDS ?? '')
 export interface Identity {
   userId: string
   orgId: string | null
+  orgRole: string | null
   isSuperadmin: boolean
 }
 
@@ -24,8 +25,16 @@ export function getIdentity(req: Request): Identity | null {
   return {
     userId: auth.userId,
     orgId: auth.orgId ?? null,
+    orgRole: auth.orgRole ?? null,
     isSuperadmin: SUPERADMIN_USER_IDS.includes(auth.userId)
   }
+}
+
+// Seat management (invite/remove/change role) is limited to org admins —
+// regular members can see the team but not change it. Superadmins can manage
+// any client's team from the console.
+export function canManageTeam(identity: Identity): boolean {
+  return identity.isSuperadmin || identity.orgRole === 'org:admin'
 }
 
 // Can this identity read/write the given client's data? Superadmins can

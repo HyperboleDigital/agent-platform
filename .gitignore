@@ -149,3 +149,6 @@ vite.config.ts.timestamp-*
 .mcp.json
 .playwright-mcp/
 hyperboledigital-homepage.png
+
+# macOS
+.DS_Store

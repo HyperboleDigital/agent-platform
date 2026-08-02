@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw } from 'lucide-react'
+import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw } from 'lucide-react'
 import type { KnowledgeDoc, KnowledgeFile } from '@/lib/api'
+import type { Client, WidgetConfig } from '@agent-platform/shared'
 import { api } from '@/lib/api'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input, Textarea } from '@/components/ui/input'
+import { Input, Textarea, Label } from '@/components/ui/input'
 import { StatTile } from '@/components/stat-tile'
 import { EmptyState } from '@/components/empty-state'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
@@ -276,8 +277,385 @@ function KnowledgeTab({ clientId }: { clientId: string }) {
   )
 }
 
+// ── Widget setup ─────────────────────────────────────────────────────────────
+// Appearance is stored per client and fetched by widget.js at load, so editing
+// here reaches the client's live site on their next page load — they paste the
+// snippet once and never touch it again.
+//
+// One Cloudflare Worker serves every client: the snippet below differs only by
+// data-client-id. There is no per-client Worker to deploy.
+const WIDGET_URL = import.meta.env.VITE_WIDGET_URL ?? 'https://agent-widget.hyperboledigital.workers.dev/widget.js'
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
+
+// ⚠️ These mirror the built-in fallbacks in apps/widget/src/widget.js (CHIPS
+// and PROMPT_LABELS). They are duplicated on purpose and must be kept in sync
+// by hand: widget.js is served standalone from the Worker with no build step,
+// so it cannot import from a shared package — and its whole job as a fallback
+// is to still render when this API is unreachable.
+const DEFAULT_CHIPS = [
+  { label: 'What do you offer?', message: 'What services do you offer?' },
+  { label: 'Pricing', message: 'How much does it cost?' },
+  { label: 'Book a call', message: 'Can I book a call?' },
+  { label: 'Contact us', message: 'I want to contact support' }
+]
+
+const defaultPrompts = (title: string) => [
+  'Questions?',
+  "What's your pricing?",
+  `How does ${title} work?`,
+  'Can I book a call?',
+  'Need support?'
+]
+
+// Logo: either an uploaded file (stored by us, served from our own origin) or a
+// URL the client hosts elsewhere. An upload wins over the URL, which is why
+// this is one control rather than two independent fields.
+//
+// The upload saves immediately rather than waiting for "Save widget settings" —
+// it's a file write with its own success/failure, and pretending it's part of
+// the form draft would mean holding bytes in memory and re-uploading on every
+// unrelated save.
+function LogoField({ client, draft, onUrlChange }: {
+  client: Client
+  draft: WidgetConfig
+  onUrlChange: (v: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const uploaded = !!client.widgetConfig?.logoPath
+  // Cache-bust so a replaced logo doesn't show the old one from the 5m cache.
+  const preview = uploaded
+    ? `${API_URL}/widget-config/${client.id}/logo?v=${encodeURIComponent(client.widgetConfig!.logoPath!)}`
+    : (draft.logo || '')
+
+  async function upload(file: File | undefined) {
+    if (!file) return
+    setBusy(true)
+    try {
+      await api.clients.uploadWidgetLogo(client.id, file)
+      mutate(['client', client.id])
+      toast.success('Logo uploaded')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    setBusy(true)
+    try {
+      await api.clients.removeWidgetLogo(client.id)
+      mutate(['client', client.id])
+      toast.success('Logo removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove logo')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Label>Logo</Label>
+      <p className="text-xs text-muted-foreground">
+        Shown on the chat bubble and in the panel header. Both sit on the brand colour, so a
+        light/white mark reads best. PNG, JPEG, WebP, SVG or GIF, up to 1MB.
+      </p>
+      <div className="flex items-center gap-3">
+        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border"
+             style={{ background: draft.color || '#6C5CE7' }}>
+          {preview
+            ? <img src={preview} alt="Widget logo" className="h-[52%] w-[52%] object-contain" />
+            : <span className="text-lg font-bold text-white">
+                {draft.avatarEmoji || (draft.title || client.name).charAt(0).toUpperCase()}
+              </span>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+            className="hidden"
+            onChange={e => { upload(e.target.files?.[0]); e.target.value = '' }}
+          />
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
+            <Upload className="h-3.5 w-3.5" />{busy ? 'Working…' : uploaded ? 'Replace' : 'Upload logo'}
+          </Button>
+          {uploaded && (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={remove}>
+              <Trash2 className="h-3.5 w-3.5" /> Remove
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-xs text-muted-foreground">…or link one you host elsewhere</Label>
+        <Input
+          value={draft.logo ?? ''}
+          onChange={e => onUrlChange(e.target.value)}
+          placeholder="https://…/logo.svg"
+          disabled={uploaded}
+        />
+        {uploaded && (
+          <span className="text-xs text-muted-foreground">
+            An uploaded logo is in use — remove it to fall back to a URL.
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WidgetTab({ client }: { client: Client }) {
+  const cfg = client.widgetConfig ?? {}
+  const [draft, setDraft] = useState<WidgetConfig>(cfg)
+  const [saving, setSaving] = useState(false)
+
+  // Both lists are all-or-nothing overrides: saving even one item replaces the
+  // widget's built-in set entirely. So seed the editor with the full defaults
+  // rather than a blank row — otherwise "add one prompt" silently deletes the
+  // other four, which is not what anyone means by adding a prompt.
+  const chips = draft.chips?.length ? draft.chips : DEFAULT_CHIPS
+  const fallbackPrompts = defaultPrompts(draft.title || client.name)
+  const prompts = draft.prompts?.length ? draft.prompts : fallbackPrompts
+  const usingDefaultChips = !draft.chips?.length
+  const usingDefaultPrompts = !draft.prompts?.length
+
+  const snippet = `<script
+  src="${WIDGET_URL}"
+  data-client-id="${client.id}"
+  data-api-url="${API_URL}"
+></script>`
+
+  function set<K extends keyof WidgetConfig>(key: K, value: WidgetConfig[K]) {
+    setDraft(d => ({ ...d, [key]: value }))
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      // Strip empties so an untouched field falls back to the widget's built-in
+      // default rather than persisting "" and rendering blank.
+      //
+      // logoPath/logoContentType are deliberately re-read from `client` rather
+      // than `draft`: uploading a logo writes them server-side, but `draft` was
+      // snapshotted at mount, so spreading it alone would silently wipe a logo
+      // uploaded during this editing session.
+      const clean: WidgetConfig = {
+        ...draft,
+        logoPath: client.widgetConfig?.logoPath,
+        logoContentType: client.widgetConfig?.logoContentType,
+        prompts: (draft.prompts ?? []).map(p => p.trim()).filter(Boolean),
+        chips: (draft.chips ?? []).filter(c => c.label.trim() && c.message.trim()).slice(0, 4)
+      }
+      await api.clients.upsert({ id: client.id, widgetConfig: clean })
+      mutate(['client', client.id])
+      toast.success('Widget settings saved — live on their site within a minute')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save widget settings')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function copySnippet() {
+    try {
+      await navigator.clipboard.writeText(snippet)
+      toast.success('Embed snippet copied')
+    } catch {
+      toast.error('Could not copy — select the snippet and copy manually')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Code2 className="h-4 w-4 text-primary" /> Embed snippet</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 pt-0">
+          <p className="text-sm text-muted-foreground">
+            Paste this into the client's site, just before <code className="rounded bg-muted px-1">&lt;/body&gt;</code>.
+            They only ever paste it once — everything below is read from here at load, so changing
+            their branding later doesn't require touching their website again.
+          </p>
+          <div className="flex flex-col rounded-md border border-border">
+            <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Embed code</span>
+              <button onClick={copySnippet} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                <Copy className="h-3 w-3" /> Copy
+              </button>
+            </div>
+            <pre className="overflow-auto px-3 py-2 font-mono text-xs leading-relaxed">{snippet}</pre>
+          </div>
+          {API_URL.includes('localhost') && (
+            <p className="text-xs text-warning">
+              Heads up: <code className="rounded bg-muted px-1">data-api-url</code> points at localhost, which a live
+              site can't reach. Set <code className="rounded bg-muted px-1">VITE_API_URL</code> to your deployed (or
+              tunnelled) API URL before sending this to a client.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Appearance</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 pt-0">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label>Title</Label>
+              <Input value={draft.title ?? ''} onChange={e => set('title', e.target.value)} placeholder={client.name} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Tagline</Label>
+              <Input value={draft.tagline ?? ''} onChange={e => set('tagline', e.target.value)} placeholder="You can ask me anything" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Welcome message</Label>
+              <Input value={draft.welcome ?? ''} onChange={e => set('welcome', e.target.value)} placeholder="How can I help you today?" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Input placeholder</Label>
+              <Input value={draft.placeholder ?? ''} onChange={e => set('placeholder', e.target.value)} placeholder="Type a message..." />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Brand colour</Label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={draft.color || '#6C5CE7'}
+                  onChange={e => set('color', e.target.value)}
+                  className="h-9 w-12 cursor-pointer rounded border border-border bg-background"
+                />
+                <Input value={draft.color ?? ''} onChange={e => set('color', e.target.value)} placeholder="#6C5CE7" className="flex-1" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Secondary colour <span className="text-muted-foreground">(gradients)</span></Label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={draft.color2 || draft.color || '#6C5CE7'}
+                  onChange={e => set('color2', e.target.value)}
+                  className="h-9 w-12 cursor-pointer rounded border border-border bg-background"
+                />
+                <Input value={draft.color2 ?? ''} onChange={e => set('color2', e.target.value)} placeholder="defaults to brand colour" className="flex-1" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Avatar emoji <span className="text-muted-foreground">(used if no logo)</span></Label>
+              <Input value={draft.avatarEmoji ?? ''} onChange={e => set('avatarEmoji', e.target.value)} placeholder="💬" />
+            </div>
+          </div>
+
+          <LogoField client={client} draft={draft} onUrlChange={v => set('logo', v)} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Teaser prompts</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 pt-0">
+          <p className="text-sm text-muted-foreground">
+            Short questions that rotate above the widget while it's closed, to invite a click.
+            {usingDefaultPrompts && ' Showing the built-in defaults — edit them and save to make them this client\'s own.'}
+          </p>
+          {prompts.map((p, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                value={p}
+                onChange={e => {
+                  const next = [...prompts]; next[i] = e.target.value; set('prompts', next)
+                }}
+                placeholder="Can I book a call?"
+              />
+              <button
+                onClick={() => set('prompts', prompts.filter((_, j) => j !== i))}
+                aria-label={`Remove prompt ${i + 1}`}
+                className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => set('prompts', [...prompts, ''])}>
+              <Plus className="h-3.5 w-3.5" /> Add prompt
+            </Button>
+            {!usingDefaultPrompts && (
+              <Button variant="ghost" size="sm" onClick={() => set('prompts', fallbackPrompts)}>
+                <RotateCcw className="h-3.5 w-3.5" /> Reset to defaults
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Quick-reply buttons</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 pt-0">
+          <p className="text-sm text-muted-foreground">
+            The buttons shown inside the chat when a visitor first opens it. <strong>Label</strong> is what they
+            see; <strong>message</strong> is what actually gets sent to the assistant. Four maximum.
+            {usingDefaultChips && ' Showing the built-in defaults — edit them and save to make them this client\'s own.'}
+          </p>
+          {chips.map((c, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                value={c.label}
+                onChange={e => {
+                  const next = [...chips]; next[i] = { ...next[i], label: e.target.value }; set('chips', next)
+                }}
+                placeholder="Book a call"
+                className="w-1/3"
+              />
+              <Input
+                value={c.message}
+                onChange={e => {
+                  const next = [...chips]; next[i] = { ...next[i], message: e.target.value }; set('chips', next)
+                }}
+                placeholder="Can I book a call?"
+                className="flex-1"
+              />
+              <button
+                onClick={() => set('chips', chips.filter((_, j) => j !== i))}
+                aria-label={`Remove button ${i + 1}`}
+                className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            {chips.length < 4 && (
+              <Button variant="outline" size="sm" onClick={() => set('chips', [...chips, { label: '', message: '' }])}>
+                <Plus className="h-3.5 w-3.5" /> Add button
+              </Button>
+            )}
+            {!usingDefaultChips && (
+              <Button variant="ghost" size="sm" onClick={() => set('chips', DEFAULT_CHIPS)}>
+                <RotateCcw className="h-3.5 w-3.5" /> Reset to defaults
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save widget settings'}</Button>
+      </div>
+    </div>
+  )
+}
+
 export default function Assistant() {
-  const { clientId } = useClientCtx()
+  const { clientId, client } = useClientCtx()
 
   return (
     <div className="flex flex-col gap-6">
@@ -290,6 +668,11 @@ export default function Assistant() {
 
       <h3 className="text-sm font-semibold text-muted-foreground">Overview</h3>
       <OverviewTab clientId={clientId} />
+
+      <h3 className="text-sm font-semibold text-muted-foreground">Widget setup</h3>
+      {client
+        ? <WidgetTab client={client} />
+        : <Card><CardContent className="py-6 text-sm text-muted-foreground">Loading widget settings…</CardContent></Card>}
 
       <h3 className="text-sm font-semibold text-muted-foreground">Knowledge base</h3>
       <KnowledgeTab clientId={clientId} />

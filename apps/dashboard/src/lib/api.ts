@@ -263,8 +263,38 @@ export interface ClientSubscriptionSummary {
 export interface Identity {
   userId: string
   orgId: string | null
+  orgRole: string | null
   isSuperadmin: boolean
 }
+
+export type TeamRole = 'org:admin' | 'org:member'
+
+export interface TeamMember {
+  id: string
+  userId: string
+  email: string | null
+  name: string | null
+  imageUrl: string | null
+  role: TeamRole
+  createdAt: string
+}
+
+export interface TeamInvitation {
+  id: string
+  email: string
+  role: TeamRole
+  createdAt: string
+}
+
+export interface Team {
+  members: TeamMember[]
+  invitations: TeamInvitation[]
+  seatLimit: number
+  seatsUsed: number
+  canManage: boolean
+  currentUserId: string
+}
+
 
 export interface DailyCount {
   date: string
@@ -421,6 +451,78 @@ export interface Prospect {
 export interface DiscoveryResult {
   count: number
   candidates: ProspectCandidate[]
+}
+
+export interface MockupStyle {
+  key: string
+  label: string
+}
+
+export interface ProspectMockup {
+  id: string
+  prospectId: string
+  styleKey: string
+  brand: {
+    businessName: string | null
+    headline: string | null
+    services: string[]
+    phone: string | null
+    colors: string[]
+    logoUrl: string | null
+  }
+  prompt: string
+  directionNotes: string | null
+  // 'html' concepts live in `html`; 'image' is the legacy single-PNG format,
+  // kept so already-shared preview links keep showing what was actually sent.
+  format: 'image' | 'html'
+  html: string | null
+  storagePath: string | null
+  currentScreenshotPath: string | null
+  referenceIds: string[] | null
+  model: string | null
+  createdAt: string
+}
+
+// What generateMockup would send to Claude, assembled but not sent — no LLM
+// call, so building this costs nothing. Meant to be pasted into a free tool
+// (ChatGPT, Gemini) to check the design library + prompt before spending real
+// tokens on a generation that gets saved.
+export interface MockupPreview {
+  systemPrompt: string
+  userPrompt: string
+  combinedPrompt: string
+  images: { caption: string; filename: string; dataUrl: string }[]
+}
+
+// The operator's design inspiration library. Concept generation imitates these
+// and nothing else — this is where design direction lives.
+export interface DesignReference {
+  id: string
+  label: string
+  vertical: string | null
+  notes: string | null
+  storagePath: string
+  contentType: string
+  sizeBytes: number | null
+  active: boolean
+  createdAt: string
+}
+
+// `url` is added by the route (the token alone isn't enough — the API's own
+// public base URL is server-side config).
+export interface ProspectPreview {
+  id: string
+  prospectId: string
+  mockupId: string | null
+  crawlId: string | null
+  previewToken: string
+  url: string
+  expiresAt: string | null
+  revokedAt: string | null
+  viewCount: number
+  firstViewedAt: string | null
+  lastViewedAt: string | null
+  createdAt: string
 }
 
 export interface GscQueryRow {
@@ -677,6 +779,22 @@ export const api = {
       request<{ ok: boolean }>(`/clients/${id}`, { method: 'DELETE', body: JSON.stringify({ confirmName }) }),
     contactAgency: (id: string, message: string) =>
       request<{ ok: boolean }>(`/clients/${id}/contact-agency`, { method: 'POST', body: JSON.stringify({ message }) }),
+    uploadWidgetLogo: async (id: string, file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch(`${BASE}/clients/${id}/widget-logo`, {
+        method: 'POST',
+        headers: await authHeaders(),
+        body: form
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `Upload failed: ${res.status}`)
+      }
+      return res.json() as Promise<Client>
+    },
+    removeWidgetLogo: (id: string) =>
+      request<Client>(`/clients/${id}/widget-logo`, { method: 'DELETE' }),
     stats: (id: string) => request<DashboardStats>(`/clients/${id}/stats`),
     statsTimeseries: (id: string, days = 14) => request<DailyCount[]>(`/clients/${id}/stats/timeseries?days=${days}`),
     statsUsage: (id: string) => request<MonthlyUsage>(`/clients/${id}/stats/usage`),
@@ -841,6 +959,21 @@ export const api = {
     knowledgeFiles: (id: string) => request<KnowledgeFile[]>(`/clients/${id}/knowledge/files`),
     knowledgeFileUrl: (id: string, fileId: string) =>
       request<{ url: string }>(`/clients/${id}/knowledge/files/${fileId}/url`),
+    team: (id: string) => request<Team>(`/clients/${id}/team`),
+    inviteTeamMember: (id: string, email: string, role: TeamRole) =>
+      request<TeamInvitation>(`/clients/${id}/team/invitations`, {
+        method: 'POST',
+        body: JSON.stringify({ email, role })
+      }),
+    revokeTeamInvitation: (id: string, invitationId: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/team/invitations/${invitationId}`, { method: 'DELETE' }),
+    updateTeamMemberRole: (id: string, userId: string, role: TeamRole) =>
+      request<TeamMember>(`/clients/${id}/team/members/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role })
+      }),
+    removeTeamMember: (id: string, userId: string) =>
+      request<{ ok: boolean }>(`/clients/${id}/team/members/${userId}`, { method: 'DELETE' }),
     connectors: (id: string) => request<ConnectorStatus>(`/clients/${id}/connectors`),
     gmailAuthUrl: (id: string) => request<{ url: string }>(`/clients/${id}/gmail/auth-url`),
     disconnectGmail: (id: string) => request<{ ok: boolean }>(`/clients/${id}/gmail`, { method: 'DELETE' })
@@ -890,6 +1023,8 @@ export const api = {
       request<Prospect>('/prospecting', { method: 'POST', body: JSON.stringify({ candidate, category, area }) }),
     update: (id: string, patch: { status?: ProspectStatus; email?: string | null; notes?: string | null }) =>
       request<Prospect>(`/prospecting/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    delete: (id: string) =>
+      request<{ ok: true }>(`/prospecting/${id}`, { method: 'DELETE' }),
     generateDrafts: (id: string) =>
       request<Prospect>(`/prospecting/${id}/draft`, { method: 'POST' }),
     audit: (id: string) =>
@@ -900,6 +1035,54 @@ export const api = {
       const res = await rawFetch(`/prospecting/export.csv${status ? `?status=${status}` : ''}`, undefined, false)
       if (!res.ok) throw new Error(`Export failed: ${res.status}`)
       return res.text()
+    },
+    mockupStyles: () => request<MockupStyle[]>('/prospecting/mockup-styles'),
+    mockups: (id: string) => request<ProspectMockup[]>(`/prospecting/${id}/mockups`),
+    generateMockup: (id: string, opts: { styleKey?: string; directionNotes?: string } = {}) =>
+      request<ProspectMockup>(`/prospecting/${id}/mockups`, { method: 'POST', body: JSON.stringify(opts) }),
+    previewMockup: (id: string, opts: { directionNotes?: string } = {}) =>
+      request<MockupPreview>(`/prospecting/${id}/mockups/preview`, { method: 'POST', body: JSON.stringify(opts) }),
+    // The image needs the auth header, so it can't be a plain <img src>; fetch
+    // the bytes and hand back an object URL the caller must revoke.
+    mockupImageUrl: async (mockupId: string): Promise<string> => {
+      const res = await rawFetch(`/prospecting/mockups/${mockupId}/image`, undefined, false)
+      if (!res.ok) throw new Error(`Failed to load image: ${res.status}`)
+      return URL.createObjectURL(await res.blob())
+    },
+    previews: (id: string) => request<ProspectPreview[]>(`/prospecting/${id}/previews`),
+    createPreview: (id: string, opts: { mockupId?: string | null; crawlId?: string | null } = {}) =>
+      request<ProspectPreview>(`/prospecting/${id}/previews`, { method: 'POST', body: JSON.stringify(opts) }),
+    revokePreview: (previewId: string) =>
+      request<ProspectPreview>(`/prospecting/previews/${previewId}/revoke`, { method: 'POST' }),
+
+    designReferences: (includeInactive = false) =>
+      request<DesignReference[]>(`/prospecting/design-references${includeInactive ? '?includeInactive=true' : ''}`),
+    uploadDesignReference: async (file: File, meta: { label?: string; vertical?: string; notes?: string } = {}) => {
+      const form = new FormData()
+      form.append('file', file)
+      if (meta.label) form.append('label', meta.label)
+      if (meta.vertical) form.append('vertical', meta.vertical)
+      if (meta.notes) form.append('notes', meta.notes)
+      const res = await fetch(`${BASE}/prospecting/design-references`, {
+        method: 'POST',
+        headers: await authHeaders(),
+        body: form
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `Upload failed: ${res.status}`)
+      }
+      return res.json() as Promise<DesignReference>
+    },
+    updateDesignReference: (refId: string, patch: { label?: string; vertical?: string | null; notes?: string | null; active?: boolean }) =>
+      request<DesignReference>(`/prospecting/design-references/${refId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    deleteDesignReference: (refId: string) =>
+      request<{ ok: true }>(`/prospecting/design-references/${refId}`, { method: 'DELETE' }),
+    // Auth'd like mockupImageUrl — object URL, caller must revoke.
+    designReferenceImageUrl: async (refId: string): Promise<string> => {
+      const res = await rawFetch(`/prospecting/design-references/${refId}/image`, undefined, false)
+      if (!res.ok) throw new Error(`Failed to load image: ${res.status}`)
+      return URL.createObjectURL(await res.blob())
     }
   }
 }

@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import type { LucideIcon } from 'lucide-react'
 import {
   Users, Sparkles, LayoutDashboard, Search, Bot,
-  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin, Target, Megaphone
+  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin, Target, Megaphone, Users2
 } from 'lucide-react'
 import { UserButton } from '@clerk/react'
 import { dark } from '@clerk/themes'
@@ -43,11 +43,12 @@ const CLIENT_SECTIONS: ClientNavItem[] = [
   { label: 'SEO + AI Visibility', to: 'seo', icon: Search, serviceKey: 'seo' },
   { label: 'Local Presence', to: 'local', icon: MapPin, serviceKey: 'local' },
   { label: 'Chat Assistant', to: 'assistant', icon: Bot, serviceKey: 'chat' },
+  { label: 'Leads', to: 'leads', icon: Users },
   { label: 'Content', to: 'content', icon: Sparkles, serviceKey: 'content' },
   { label: 'Paid Ads', to: 'ads', icon: Megaphone, serviceKey: 'ads' },
-  { label: 'Leads', to: 'leads', icon: Users },
   { label: 'Requests', to: 'requests', icon: MessageSquarePlus },
   { label: 'Reports', to: 'reports', icon: FileBarChart },
+  { label: 'Team', to: 'team', icon: Users2 },
   { label: 'Billing', to: 'billing', icon: CreditCard },
   { label: 'Config', to: 'config', icon: Settings } // includes Connectors — see ConfigSection
 ]

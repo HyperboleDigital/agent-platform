@@ -1,13 +1,27 @@
 import { Router } from 'express'
+import multer from 'multer'
 import { getIdentity } from '../lib/authz'
 import {
-  discoverProspects, listProspects, getProspect, saveProspect, updateProspect,
+  discoverProspects, listProspects, getProspect, saveProspect, updateProspect, deleteProspect,
   generateDrafts, prospectsCsv, type ProspectStatus,
 } from '../lib/prospecting'
 import { placesConfigured } from '../lib/places'
 import { startAdhocCrawl, crawlConfigured } from '../lib/dataforseo'
+import {
+  generateMockup, listMockups, getMockup, getMockupImage, mockupsConfigured, STYLES, previewGeneration,
+} from '../lib/prospect-mockups'
+import { createPreview, listPreviews, revokePreview, previewUrl } from '../lib/prospect-previews'
+import {
+  listReferences, getReference, uploadReference, updateReference, deleteReference, getReferenceImage,
+} from '../lib/design-references'
 
 export const prospectingRouter = Router()
+
+// Memory storage, same posture as clientsRouter's uploader: these go straight
+// to Supabase storage and never touch the container's disk.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } })
+
+const ALLOWED_REFERENCE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 
 // Cold-outreach prospecting is an admin tool — superadmin only, no per-client
 // scoping (mirrors overviewRouter's guard).
@@ -54,6 +68,102 @@ prospectingRouter.get('/export.csv', async (req, res) => {
   }
 })
 
+// Static segments registered before the '/:id' routes below so they can't be
+// shadowed (same reasoning as /export.csv above).
+prospectingRouter.get('/mockup-styles', (_req, res) => {
+  res.json(STYLES.map(s => ({ key: s.key, label: s.label })))
+})
+
+// Authenticated image fetch, so the dashboard can show a concept before any
+// public preview link exists. The public equivalent is GET /p/:token/image.
+prospectingRouter.get('/mockups/:mockupId/image', async (req, res) => {
+  try {
+    const mockup = await getMockup(req.params.mockupId)
+    if (!mockup) return res.status(404).json({ error: 'Mockup not found' })
+    // HTML concepts have no PNG — the dashboard iframes them instead.
+    if (!mockup.storagePath) return res.status(404).json({ error: 'This concept is HTML, not an image' })
+    res.type('png').send(await getMockupImage(mockup.storagePath))
+  } catch (err) {
+    res.status(404).json({ error: err instanceof Error ? err.message : 'Image not found' })
+  }
+})
+
+// ── Design reference library ─────────────────────────────────────────────────
+// The operator's inspo images. Concept generation imitates these and nothing
+// else, so this is where design direction actually lives. Registered before
+// the '/:id' routes so 'design-references' isn't read as a prospect id.
+
+prospectingRouter.get('/design-references', async (req, res) => {
+  try {
+    res.json(await listReferences({ includeInactive: req.query.includeInactive === 'true' }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to list design references' })
+  }
+})
+
+prospectingRouter.post('/design-references', upload.single('file'), async (req, res) => {
+  const file = req.file
+  if (!file) return res.status(400).json({ error: 'file required (multipart field "file")' })
+  // The whole point of these is to be shown to a vision model, so a format it
+  // can't read is a silent no-op rather than an upload worth keeping.
+  if (!ALLOWED_REFERENCE_TYPES.includes(file.mimetype)) {
+    return res.status(400).json({ error: `Unsupported image type: ${file.mimetype}. Use PNG, JPEG, WebP, or GIF.` })
+  }
+  const { label, vertical, notes } = req.body ?? {}
+  try {
+    res.json(await uploadReference({
+      label: typeof label === 'string' && label.trim() ? label.trim() : file.originalname,
+      vertical: typeof vertical === 'string' ? vertical : null,
+      notes: typeof notes === 'string' ? notes : null,
+      contentType: file.mimetype,
+      buffer: file.buffer,
+    }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to upload design reference' })
+  }
+})
+
+prospectingRouter.get('/design-references/:refId/image', async (req, res) => {
+  try {
+    const reference = await getReference(req.params.refId)
+    if (!reference) return res.status(404).json({ error: 'Design reference not found' })
+    res.type(reference.contentType).send(await getReferenceImage(reference.storagePath))
+  } catch (err) {
+    res.status(404).json({ error: err instanceof Error ? err.message : 'Image not found' })
+  }
+})
+
+prospectingRouter.patch('/design-references/:refId', async (req, res) => {
+  const { label, vertical, notes, active } = req.body ?? {}
+  try {
+    res.json(await updateReference(req.params.refId, {
+      ...(typeof label === 'string' ? { label } : {}),
+      ...(vertical !== undefined ? { vertical } : {}),
+      ...(notes !== undefined ? { notes } : {}),
+      ...(typeof active === 'boolean' ? { active } : {}),
+    }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update design reference' })
+  }
+})
+
+prospectingRouter.delete('/design-references/:refId', async (req, res) => {
+  try {
+    await deleteReference(req.params.refId)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete design reference' })
+  }
+})
+
+prospectingRouter.post('/previews/:previewId/revoke', async (req, res) => {
+  try {
+    res.json(await revokePreview(req.params.previewId))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to revoke preview' })
+  }
+})
+
 prospectingRouter.get('/', async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status as ProspectStatus : undefined
   if (status && !VALID_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' })
@@ -90,6 +200,15 @@ prospectingRouter.patch('/:id', async (req, res) => {
   }
 })
 
+prospectingRouter.delete('/:id', async (req, res) => {
+  try {
+    await deleteProspect(req.params.id)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete prospect' })
+  }
+})
+
 // Generate both outreach draft variants for a prospect.
 prospectingRouter.post('/:id/draft', async (req, res) => {
   try {
@@ -110,5 +229,73 @@ prospectingRouter.post('/:id/audit', async (req, res) => {
     res.json(await startAdhocCrawl(prospect.website))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to start audit' })
+  }
+})
+
+// ── Mockup concepts + shareable preview ──────────────────────────────────────
+// Still no send path: these produce an image and a link the operator pastes
+// into the email they send themselves.
+
+prospectingRouter.get('/:id/mockups', async (req, res) => {
+  try {
+    res.json(await listMockups(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to list mockups' })
+  }
+})
+
+// Generates a NEW concept each call — "regenerate" is just calling it again,
+// so an already-shared preview keeps showing what was actually sent.
+prospectingRouter.post('/:id/mockups', async (req, res) => {
+  if (!mockupsConfigured()) return res.status(400).json({ error: 'OPENAI_API_KEY is not configured on this deployment' })
+  const { styleKey, directionNotes } = req.body ?? {}
+  try {
+    res.json(await generateMockup(req.params.id, {
+      styleKey: typeof styleKey === 'string' ? styleKey : undefined,
+      directionNotes: typeof directionNotes === 'string' ? directionNotes : undefined,
+    }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate mockup' })
+  }
+})
+
+// Assembles the same prompt + images generateMockup would send, without
+// calling Claude — zero LLM cost. Lets the operator paste the result into a
+// free tool (ChatGPT, Gemini) to sanity-check the design library and prompt
+// before spending real tokens on a generation that gets saved as a mockup.
+// No mockupsConfigured() guard: unlike generation, this never touches
+// Anthropic, so it works even before ANTHROPIC_API_KEY is set.
+prospectingRouter.post('/:id/mockups/preview', async (req, res) => {
+  const { directionNotes } = req.body ?? {}
+  try {
+    res.json(await previewGeneration(req.params.id, {
+      directionNotes: typeof directionNotes === 'string' ? directionNotes : undefined,
+    }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to build preview' })
+  }
+})
+
+prospectingRouter.get('/:id/previews', async (req, res) => {
+  try {
+    const previews = await listPreviews(req.params.id)
+    res.json(previews.map(p => ({ ...p, url: previewUrl(p.previewToken) })))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to list previews' })
+  }
+})
+
+// A preview pins a specific (mockup, crawl) pair, so regenerating either
+// afterwards doesn't change what an already-shared link shows.
+prospectingRouter.post('/:id/previews', async (req, res) => {
+  const { mockupId, crawlId } = req.body ?? {}
+  try {
+    const preview = await createPreview(req.params.id, {
+      mockupId: typeof mockupId === 'string' ? mockupId : null,
+      crawlId: typeof crawlId === 'string' ? crawlId : null,
+    })
+    res.json({ ...preview, url: previewUrl(preview.previewToken) })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create preview' })
   }
 })

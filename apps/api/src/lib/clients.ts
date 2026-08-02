@@ -12,6 +12,7 @@ interface ClientRow {
   created_at: string
   clerk_org_id: string | null
   portal_config: Client['portalConfig']
+  widget_config: Client['widgetConfig']
   vertical: Client['vertical']
   tier_key: string | null
 }
@@ -27,6 +28,7 @@ function fromRow(row: ClientRow): Client {
     createdAt: row.created_at,
     clerkOrgId: row.clerk_org_id ?? null,
     portalConfig: row.portal_config ?? {},
+    widgetConfig: row.widget_config ?? {},
     vertical: row.vertical ?? null,
     tierKey: row.tier_key ?? null
   }
@@ -42,6 +44,7 @@ function toRow(client: Partial<Client>): Partial<ClientRow> {
   if (client.agentConfig !== undefined) row.agent_config = client.agentConfig
   if (client.clerkOrgId !== undefined) row.clerk_org_id = client.clerkOrgId
   if (client.portalConfig !== undefined) row.portal_config = client.portalConfig
+  if (client.widgetConfig !== undefined) row.widget_config = client.widgetConfig
   if (client.vertical !== undefined) row.vertical = client.vertical
   if (client.tierKey !== undefined) row.tier_key = client.tierKey
   return row
@@ -130,6 +133,18 @@ export async function reconcileUserMembership(userId: string): Promise<string | 
       const match = invs.data.find(i => i.emailAddress.toLowerCase() === email && i.status === 'pending')
       if (!match) continue
       await clerkClient.organizations.createOrganizationMembership({ organizationId: c.clerkOrgId, userId, role: 'org:admin' })
+      // Joining this way doesn't consume the ticket, so Clerk would leave the
+      // invitation "pending" forever — the same person then shows up as both a
+      // member and a pending invite, double-counting a seat on the Team screen.
+      // Retire it explicitly. Best effort: the membership is what matters.
+      try {
+        await clerkClient.organizations.revokeOrganizationInvitation({
+          organizationId: c.clerkOrgId,
+          invitationId: match.id
+        })
+      } catch (err) {
+        console.error('[clients] joined org but failed to retire invitation', match.id, err instanceof Error ? err.message : err)
+      }
       return c.clerkOrgId
     } catch (err) {
       console.error('[clients] reconcile check failed for org', c.clerkOrgId, err instanceof Error ? err.message : err)
@@ -210,12 +225,16 @@ export async function inviteClientUser(clientId: string, email: string): Promise
   // redirectUrl sends them straight into OUR dashboard after they accept +
   // set a password — otherwise Clerk drops them on its hosted "default-redirect"
   // welcome page, which looks broken to a client.
-  const dashboardUrl = process.env.DASHBOARD_URL ?? 'http://localhost:5173'
+  // Must land on /sign-up: Clerk appends `__clerk_ticket` to this URL and only
+  // <SignUp> consumes it. Pointing at the dashboard root sends the invitee
+  // through ProtectedLayout's RedirectToSignIn, which strips the query string
+  // and silently loses the ticket — they just get a plain login form.
+  const dashboardUrl = (process.env.DASHBOARD_URL ?? 'http://localhost:5173').replace(/\/$/, '')
   const invitation = await clerkClient.organizations.createOrganizationInvitation({
     organizationId: orgId,
     emailAddress: email,
     role: 'org:admin',
-    redirectUrl: dashboardUrl
+    redirectUrl: `${dashboardUrl}/sign-up`
   })
 
   return { clerkOrgId: orgId, invitationId: invitation.id }
