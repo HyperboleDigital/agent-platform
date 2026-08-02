@@ -421,6 +421,17 @@ function WidgetTab({ client }: { client: Client }) {
   const prompts = draft.prompts?.length ? draft.prompts : fallbackPrompts
   const usingDefaultChips = !draft.chips?.length
   const domains = draft.allowedDomains ?? []
+
+  // Key order isn't stable across edits (`set` appends new keys), so compare
+  // with keys sorted — otherwise reordering alone would report a false "unsaved
+  // changes".
+  const stable = (o: unknown): string =>
+    JSON.stringify(o, (_k, v) =>
+      v && typeof v === 'object' && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+        : v
+    )
+  const dirty = stable(draft) !== stable(client.widgetConfig ?? {})
   const usingDefaultPrompts = !draft.prompts?.length
 
   const snippet = `<script
@@ -635,6 +646,9 @@ function WidgetTab({ client }: { client: Client }) {
           <Button variant="outline" size="sm" className="w-fit" onClick={() => set('allowedDomains', [...domains, ''])}>
             <Plus className="h-3.5 w-3.5" /> Add domain
           </Button>
+          <p className="text-xs text-muted-foreground">
+            Takes effect after <strong>Save widget settings</strong> below.
+          </p>
         </CardContent>
       </Card>
 
@@ -690,7 +704,11 @@ function WidgetTab({ client }: { client: Client }) {
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
+      {/* Sticky: every card on this tab is saved by this one button, and the
+          tab is long enough that a footer button scrolls out of sight — which
+          reads as "this section has no save". */}
+      <div className="sticky bottom-0 z-10 -mx-4 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
+        {dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
         <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save widget settings'}</Button>
       </div>
     </div>
