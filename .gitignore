@@ -152,3 +152,7 @@ hyperboledigital-homepage.png
 
 # macOS
 .DS_Store
+
+# Generated client proposals — contain pricing; keep out of git by default.
+# Delete these two lines if you want them tracked as business records.
+proposals/

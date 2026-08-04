@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* Hyperbole gold. Swap this one value to re-brand the whole document. */
+  :root {
+    --accent: #BA9E66;
+    --ink: #16181D;
+    --body: #4A5160;
+    --rule: #E4E7EC;
+    --wash: #F7F8FA;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 56px 40px 72px;
+    font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--ink);
+    background: #fff;
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet { max-width: 860px; margin: 0 auto; }
+
+  h1 { font-size: 27px; font-weight: 700; letter-spacing: -0.4px; margin: 0 0 10px; }
+  .intro { font-size: 15px; line-height: 1.6; color: var(--body); margin: 0 0 34px; max-width: 68ch; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    background: var(--ink);
+    color: #fff;
+    font-size: 13.5px;
+    font-weight: 600;
+    text-align: left;
+    padding: 13px 16px;
+  }
+  thead th.num { text-align: right; }
+  tbody td { padding: 16px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: 2px solid var(--ink); }
+  .item-name { font-size: 15px; font-weight: 600; margin-bottom: 5px; }
+  .item-desc { font-size: 13.5px; line-height: 1.55; color: var(--body); max-width: 62ch; }
+  td.num { text-align: right; white-space: nowrap; font-size: 14px; }
+  td.rate { color: var(--body); }
+
+  .total-row { display: flex; justify-content: space-between; align-items: baseline; padding: 20px 16px 0; }
+  .total-label { font-size: 19px; font-weight: 700; }
+  .total-value { font-size: 23px; font-weight: 700; letter-spacing: -0.3px; }
+
+  h2 { font-size: 17px; font-weight: 700; margin: 42px 0 14px; }
+  .terms {
+    background: var(--wash);
+    border-left: 3px solid var(--accent);
+    padding: 18px 22px;
+    border-radius: 0 6px 6px 0;
+  }
+  .terms ul { margin: 0; padding-left: 20px; }
+  .terms li { font-size: 14px; line-height: 1.65; color: var(--body); margin-bottom: 9px; }
+  .terms li:last-child { margin-bottom: 0; }
+  .terms strong { color: var(--ink); font-weight: 600; }
+
+  footer {
+    margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--rule);
+    font-size: 12.5px; color: var(--body);
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+
+  /* Tuned for Cmd-P → Save as PDF. Keeps a line item from splitting across
+     pages, which is the one thing that makes a proposal look sloppy in print. */
+  @media print {
+    body { padding: 0; }
+    tbody tr, .terms { break-inside: avoid; page-break-inside: avoid; }
+    thead th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .terms { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+  @page { margin: 16mm; }
+
+  @media (max-width: 640px) {
+    body { padding: 32px 20px 48px; }
+    h1 { font-size: 22px; }
+    .item-desc { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <h1>{{TITLE}}</h1>
+  <p class="intro">{{INTRO}}</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th class="num">Rate</th>
+        <th class="num">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- ROW: duplicate this <tr> per line item -->
+      <tr>
+        <td>
+          <div class="item-name">{{ITEM_NAME}}</div>
+          <div class="item-desc">{{ITEM_DESC}}</div>
+        </td>
+        <td class="num rate">{{ITEM_RATE}}</td>
+        <td class="num">{{ITEM_TOTAL}}</td>
+      </tr>
+      <!-- /ROW -->
+    </tbody>
+  </table>
+
+  <div class="total-row">
+    <div class="total-label">Total Due</div>
+    <div class="total-value">{{TOTAL}}</div>
+  </div>
+
+  <h2>Terms</h2>
+  <div class="terms">
+    <ul>
+      <!-- TERM: duplicate this <li> per term -->
+      <li>{{TERM}}</li>
+      <!-- /TERM -->
+    </ul>
+  </div>
+
+  <footer>
+    <span>Prepared for {{CLIENT}}</span>
+    <span>{{DATE}}</span>
+  </footer>
+
+</div>
+</body>
+</html>
