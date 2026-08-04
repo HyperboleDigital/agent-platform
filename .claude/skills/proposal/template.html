@@ -6,132 +6,172 @@
 <title>{{TITLE}}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;700&display=swap" rel="stylesheet" />
 <style>
-  /* Hyperbole gold. Swap this one value to re-brand the whole document. */
+  /* Design source of truth: Figma "Project Proposal Template", node 405:3.
+     The frame is 595x842 — A4 at 72dpi, so 1 Figma unit == 1pt exactly.
+     Everything below is therefore in pt and maps 1:1 to the design, and
+     prints at true A4 without any scaling fudge. */
   :root {
-    --accent: #BA9E66;
-    --ink: #16181D;
-    --body: #4A5160;
-    --rule: #E4E7EC;
-    --wash: #F7F8FA;
+    --ink: #333333;      /* Figma "Gray 1" — headings, body, rules */
+    --muted: #828282;    /* Figma "Gray 3" — the Total label */
+    --page: #fafafa;
+    --label: #000000;    /* item names are pure black in the design */
+
+    --margin: 31pt;
+    --col-label: 151pt;  /* 31 -> 182 */
+    --col-body: 381pt;   /* 182 -> 563 */
   }
   * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #e9e9e9; }
+
+  /* TT Norms Pro is the licensed face used in the Figma file. It is listed
+     first so it renders correctly on a machine that has it; Figtree is the
+     closest free geometric fallback for everyone else. */
   body {
-    margin: 0;
-    padding: 56px 40px 72px;
-    font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'TT Norms Pro', 'Figtree', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
     color: var(--ink);
-    background: #fff;
     -webkit-font-smoothing: antialiased;
   }
-  .sheet { max-width: 860px; margin: 0 auto; }
 
-  h1 { font-size: 27px; font-weight: 700; letter-spacing: -0.4px; margin: 0 0 10px; }
-  .intro { font-size: 15px; line-height: 1.6; color: var(--body); margin: 0 0 34px; max-width: 68ch; }
-
-  table { width: 100%; border-collapse: collapse; }
-  thead th {
-    background: var(--ink);
-    color: #fff;
-    font-size: 13.5px;
-    font-weight: 600;
-    text-align: left;
-    padding: 13px 16px;
+  .page {
+    width: 595pt;
+    min-height: 842pt;
+    margin: 24pt auto;
+    padding: 43pt var(--margin) 40pt;
+    background: var(--page);
+    position: relative;
   }
-  thead th.num { text-align: right; }
-  tbody td { padding: 16px; border-bottom: 1px solid var(--rule); vertical-align: top; }
-  tbody tr:last-child td { border-bottom: 2px solid var(--ink); }
-  .item-name { font-size: 15px; font-weight: 600; margin-bottom: 5px; }
-  .item-desc { font-size: 13.5px; line-height: 1.55; color: var(--body); max-width: 62ch; }
-  td.num { text-align: right; white-space: nowrap; font-size: 14px; }
-  td.rate { color: var(--body); }
 
-  .total-row { display: flex; justify-content: space-between; align-items: baseline; padding: 20px 16px 0; }
-  .total-label { font-size: 19px; font-weight: 700; }
-  .total-value { font-size: 23px; font-weight: 700; letter-spacing: -0.3px; }
+  /* ── Masthead ─────────────────────────────────────────────────────────── */
+  .rule-top { height: 5pt; width: 227pt; background: var(--ink); }
+  .masthead {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 9pt;
+  }
+  .masthead h1,
+  .masthead .client {
+    font-size: 24pt; font-weight: 700; letter-spacing: -0.34pt;
+    margin: 0; line-height: 1.2;
+  }
 
-  h2 { font-size: 17px; font-weight: 700; margin: 42px 0 14px; }
+  /* ── Line items ───────────────────────────────────────────────────────── */
+  .item {
+    display: grid;
+    grid-template-columns: var(--col-label) var(--col-body);
+    margin-top: 46pt;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  .item-name {
+    font-size: 14pt; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.7pt; color: var(--label); line-height: 1.35;
+  }
+  .item-body { font-size: 14pt; line-height: 1.35; }
+  .timeline { margin: 0; }
+  .desc { margin: 0; }
+  .rule { height: 5pt; background: var(--ink); margin-top: 20pt; }
+  .amount-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 16pt;
+  }
+  .total-label { font-size: 14pt; color: var(--muted); }
+  .amount { font-size: 20pt; }
+
+  /* ── Grand total ──────────────────────────────────────────────────────────
+     Not present in the Figma frame, which stops at per-item totals. Extended
+     in the same language — same grid, same rule, one step up in weight — so a
+     multi-item proposal still resolves to a single number. */
+  .grand {
+    display: grid;
+    grid-template-columns: var(--col-label) var(--col-body);
+    margin-top: 46pt;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  .grand .rule-full { grid-column: 1 / -1; height: 5pt; background: var(--ink); }
+  .grand-label {
+    font-size: 14pt; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.7pt; color: var(--label); margin-top: 16pt;
+  }
+  .grand-value {
+    font-size: 24pt; font-weight: 700; text-align: right;
+    letter-spacing: -0.34pt; margin-top: 16pt;
+  }
+
+  /* ── Terms ────────────────────────────────────────────────────────────── */
   .terms {
-    background: var(--wash);
-    border-left: 3px solid var(--accent);
-    padding: 18px 22px;
-    border-radius: 0 6px 6px 0;
+    display: grid;
+    grid-template-columns: var(--col-label) var(--col-body);
+    margin-top: 46pt;
+    break-inside: avoid; page-break-inside: avoid;
   }
-  .terms ul { margin: 0; padding-left: 20px; }
-  .terms li { font-size: 14px; line-height: 1.65; color: var(--body); margin-bottom: 9px; }
+  .terms-label {
+    font-size: 14pt; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.7pt; color: var(--label);
+  }
+  .terms ul { margin: 0; padding-left: 14pt; }
+  .terms li { font-size: 14pt; line-height: 1.35; margin-bottom: 10pt; }
   .terms li:last-child { margin-bottom: 0; }
-  .terms strong { color: var(--ink); font-weight: 600; }
+  .terms strong { font-weight: 700; }
 
-  footer {
-    margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--rule);
-    font-size: 12.5px; color: var(--body);
-    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  .meta {
+    display: flex; justify-content: space-between;
+    margin-top: 46pt; font-size: 10pt; color: var(--muted);
   }
 
-  /* Tuned for Cmd-P → Save as PDF. Keeps a line item from splitting across
-     pages, which is the one thing that makes a proposal look sloppy in print. */
+  /* ── Print ────────────────────────────────────────────────────────────── */
+  @page { size: A4; margin: 0; }
   @media print {
-    body { padding: 0; }
-    tbody tr, .terms { break-inside: avoid; page-break-inside: avoid; }
-    thead th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .terms { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  }
-  @page { margin: 16mm; }
-
-  @media (max-width: 640px) {
-    body { padding: 32px 20px 48px; }
-    h1 { font-size: 22px; }
-    .item-desc { font-size: 13px; }
+    html, body { background: #fff; }
+    .page { margin: 0; width: auto; min-height: auto; box-shadow: none; }
+    .rule-top, .rule, .rule-full, .page {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
   }
 </style>
 </head>
 <body>
-<div class="sheet">
+<div class="page">
 
-  <h1>{{TITLE}}</h1>
-  <p class="intro">{{INTRO}}</p>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Item</th>
-        <th class="num">Rate</th>
-        <th class="num">Total</th>
-      </tr>
-    </thead>
-    <tbody>
-      <!-- ROW: duplicate this <tr> per line item -->
-      <tr>
-        <td>
-          <div class="item-name">{{ITEM_NAME}}</div>
-          <div class="item-desc">{{ITEM_DESC}}</div>
-        </td>
-        <td class="num rate">{{ITEM_RATE}}</td>
-        <td class="num">{{ITEM_TOTAL}}</td>
-      </tr>
-      <!-- /ROW -->
-    </tbody>
-  </table>
-
-  <div class="total-row">
-    <div class="total-label">Total Due</div>
-    <div class="total-value">{{TOTAL}}</div>
+  <div class="rule-top"></div>
+  <div class="masthead">
+    <h1>{{TITLE}}</h1>
+    <div class="client">{{CLIENT}}</div>
   </div>
 
-  <h2>Terms</h2>
-  <div class="terms">
+  <!-- ROW: duplicate this <section> per line item -->
+  <section class="item">
+    <div class="item-name">{{ITEM_NAME}}</div>
+    <div class="item-body">
+      <p class="timeline">Timeline: {{ITEM_TIMELINE}}</p>
+      <p class="desc">{{ITEM_DESC}}</p>
+      <div class="rule"></div>
+      <div class="amount-row">
+        <span class="total-label">Total</span>
+        <span class="amount">{{ITEM_TOTAL}}</span>
+      </div>
+    </div>
+  </section>
+  <!-- /ROW -->
+
+  <section class="grand">
+    <div class="rule-full"></div>
+    <div class="grand-label">Total Due</div>
+    <div class="grand-value">{{TOTAL}}</div>
+  </section>
+
+  <section class="terms">
+    <div class="terms-label">Terms</div>
     <ul>
       <!-- TERM: duplicate this <li> per term -->
       <li>{{TERM}}</li>
       <!-- /TERM -->
     </ul>
-  </div>
+  </section>
 
-  <footer>
+  <div class="meta">
     <span>Prepared for {{CLIENT}}</span>
     <span>{{DATE}}</span>
-  </footer>
+  </div>
 
 </div>
 </body>

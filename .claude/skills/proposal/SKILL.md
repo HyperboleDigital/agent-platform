@@ -36,15 +36,41 @@ than no proposal.
 
 ### 3. Fill the template
 
-Copy `template.html` and replace the marked placeholders. Line-item rows are a
-repeated `<tr>` block — duplicate or delete as needed.
+Copy `template.html` and replace the marked placeholders. Line items are a
+repeated `<section class="item">` block — duplicate or delete as needed.
 
-Placeholders: `{{TITLE}}`, `{{INTRO}}`, `{{CLIENT}}`, `{{DATE}}`,
-`{{TOTAL}}`, plus the `<!-- ROW -->` and `<!-- TERM -->` repeat blocks.
+Placeholders: `{{TITLE}}`, `{{CLIENT}}`, `{{DATE}}`, `{{TOTAL}}`, plus the
+`<!-- ROW -->` (with `{{ITEM_NAME}}`, `{{ITEM_TIMELINE}}`, `{{ITEM_DESC}}`,
+`{{ITEM_TOTAL}}`) and `<!-- TERM -->` repeat blocks.
 
-`--accent` is one CSS variable at the top of the file. Hyperbole gold
-(`#BA9E66`) is the default; swap it per-client if the proposal should carry the
-client's brand instead.
+Break long item names across two lines with `<br>` — the label column is 151pt
+and the design sets them in uppercase, so they wrap awkwardly otherwise.
+
+## Design source of truth
+
+The template reproduces a Figma frame. **Do not restyle it from taste — if the
+look needs to change, change it in Figma and re-read the frame.**
+
+- File `OnA2gff7NRfZVumPMCwJ44` ("Project Proposal Template"), node **`405:3`**
+  (note: `405:2` is the *page*; passing it to `get_design_context` errors with
+  "nothing selected")
+- Frame is 595×842 — A4 at 72dpi, so **1 Figma unit == 1pt**. The stylesheet is
+  written in `pt` for that reason and maps 1:1 to the design.
+- Colors: `#333333` (Gray 1 — text and rules), `#828282` (Gray 3 — the "Total"
+  label), `#fafafa` page, pure black item names
+- Grid: 31pt margins; label column 31→182, content column 182→563 (381pt)
+- Rules are 5pt-tall solid bars, not hairlines
+- **Money format follows the design: `$ 2,200`** — space after the sign, no
+  decimals, thousands separator
+
+**Font:** the file uses **TT Norms Pro**, which is licensed and can't be
+embedded. The stack lists it first (so it renders exactly on a machine that has
+it) and falls back to Figtree, the closest free geometric face.
+
+**Two sections are extensions, not from the frame:** the grand total and the
+terms block. The Figma frame stops at per-item totals. Both were built in the
+same language — same grid, same 5pt rule, same uppercase label column — so they
+read as part of the system.
 
 ### 4. Write and verify
 
