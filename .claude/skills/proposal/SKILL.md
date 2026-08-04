@@ -84,7 +84,44 @@ read as part of the system.
 Ask how they want it delivered:
 - **PDF** — open in a browser, Cmd-P → Save as PDF (the print CSS is tuned for this)
 - **Shareable link** — publish via the Artifact tool for a hosted page
+- **Figma frames** — see below; do this when they want to edit visually or have
+  someone comment on it
 - **File only** — leave it on disk
+
+### 6. Optional — push the approved version into Figma
+
+Only once they're happy with the generated version. HTML stays the source of
+truth (it's the thing with the arithmetic guard); Figma is for visual editing.
+
+Load the **`figma-use` skill first** — the MCP requires it before `use_figma`.
+
+- File `OnA2gff7NRfZVumPMCwJ44`, page **"Proposal"**
+- **Pages load lazily.** `figma.currentPage` starts on the first page every
+  call, and other pages report `children: 0` until you
+  `await figma.setCurrentPageAsync(page)`. This looks like an empty file if you
+  don't know it.
+- One A4 frame (595×842) per printed page, placed clear of existing frames.
+- Build with **auto-layout**, not absolute x/y: content column 532 wide at
+  (31, 43), `itemSpacing: 46` between sections; item = HORIZONTAL with a 151pt
+  FIXED label and a FILL body; body = VERTICAL with `itemSpacing: 20`.
+- Wrapping text needs `textAutoResize = 'HEIGHT'` **before** `layoutSizingHorizontal
+  = 'FILL'`, or it collapses to zero width.
+- Bullets: `setRangeListOptions(0, len, { type: 'UNORDERED' })`. Bold lead-ins:
+  `setRangeFontName(i, j, BOLD)`.
+- Screenshot each frame (`await frame.screenshot()`) and look at it before
+  reporting done.
+
+⚠️ **Font.** The design uses **TT Norms Pro**, which the *remote* Figma MCP
+cannot load — it runs in Figma's cloud, which only has Figma's shared font
+library, not locally-licensed fonts:
+
+```
+The font family "TT Norms Pro" does not exist.
+```
+
+Generated frames therefore use **Figtree** (the same fallback as the HTML, so
+the two stay consistent). If the editor has TT Norms Pro locally, select the
+frames in Figma and switch the family there — the plugin API can't do it.
 
 ## Rules
 
