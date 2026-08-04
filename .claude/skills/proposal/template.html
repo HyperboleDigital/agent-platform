@@ -98,18 +98,23 @@
   }
 
   /* ── Terms ────────────────────────────────────────────────────────────── */
+  /* Deliberately NOT break-inside:avoid. Terms grow with every clause added,
+     and forcing the whole block to stay together shunts all of them to the
+     next page and leaves a hole. Break between terms; never inside one. */
   .terms {
     display: grid;
     grid-template-columns: var(--col-label) var(--col-body);
     margin-top: 46pt;
-    break-inside: avoid; page-break-inside: avoid;
   }
   .terms-label {
     font-size: 14pt; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.7pt; color: var(--label);
   }
   .terms ul { margin: 0; padding-left: 14pt; }
-  .terms li { font-size: 14pt; line-height: 1.35; margin-bottom: 10pt; }
+  .terms li {
+    font-size: 14pt; line-height: 1.35; margin-bottom: 10pt;
+    break-inside: avoid; page-break-inside: avoid;
+  }
   .terms li:last-child { margin-bottom: 0; }
   .terms strong { font-weight: 700; }
 
@@ -118,12 +123,21 @@
     margin-top: 46pt; font-size: 10pt; color: var(--muted);
   }
 
-  /* ── Print ────────────────────────────────────────────────────────────── */
-  @page { size: A4; margin: 0; }
+  /* ── Print ──────────────────────────────────────────────────────────────
+     Margins live on @page, not as padding on .page. Padding only applies once
+     at the start of the flow, so on a multi-page proposal page 2 would start
+     flush against the top edge. The values match the design's 31pt gutters. */
+  @page { size: A4; margin: 43pt 31pt 40pt; }
   @media print {
-    html, body { background: #fff; }
-    .page { margin: 0; width: auto; min-height: auto; box-shadow: none; }
-    .rule-top, .rule, .rule-full, .page {
+    /* Background is set on body so it propagates to the full page canvas,
+       including the @page margin area — otherwise the tinted sheet would stop
+       at the content box and sit on white margins. */
+    html, body { background: var(--page); }
+    .page {
+      margin: 0; padding: 0; width: auto; min-height: auto;
+      background: transparent; box-shadow: none;
+    }
+    html, body, .rule-top, .rule, .rule-full {
       -webkit-print-color-adjust: exact; print-color-adjust: exact;
     }
   }
