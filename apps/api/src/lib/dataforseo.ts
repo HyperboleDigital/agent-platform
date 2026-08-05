@@ -491,6 +491,45 @@ export async function getCrawlHistory(clientId: string, days = 400): Promise<Seo
   return ((data as CrawlRow[] | null) ?? []).map(fromRow)
 }
 
+// One point per finished crawl, for the dashboard's score trend and
+// what-changed diff. Deliberately NOT getCrawlHistory: that returns whole rows
+// including every affected URL for every check (up to 25 per check, per crawl),
+// which is a large payload the trend has no use for. Here we select only the
+// scoring columns and drop `urls` from each check.
+//
+// Bounded by count rather than a date window because audits are sparse and
+// irregular — "the last 24 audits" is always meaningful, whereas "the last 90
+// days" can easily be empty on a client audited quarterly.
+export interface CrawlTrendPoint {
+  id: string
+  createdAt: string
+  onpageScore: number | null
+  aiSearchScore: number | null
+  pagesCrawled: number | null
+  checks: { key: string; label: string; count: number }[]
+}
+
+export async function getCrawlTrend(clientId: string, limit = 24): Promise<CrawlTrendPoint[]> {
+  const { data } = await supabase
+    .from('seo_crawls')
+    .select('id, created_at, onpage_score, pages_crawled, checks, ai_search')
+    .eq('client_id', clientId)
+    .eq('status', 'finished')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  type TrendRow = Pick<CrawlRow, 'id' | 'created_at' | 'onpage_score' | 'pages_crawled' | 'checks' | 'ai_search'>
+  const rows = ((data as TrendRow[] | null) ?? []).map(r => ({
+    id: r.id,
+    createdAt: r.created_at,
+    onpageScore: r.onpage_score,
+    aiSearchScore: r.ai_search?.score ?? null,
+    pagesCrawled: r.pages_crawled,
+    checks: (r.checks ?? []).map(c => ({ key: c.key, label: c.label, count: c.count })),
+  }))
+  return rows.reverse() // query is newest-first for the LIMIT; callers want oldest→newest
+}
+
 // Finalize any crawl still 'running'. Called on a timer from the server (see
 // index.ts) so a crawl completes even when no dashboard tab is open to poll it —
 // this platform has no scheduler, and the browser-only polling it used to rely

@@ -411,6 +411,17 @@ export interface SeoCrawl {
   updatedAt: string
 }
 
+// One entry per finished audit, oldest→newest. Trimmed server-side: no `urls`
+// on the checks, since the trend only ever needs counts.
+export interface CrawlTrendPoint {
+  id: string
+  createdAt: string
+  onpageScore: number | null
+  aiSearchScore: number | null
+  pagesCrawled: number | null
+  checks: { key: string; label: string; count: number }[]
+}
+
 // ── Prospecting (cold-outreach engine, superadmin) ────────────────────────────
 export type ProspectStatus =
   | 'new' | 'saved' | 'drafted' | 'sent' | 'replied' | 'won' | 'lost' | 'do_not_contact'
@@ -845,6 +856,7 @@ export const api = {
     keywordIdeas: (id: string, seed: string) =>
       request<{ ideas: KeywordIdea[] }>(`/clients/${id}/seo/keyword-ideas?seed=${encodeURIComponent(seed)}`),
     latestCrawl: (id: string) => request<SeoCrawl | null>(`/clients/${id}/seo/crawl`),
+    crawlHistory: (id: string) => request<CrawlTrendPoint[]>(`/clients/${id}/seo/crawl/history`),
     startCrawl: (id: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl`, { method: 'POST' }),
     refreshCrawl: (id: string, crawlId: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl/${crawlId}`),
     cancelCrawl: (id: string, crawlId: string) => request<SeoCrawl>(`/clients/${id}/seo/crawl/${crawlId}/cancel`, { method: 'POST' }),

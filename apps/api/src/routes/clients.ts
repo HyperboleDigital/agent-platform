@@ -11,7 +11,7 @@ import { getConnectorStatus } from '../lib/connectors'
 import { gmailConfigured, getAuthUrl, disconnectGmail } from '../lib/gmail'
 import { getMonthlyUsage } from '../lib/usage'
 import { getEntitlements, isEntitled } from '../lib/entitlements'
-import { startCrawl, refreshCrawl, cancelCrawl, getLatestCrawl, crawlConfigured, checkMapPackRank, researchKeywords } from '../lib/dataforseo'
+import { startCrawl, refreshCrawl, cancelCrawl, getLatestCrawl, getCrawlTrend, crawlConfigured, checkMapPackRank, researchKeywords } from '../lib/dataforseo'
 import { fetchPlaceSummary, placesConfigured, searchBusinesses } from '../lib/places'
 import { listTargetKeywords, addTargetKeyword, removeTargetKeyword, checkKeywordRanks } from '../lib/seo-keywords'
 import { createMetaFixRequest, createSchemaFixRequest, createLlmsTxtRequest } from '../lib/seo-fixes'
@@ -884,6 +884,19 @@ clientsRouter.get('/:id/seo/crawl', async (req, res) => {
   const id = await requireSeoAccess(req, res)
   if (!id) return
   res.json(await getLatestCrawl(id))
+})
+
+// Score trend + per-check history across every finished audit. Read-only, so
+// it follows the same entitlement as the latest crawl above — a client should
+// be able to see their own improvement, not just today's number.
+//
+// MUST stay above the '/:crawlId' route below: Express matches in registration
+// order, so declaring it after would make 'history' parse as a crawl id and
+// fall into refreshCrawl().
+clientsRouter.get('/:id/seo/crawl/history', async (req, res) => {
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  res.json(await getCrawlTrend(id))
 })
 
 clientsRouter.get('/:id/seo/crawl/:crawlId', async (req, res) => {

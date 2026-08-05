@@ -13,6 +13,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/empty-state'
 import { AuditReport } from '@/components/audit-report'
+import { AuditProgress } from '@/components/audit-progress'
 
 // A little chip that labels which feature on this page a setting drives, so it's
 // obvious at a glance what each field actually affects.
@@ -494,6 +495,7 @@ function AuditCard({ clientId, domain }: { clientId: string; domain?: string }) 
   const { data: me } = useSWR('me', api.me)
   const isAdmin = !!me?.isSuperadmin
   const { data: crawl, mutate: mutateCrawl } = useSWR(['seo-crawl', clientId], () => api.clients.latestCrawl(clientId))
+  const { data: history, mutate: mutateHistory } = useSWR(['seo-crawl-history', clientId], () => api.clients.crawlHistory(clientId))
   const [starting, setStarting] = useState(false)
   const [canceling, setCanceling] = useState(false)
   const [fixing, setFixing] = useState<null | 'meta' | 'schema' | 'llms'>(null)
@@ -518,13 +520,18 @@ function AuditCard({ clientId, domain }: { clientId: string; domain?: string }) 
       // Suppress the failure toast for user-initiated cancels — cancel() already
       // shows its own confirmation.
       if (current.status === 'failed' && current.error !== 'Canceled') toast.error(current.error ?? 'Crawl failed')
-      else if (current.status === 'finished') toast.success('Crawl audit complete')
+      else if (current.status === 'finished') {
+        toast.success('Crawl audit complete')
+        // The finished crawl is a new point on the trend; without this the
+        // Progress panel keeps comparing against the run before this one.
+        void mutateHistory()
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Crawl failed')
     } finally {
       pollingRef.current = false
     }
-  }, [clientId, mutateCrawl])
+  }, [clientId, mutateCrawl, mutateHistory])
 
   // Resume polling a crawl that's still 'running' when the card mounts — e.g.
   // the operator started a crawl, navigated away (killing the previous poll
@@ -652,6 +659,7 @@ function AuditCard({ clientId, domain }: { clientId: string; domain?: string }) 
         {crawl?.status === 'finished' && (
           <>
             <AuditReport crawl={crawl} showCost={isAdmin} />
+            <AuditProgress points={history ?? []} />
             {canFix && (
               <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2.5">
                 <span className="text-xs text-muted-foreground">Generate fixes:</span>
