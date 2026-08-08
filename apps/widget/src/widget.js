@@ -276,6 +276,10 @@
     #ap-window {
       position: fixed; bottom: 24px; right: 24px; z-index: 99998;
       width: 400px; height: 640px; max-height: calc(100vh - 48px);
+      /* dvh accounts for the browser's address/toolbar actually being on
+         screen; vh above is a fallback for browsers that don't support it —
+         see the mobile override below for why this matters most there. */
+      max-height: calc(100dvh - 48px);
       border-radius: 28px; background: var(--white);
       box-shadow: 0 24px 64px var(--p-glow), 0 8px 24px rgba(0,0,0,0.08);
       display: flex; flex-direction: column; overflow: hidden;
@@ -586,8 +590,29 @@
 
 
     @media (max-width: 440px) {
-      #ap-window { width: calc(100vw - 16px); right: 8px; bottom: 8px; height: calc(100vh - 16px); max-height: none; }
-      #ap-bubble { bottom: 16px; right: 16px; }
+      /* 100vh on mobile Safari/Chrome is the viewport with the address bar
+         HIDDEN — the actual on-screen height while it's visible (the normal
+         state) is shorter, so the panel ran taller than what's visible and
+         its bottom (the message input) rendered off-screen/behind the
+         browser chrome. 100dvh tracks the real visible viewport and updates
+         live as the browser's UI shows/hides; vh stays as the fallback for
+         browsers that don't support dvh. env(safe-area-inset-*) keeps the
+         panel and bubble clear of the home-indicator/notch area instead of
+         sitting flush against it.
+         100vh must be listed first — the cascade keeps it as the effective
+         value only in browsers that don't understand the dvh line at all. */
+      #ap-window {
+        width: calc(100vw - 16px);
+        right: max(8px, env(safe-area-inset-right));
+        bottom: max(8px, env(safe-area-inset-bottom));
+        height: calc(100vh - 16px);
+        height: calc(100dvh - 16px - env(safe-area-inset-bottom));
+        max-height: none;
+      }
+      #ap-bubble {
+        bottom: calc(16px + env(safe-area-inset-bottom));
+        right: max(16px, env(safe-area-inset-right));
+      }
     }
   `;
   document.head.appendChild(style);
