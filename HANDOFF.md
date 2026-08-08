@@ -45,9 +45,14 @@ during install by skipping `devDependencies`, which is where `typescript`
 and `tsx` (a *runtime* dependency here, see the CMD comment in `Dockerfile`)
 both live.
 
-**Clerk is still on test keys** (`pk_test_`/`sk_test_`). Fine solo, but move
-to a Clerk production instance before a real client logs in — shorter
-sessions and dev-mode telemetry warnings otherwise. Not started.
+**Clerk production instance: DONE (2026-08-07).** The deployed app (Vercel +
+Render) now runs on a dedicated Clerk **production** instance (`pk_live_`/
+`sk_live_`, frontend API `clerk.hyperboledigital.com`). **localhost still uses
+the dev instance** (`pk_test_`/`sk_test_`) — do not put live keys in
+`.env.local`/`apps/api/.env`, they reject localhost origins. Dev and prod have
+separate user pools, so `SUPERADMIN_USER_IDS` differs (local = dev user id,
+Render = prod user id). Full runbook + the "restricted sign-up mode" gotcha:
+`docs/clerk-production-migration.md`.
 
 ## Most recent session (2026-08-02/03): widget config, domain lock, deploy, chat memory
 
