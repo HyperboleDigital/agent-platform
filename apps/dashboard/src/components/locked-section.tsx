@@ -7,14 +7,19 @@ import { useEntitlements } from '@/hooks/use-entitlements'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { ContactButton } from '@/components/contact-button'
 
 function formatCents(cents: number): string {
   return (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 }
 
 // Full-page gate shown in place of a section the client isn't entitled to.
-// Renders the service's marketing copy + price and a purchase CTA (or a
-// "Coming soon" badge). Superadmins additionally get a one-click comp button.
+// Renders the service's marketing copy + price.
+//
+// Clients get a "Contact us" CTA, NOT a self-serve purchase button: adding a
+// service changes what they're billed, and that's a conversation we want to
+// have rather than a one-click charge from a locked screen. The provisioning
+// actions (add to plan / comp) are superadmin-only, below.
 export function LockedSection({ clientId, serviceKey }: { clientId: string; serviceKey: ServiceKey }) {
   const { data: services } = useSWR('services', api.billing.services)
   const { data: me } = useSWR('me', api.me)
@@ -73,17 +78,31 @@ export function LockedSection({ clientId, serviceKey }: { clientId: string; serv
             </p>
           )}
 
-          {!comingSoon && (
-            <Button onClick={purchase} disabled={busy} className="w-full">
-              <Sparkles className="h-4 w-4" />
-              {busy ? 'Adding…' : 'Add to plan'}
-            </Button>
+          {/* Client-facing: talk to us. No self-serve billing change here. */}
+          {!me?.isSuperadmin && !comingSoon && (
+            <div className="w-full [&>button]:w-full">
+              <ContactButton
+                clientId={clientId}
+                variant="default"
+                label="Contact us about this"
+                defaultTopic="Choosing or changing my plan"
+              />
+            </div>
           )}
 
+          {/* Superadmin provisioning — the actions that actually change billing. */}
           {me?.isSuperadmin && (
-            <Button onClick={comp} disabled={busy} variant="outline" size="sm" className="w-full">
-              Comp this service
-            </Button>
+            <div className="flex w-full flex-col gap-2">
+              {!comingSoon && (
+                <Button onClick={purchase} disabled={busy} className="w-full">
+                  <Sparkles className="h-4 w-4" />
+                  {busy ? 'Adding…' : 'Add to plan'}
+                </Button>
+              )}
+              <Button onClick={comp} disabled={busy} variant="outline" size="sm" className="w-full">
+                Comp this service
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

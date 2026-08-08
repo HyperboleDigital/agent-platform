@@ -1165,8 +1165,17 @@ clientsRouter.put('/:id/notification-settings', async (req, res) => {
 
 // ── Content engine (the `content` add-on service) ───────────────────────────
 
+// The content engine is internal agency tooling — we draft, review, and publish
+// posts on the client's behalf, so it's superadmin-only even for a client who
+// pays for the service. The dashboard hides the section from clients; this is
+// the check that actually enforces it, since a hidden nav link is not access
+// control.
 async function requireContentAccess(req: Request, res: import('express').Response): Promise<string | null> {
   const identity = identityOf(req)
+  if (!identity.isSuperadmin) {
+    res.status(403).json({ error: 'Forbidden' })
+    return null
+  }
   if (!(await canAccessClient(identity, req.params.id))) {
     res.status(403).json({ error: 'Forbidden' })
     return null

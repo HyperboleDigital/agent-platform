@@ -12,7 +12,7 @@ import ClientLayout from './pages/client/ClientLayout'
 import {
   ClientHome, LeadsSection, BillingSection, ConfigSection
 } from './pages/ClientDetail'
-import { Gate } from './components/gate'
+import { Gate, AdminOnly } from './components/gate'
 import Assistant from './pages/client/Assistant'
 import SeoVisibility from './pages/client/SeoVisibility'
 import LocalPresence from './pages/client/LocalPresence'
@@ -59,7 +59,9 @@ const router = createBrowserRouter([
               { path: 'local', element: <Gate service="local"><LocalPresence /></Gate> },
               { path: 'assistant', element: <Gate service="chat"><Assistant /></Gate> },
               { path: 'leads', element: <LeadsSection /> },
-              { path: 'content', element: <Gate service="content"><Content /></Gate> },
+              // Internal agency tooling — we draft/publish on the client's
+              // behalf, so it's superadmin-only and hidden from their nav.
+              { path: 'content', element: <AdminOnly><Gate service="content"><Content /></Gate></AdminOnly> },
               { path: 'ads', element: <Gate service="ads"><PaidAds /></Gate> },
               { path: 'requests', element: <Requests /> },
               { path: 'reports', element: <Reports /> },

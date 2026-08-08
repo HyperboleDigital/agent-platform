@@ -5,7 +5,8 @@ import { toast } from 'sonner'
 import type { LucideIcon } from 'lucide-react'
 import {
   Users, Sparkles, LayoutDashboard, Search, Bot,
-  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin, Target, Megaphone, Users2
+  MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin, Target, Megaphone, Users2,
+  Menu, X
 } from 'lucide-react'
 import { UserButton } from '@clerk/react'
 import { dark } from '@clerk/themes'
@@ -32,11 +33,16 @@ const SUPERADMIN_TOP_NAV = [
 // upsell. A section granted ONLY by tier ('tier_only', e.g. Local Presence) is
 // hidden entirely when not entitled: a locked, un-buyable item is a dead end
 // that just confuses (see ClientNav's `hidden`).
+// `superadminOnly` marks internal agency tooling we operate on the client's
+// behalf rather than something they use themselves — hidden from them entirely
+// (the route is guarded by <AdminOnly>, since hiding a link isn't access
+// control).
 interface ClientNavItem {
   label: string
   to: string
   icon: LucideIcon
   serviceKey?: ServiceKey
+  superadminOnly?: boolean
 }
 const CLIENT_SECTIONS: ClientNavItem[] = [
   { label: 'Home', to: '', icon: LayoutDashboard },
@@ -44,7 +50,7 @@ const CLIENT_SECTIONS: ClientNavItem[] = [
   { label: 'Local Presence', to: 'local', icon: MapPin, serviceKey: 'local' },
   { label: 'Chat Assistant', to: 'assistant', icon: Bot, serviceKey: 'chat' },
   { label: 'Leads', to: 'leads', icon: Users },
-  { label: 'Content', to: 'content', icon: Sparkles, serviceKey: 'content' },
+  { label: 'Content', to: 'content', icon: Sparkles, serviceKey: 'content', superadminOnly: true },
   { label: 'Paid Ads', to: 'ads', icon: Megaphone, serviceKey: 'ads' },
   { label: 'Requests', to: 'requests', icon: MessageSquarePlus },
   { label: 'Reports', to: 'reports', icon: FileBarChart },
@@ -78,11 +84,14 @@ function NavLink({ to, active, icon: Icon, label, locked }: {
 function ClientNav({ clientId }: { clientId: string }) {
   const location = useLocation()
   const { entitlements } = useEntitlements(clientId)
+  const { data: me } = useSWR('me', api.me)
   const base = `/clients/${clientId}`
 
   return (
     <>
       {CLIENT_SECTIONS.map(item => {
+        // Internal tooling — never shown to a client.
+        if (item.superadminOnly && !me?.isSuperadmin) return null
         const svc = item.serviceKey ? entitlements?.services[item.serviceKey] : undefined
         const entitled = svc?.entitled ?? false
         // Hide a tier-only section the client hasn't unlocked — it can't be
@@ -98,7 +107,9 @@ function ClientNav({ clientId }: { clientId: string }) {
   )
 }
 
-function Sidebar() {
+// The nav itself, shared by the desktop sidebar and the mobile drawer so the
+// two can never drift out of sync.
+function NavBody() {
   const location = useLocation()
   const { data: me } = useSWR('me', api.me)
 
@@ -108,12 +119,7 @@ function Sidebar() {
   const topNav = me?.isSuperadmin ? [...SUPERADMIN_TOP_NAV, ...TOP_NAV] : TOP_NAV
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-card md:flex">
-      <div className="flex h-14 items-center gap-2 border-b border-border px-5">
-        <Sparkles className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold">Hyperbole Digital</span>
-      </div>
-
+    <>
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
         {clientId ? (
           <>
@@ -140,7 +146,79 @@ function Sidebar() {
           Superadmin
         </div>
       )}
+    </>
+  )
+}
+
+function Sidebar() {
+  return (
+    <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-card md:flex">
+      <div className="flex h-14 items-center gap-2 border-b border-border px-5">
+        <Sparkles className="h-4 w-4 text-primary" />
+        <span className="text-sm font-semibold">Hyperbole Digital</span>
+      </div>
+      <NavBody />
     </aside>
+  )
+}
+
+// Below `md` the sidebar is hidden, so without this there is no navigation at
+// all on a narrow screen — you could reach a page but never leave it. Renders
+// the same NavBody in a slide-in drawer, and is itself hidden at `md`+ where
+// the real sidebar takes over.
+function MobileNav() {
+  const [open, setOpen] = useState(false)
+  const location = useLocation()
+
+  // Tapping a nav link navigates but doesn't unmount the drawer — close it on
+  // any route change so it never covers the page you just asked for.
+  useEffect(() => { setOpen(false) }, [location.pathname])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
+  }, [open])
+
+  return (
+    <div className="md:hidden">
+      <button
+        onClick={() => setOpen(true)}
+        aria-label="Open navigation"
+        className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-50 bg-black/60" onClick={() => setOpen(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation"
+            className="flex h-full w-64 max-w-[85vw] flex-col border-r border-border bg-card shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold">Hyperbole Digital</span>
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                aria-label="Close navigation"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <NavBody />
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -158,10 +236,12 @@ function Breadcrumb() {
       return location.pathname === to
     })
     return (
-      <div className="flex items-center gap-2 text-sm">
-        <Building2 className="h-4 w-4 text-muted-foreground" />
-        <span className="font-medium">{client?.name ?? 'Loading…'}</span>
-        {section && section.to && <span className="text-muted-foreground">/ {section.label}</span>}
+      <div className="flex min-w-0 items-center gap-2 text-sm">
+        <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="truncate font-medium">{client?.name ?? 'Loading…'}</span>
+        {/* The section name is the first thing to go when space is tight —
+            the sidebar/drawer already shows where you are. */}
+        {section && section.to && <span className="hidden truncate text-muted-foreground sm:inline">/ {section.label}</span>}
       </div>
     )
   }
@@ -197,10 +277,15 @@ function Topbar() {
   const location = useLocation()
   const clientId = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-5">
-      <Breadcrumb />
-      <div className="flex items-center gap-2">
-        {clientId && <ContactButton clientId={clientId} />}
+    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4 md:px-5">
+      <div className="flex min-w-0 items-center gap-2">
+        <MobileNav />
+        <Breadcrumb />
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {/* The contact CTA is a nice-to-have next to a cramped breadcrumb —
+            it stays reachable on mobile from the client's own pages. */}
+        {clientId && <span className="hidden sm:inline-flex"><ContactButton clientId={clientId} /></span>}
         <ThemeToggle />
         <UserButton appearance={{ baseTheme: theme === 'light' ? undefined : dark } as never} />
       </div>
