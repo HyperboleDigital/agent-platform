@@ -19,7 +19,23 @@ export interface AgentResponse {
   escalate: boolean
   captureLead: boolean
   confidence: number
+  // Per-turn instrumentation the chat route persists to message_logs (and the
+  // client analytics dashboard reads back). Never sent to the widget.
+  telemetry?: MessageTelemetry
   metadata?: Record<string, unknown>
+}
+
+export interface MessageTelemetry {
+  sessionId: string
+  userMessage: string
+  assistantResponse: string
+  confidence: number | null   // real KB-retrieval confidence (0..1), null if no vector hit
+  escalated: boolean
+  escalationReason?: string
+  resolvedBy: 'agent' | 'human'
+  toolsUsed: string[]
+  retrievedDocIds: string[]
+  queryEmbedding: number[] | null
 }
 
 export type Vertical = 'local' | 'b2b'
@@ -100,6 +116,22 @@ export interface AgentConfig {
   escalationEmail?: string   // where human-needed items (escalations, contact form) are sent
   autoSendThreshold: number
   emailDraft: boolean
+  // Below this KB-retrieval confidence (top match cosine similarity, 0..1) the
+  // agent admits it's unsure and offers a human instead of answering. Default
+  // 0.7 (see orchestrator DEFAULT_CONFIDENCE_THRESHOLD). Private — not in
+  // widgetConfig, which is world-readable.
+  confidenceThreshold?: number
+  // Business hours for the "after-hours coverage" analytics metric. A message
+  // outside these hours is one a human would likely have missed. Unset = the
+  // analytics layer's default (Mon–Fri 09:00–17:00 in the given tz).
+  businessHours?: BusinessHours
+}
+
+export interface BusinessHours {
+  tz: string          // IANA zone, e.g. "America/New_York"
+  days: number[]      // open weekdays, 0=Sun … 6=Sat, e.g. [1,2,3,4,5]
+  start: string       // "HH:MM" 24h, e.g. "09:00"
+  end: string         // "HH:MM" 24h, e.g. "17:00"
 }
 
 // Chat widget appearance, per client. Every field is optional and an empty

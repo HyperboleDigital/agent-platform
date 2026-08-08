@@ -1,5 +1,5 @@
 import type { IncomingMessage, AgentResponse, AgentConfig } from '@agent-platform/shared'
-import { searchDocs } from '../tools/knowledge-base'
+import { searchDocsDetailed } from '../tools/knowledge-base'
 import { bookCalendly } from '../tools/calendly'
 import { logLead } from '../tools/crm'
 import { notifyEscalation } from './escalation'
@@ -56,6 +56,14 @@ const tools: ToolDef[] = [
   }
 ]
 
+// When knowledge-base retrieval is this weak (top match cosine similarity below
+// the threshold), we don't let the model answer from it — better to admit we're
+// unsure and offer a human than to guess at a prospect. Per-client override via
+// agentConfig.confidenceThreshold; 0.7 is a sane default for voyage-3.5-lite.
+// Only applies when vector search ran (keyword-only search has no comparable
+// score, so topSimilarity is null and the fallback never trips).
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.7
+
 function buildSystemPrompt(config: Partial<AgentConfig>, clientName: string): string {
   return `You are the friendly customer support assistant for ${clientName}. You're warm, upbeat, and genuinely helpful — like a knowledgeable teammate, not a robot.
 
@@ -100,12 +108,31 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
   let needContact = false
   let intent: AgentResponse['intent'] = 'unknown'
 
+  // Instrumentation collected across the tool loop (logged to message_logs and
+  // surfaced in the client analytics dashboard).
+  const toolsUsed = new Set<string>()
+  const retrievedDocIds = new Set<string>()
+  let bestSimilarity: number | null = null // best (max) top-match across searches
+  let searchCalled = false
+  let queryEmbedding: number[] | null = null
+  let escalationReason: string | undefined
+
   // Tool dispatch — shared across providers. Closes over the flags above so we
   // can derive intent/action after the loop regardless of which model ran it.
   const execute = async (name: string, input: any): Promise<string> => {
+    toolsUsed.add(name)
     if (name === 'search_knowledge_base') {
       intent = 'faq'
-      return searchDocs(input.query, message.clientId)
+      searchCalled = true
+      const result = await searchDocsDetailed(input.query, message.clientId)
+      for (const m of result.matches) if (m.id) retrievedDocIds.add(m.id)
+      // The model may search several times — keep the strongest retrieval as the
+      // turn's confidence signal, and the first query embedding for clustering.
+      if (result.topSimilarity !== null) {
+        bestSimilarity = bestSimilarity === null ? result.topSimilarity : Math.max(bestSimilarity, result.topSimilarity)
+      }
+      if (!queryEmbedding && result.queryEmbedding) queryEmbedding = result.queryEmbedding
+      return result.context
     }
     if (name === 'get_booking_link') {
       intent = 'booking'
@@ -121,7 +148,7 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
     if (name === 'capture_lead') {
       intent = 'lead'
       if (input.email) {
-        await logLead({ clientId: message.clientId, name: input.name, email: input.email, intent: input.intent, summary: input.summary })
+        await logLead({ clientId: message.clientId, name: input.name, email: input.email, intent: input.intent, summary: input.summary, sessionId: message.from })
         captureLead = true
         return 'Lead captured.'
       }
@@ -131,6 +158,7 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
     if (name === 'escalate_to_human') {
       intent = 'escalate'
       escalate = true
+      escalationReason = input.reason
       await notifyEscalation(client, { from: message.from, message: message.body, reason: input.reason, channel: 'chat' })
       // Also surface the inline email form so the visitor can leave contact info
       // for a personal follow-up (a human can't reply without a way to reach them).
@@ -167,6 +195,36 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
         : 'lead'
   }
 
+  // Low-confidence fallback: the model searched the knowledge base but the best
+  // match came back weak (below the client's threshold). Rather than let it
+  // answer from thin retrieval and risk hallucinating at a prospect, admit we're
+  // unsure and offer a human — the same inline form + human notification as an
+  // explicit escalation. Only trips on vector search (bestSimilarity !== null,
+  // so keyword-only setups are unaffected) and never overrides a booking, a
+  // captured lead, or a hand-off the model already chose for itself.
+  const threshold = client.agentConfig?.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD
+  // bestSimilarity is only ever assigned inside the `execute` closure above, so
+  // TS's control-flow analysis collapses it back to its `null` initializer at
+  // this read. The cast restores number|null (its true runtime type) so the
+  // guard below narrows correctly.
+  const topSim = bestSimilarity as number | null
+  let lowConfidence = false
+  if (
+    searchCalled && topSim !== null && topSim < threshold &&
+    !escalate && !captureLead && !needContact && intent !== 'booking'
+  ) {
+    lowConfidence = true
+    escalate = true
+    needContact = true
+    escalationReason = `Low retrieval confidence (${topSim.toFixed(2)} < ${threshold}) — bot was unsure and offered a human.`
+    await notifyEscalation(client, {
+      from: message.from,
+      message: message.body,
+      reason: 'Low confidence — visitor question may not be covered by the knowledge base',
+      channel: 'chat'
+    })
+  }
+
   // When the inline form is being shown, DON'T trust the model's free text —
   // gpt-4o-mini tends to ramble or narrate ("let me gather your details… calling
   // the form now"). Replace it with a short, controlled lead-in; the form's own
@@ -176,9 +234,15 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
     booking: 'Happy to help you book a call. 📅',
     escalate: 'Let me get a teammate on this for you. 🙌',
   }
-  const finalReply = needContact ? (FORM_LEAD_IN[intent] ?? 'Sure — happy to help. 😊') : reply
+  const finalReply = lowConfidence
+    ? "I want to make sure you get an accurate answer, and I'm not fully certain on this one. Let me connect you with a teammate who can help — drop your email below and they'll follow up. 🙌"
+    : needContact ? (FORM_LEAD_IN[intent] ?? 'Sure — happy to help. 😊') : reply
 
-  const confidence = escalate ? 0.2 : intent === 'unknown' ? 0.4 : 0.9
+  // Real retrieval confidence (top KB-match cosine similarity) when vector
+  // search ran; a coarse intent-based estimate otherwise, so the response field
+  // stays a usable number for callers. The logged/analytics confidence uses the
+  // raw bestSimilarity (nullable) — see telemetry below.
+  const confidence = escalate ? 0.2 : bestSimilarity ?? (intent === 'unknown' ? 0.4 : 0.9)
 
   // Record what was actually said, so the next message in this session has
   // context. Stores finalReply rather than `reply`: when the inline form is
@@ -196,6 +260,20 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
       : escalate ? 'escalate'
       : captureLead ? 'capture_lead'
       : 'send_reply',
-    escalate, captureLead, confidence
+    escalate, captureLead, confidence,
+    // Per-turn instrumentation for message_logs / the client analytics dashboard.
+    // Kept off the wire response (chat.ts reads it for logging, doesn't send it).
+    telemetry: {
+      sessionId: message.from,
+      userMessage: message.body,
+      assistantResponse: finalReply,
+      confidence: bestSimilarity, // real retrieval confidence, null when no vector hit
+      escalated: escalate,
+      escalationReason,
+      resolvedBy: escalate ? 'human' : 'agent',
+      toolsUsed: Array.from(toolsUsed),
+      retrievedDocIds: Array.from(retrievedDocIds),
+      queryEmbedding
+    }
   }
 }

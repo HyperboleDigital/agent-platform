@@ -7,6 +7,18 @@ export interface LogEntry {
   intent: Intent
   resolved: boolean
   durationMs: number
+  // Conversation-level instrumentation (chat channel). All optional so the
+  // email channel — which has none of this — can keep logging as before.
+  sessionId?: string
+  userMessage?: string
+  assistantResponse?: string
+  confidence?: number | null
+  escalated?: boolean
+  escalationReason?: string
+  resolvedBy?: 'agent' | 'human'
+  toolsUsed?: string[]
+  retrievedDocIds?: string[]
+  queryEmbedding?: number[] | null
 }
 
 // Fire-and-forget: never let logging failures break a chat response.
@@ -16,7 +28,17 @@ export async function logMessage(entry: LogEntry): Promise<void> {
     channel: entry.channel,
     intent: entry.intent,
     resolved: entry.resolved,
-    duration_ms: entry.durationMs
+    duration_ms: entry.durationMs,
+    session_id: entry.sessionId ?? null,
+    user_message: entry.userMessage ?? null,
+    assistant_response: entry.assistantResponse ?? null,
+    confidence: entry.confidence ?? null,
+    escalated: entry.escalated ?? false,
+    escalation_reason: entry.escalationReason ?? null,
+    resolved_by: entry.resolvedBy ?? null,
+    tools_used: entry.toolsUsed ?? [],
+    retrieved_doc_ids: entry.retrievedDocIds ?? [],
+    query_embedding: entry.queryEmbedding ?? null
   })
   if (error) console.error('[logs] failed to write message_log', error.message)
 }

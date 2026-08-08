@@ -302,6 +302,48 @@ export interface DailyCount {
   resolved: number
 }
 
+// ── Chat analytics (client Insights tab) ─────────────────────────────────────
+export interface HeadlineMetric {
+  value: number
+  previous: number
+  changePct: number | null // null = no previous-period baseline
+}
+export interface Headline {
+  conversations: HeadlineMetric
+  leads: HeadlineMetric
+  deflectionRate: HeadlineMetric     // 0..1
+  afterHoursCoverage: HeadlineMetric // 0..1
+}
+export interface TrendPoint {
+  date: string
+  conversations: number
+  leads: number
+  escalations: number
+}
+export interface QuestionCluster {
+  question: string
+  count: number
+  examples: string[]
+}
+export interface UnansweredEntry {
+  createdAt: string
+  sessionId: string | null
+  question: string
+  confidence: number | null
+  reason: string | null
+  resolvedBy: string | null
+}
+export interface CoverageEntry {
+  documentId: string
+  title: string
+  retrievals: number
+}
+export interface AnalyticsQuery {
+  range?: number    // days (7 | 30 | 90 …)
+  from?: string     // ISO — used with `to` for a custom range
+  to?: string
+}
+
 export interface MonthlyUsage {
   used: number
   cap: number
@@ -776,6 +818,14 @@ export interface SendReportResult {
   reason?: 'no_sender_configured' | 'sender_not_connected' | 'daily_cap_reached'
 }
 
+function analyticsQs(q: AnalyticsQuery): string {
+  const p = new URLSearchParams()
+  if (q.from && q.to) { p.set('from', q.from); p.set('to', q.to) }
+  else if (q.range) p.set('range', String(q.range))
+  const s = p.toString()
+  return s ? `?${s}` : ''
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   reconcile: () => request<{ orgId: string | null }>('/reconcile', { method: 'POST' }),
@@ -988,7 +1038,29 @@ export const api = {
       request<{ ok: boolean }>(`/clients/${id}/team/members/${userId}`, { method: 'DELETE' }),
     connectors: (id: string) => request<ConnectorStatus>(`/clients/${id}/connectors`),
     gmailAuthUrl: (id: string) => request<{ url: string }>(`/clients/${id}/gmail/auth-url`),
-    disconnectGmail: (id: string) => request<{ ok: boolean }>(`/clients/${id}/gmail`, { method: 'DELETE' })
+    disconnectGmail: (id: string) => request<{ ok: boolean }>(`/clients/${id}/gmail`, { method: 'DELETE' }),
+
+    // ── Chat analytics (Insights tab) ────────────────────────────────────────
+    analyticsHeadline: (id: string, q: AnalyticsQuery) =>
+      request<Headline>(`/clients/${id}/analytics/headline${analyticsQs(q)}`),
+    analyticsTimeseries: (id: string, q: AnalyticsQuery) =>
+      request<TrendPoint[]>(`/clients/${id}/analytics/timeseries${analyticsQs(q)}`),
+    analyticsTopQuestions: (id: string, q: AnalyticsQuery) =>
+      request<QuestionCluster[]>(`/clients/${id}/analytics/top-questions${analyticsQs(q)}`),
+    analyticsUnanswered: (id: string, q: AnalyticsQuery) =>
+      request<UnansweredEntry[]>(`/clients/${id}/analytics/unanswered${analyticsQs(q)}`),
+    analyticsCoverage: (id: string, q: AnalyticsQuery) =>
+      request<CoverageEntry[]>(`/clients/${id}/analytics/coverage${analyticsQs(q)}`),
+    exportTranscript: async (id: string, q: AnalyticsQuery, filename: string) => {
+      const res = await fetch(`${BASE}/clients/${id}/analytics/transcript.csv${analyticsQs(q)}`, { headers: await authHeaders() })
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    }
   },
   billing: {
     tiers: () => request<TierInfo[]>('/billing/tiers'),

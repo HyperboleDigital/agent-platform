@@ -27,13 +27,19 @@ function fromRow(row: LeadRow): Lead {
   }
 }
 
-export async function logLead(lead: Omit<Lead, 'id' | 'createdAt' | 'channel' | 'status'>): Promise<void> {
+export async function logLead(
+  lead: Omit<Lead, 'id' | 'createdAt' | 'channel' | 'status'> & { sessionId?: string }
+): Promise<void> {
   await supabase.from('leads').insert({
     client_id: lead.clientId,
     name: lead.name,
     email: lead.email,
     intent: lead.intent,
-    summary: lead.summary
+    summary: lead.summary,
+    // Links the lead to the chat session that produced it, so the chat_sessions
+    // view can mark that conversation's outcome as 'lead'. Null for contact-form
+    // submissions (no session id) — those still record the lead, just unlinked.
+    session_id: lead.sessionId ?? null
   })
 }
 

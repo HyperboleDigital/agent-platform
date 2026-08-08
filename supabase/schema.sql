@@ -98,9 +98,13 @@ create table if not exists leads (
   summary    text,
   channel    text not null default 'chat',
   status     text not null default 'new', -- 'new' | 'followed_up'
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- The chat session that captured this lead (migrate_2026-08-08_chat-analytics.sql).
+  -- Null for contact-form and pre-migration leads.
+  session_id text
 );
 create index if not exists leads_client_idx on leads (client_id);
+create index if not exists leads_session_idx on leads (client_id, session_id);
 
 -- ── escalations ──────────────────────────────────────────────────────────────
 create table if not exists escalations (
@@ -122,11 +126,54 @@ create table if not exists message_logs (
   intent      text,
   resolved    boolean not null default false,
   duration_ms integer,
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  -- Conversation-level instrumentation (migrate_2026-08-08_chat-analytics.sql).
+  -- See that migration for the full rationale; kept in sync here since this file
+  -- is the canonical, re-runnable schema.
+  session_id        text,                     -- widget `from` (one per page visit)
+  user_message      text,
+  assistant_response text,
+  confidence        real,                     -- real top KB-match cosine similarity (0..1)
+  escalated         boolean not null default false,
+  escalation_reason text,
+  resolved_by       text check (resolved_by in ('agent', 'human', 'abandoned')),
+  tools_used        text[] not null default '{}',
+  retrieved_doc_ids uuid[] not null default '{}',
+  query_embedding   vector(1024)
 );
 create index if not exists message_logs_client_idx on message_logs (client_id);
 create index if not exists message_logs_created_idx on message_logs (created_at);
 create index if not exists message_logs_client_created_idx on message_logs (client_id, created_at desc);
+create index if not exists message_logs_session_idx on message_logs (client_id, session_id, created_at);
+create index if not exists message_logs_escalated_idx on message_logs (client_id, created_at desc) where escalated;
+
+-- Conversation-level metrics, derived from message_logs (+ leads). See
+-- migrate_2026-08-08_chat-analytics.sql for outcome precedence. Every row
+-- carries client_id — callers MUST still filter on it (the analytics lib does).
+create or replace view chat_sessions as
+with per_session as (
+  select
+    m.client_id,
+    m.session_id,
+    min(m.created_at)                    as started_at,
+    max(m.created_at)                    as ended_at,
+    count(*)                             as message_count,
+    bool_or(m.escalated)                 as escalated,
+    bool_or(coalesce(m.resolved, false)) as any_resolved
+  from message_logs m
+  where m.session_id is not null
+  group by m.client_id, m.session_id
+)
+select
+  s.client_id, s.session_id, s.started_at, s.ended_at, s.message_count, s.escalated,
+  exists (select 1 from leads l where l.client_id = s.client_id and l.session_id = s.session_id) as lead_captured,
+  case
+    when exists (select 1 from leads l where l.client_id = s.client_id and l.session_id = s.session_id) then 'lead'
+    when s.escalated then 'escalated'
+    when s.any_resolved then 'resolved'
+    else 'abandoned'
+  end as outcome
+from per_session s;
 
 -- ── gmail_tokens ─────────────────────────────────────────────────────────────
 -- Per-client Gmail OAuth refresh tokens (Phase 4 — replaces the n8n dependency).

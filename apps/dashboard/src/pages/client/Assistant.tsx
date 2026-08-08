@@ -9,11 +9,12 @@ import { useClientCtx } from '@/pages/client/ClientLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea, Label } from '@/components/ui/input'
-import { StatTile } from '@/components/stat-tile'
 import { EmptyState } from '@/components/empty-state'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KnowledgeFilePreview } from '@/components/attachment-preview'
 import { ReorderableList } from '@/components/reorderable-list'
+import { AssistantInsights } from '@/pages/client/AssistantInsights'
 
 function AssistantCard() {
   return (
@@ -43,19 +44,6 @@ function AssistantCard() {
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-function OverviewTab({ clientId }: { clientId: string }) {
-  const { data: stats } = useSWR(['stats', clientId], () => api.clients.stats(clientId))
-
-  return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <StatTile label="Messages this week" value={stats?.messagesThisWeek ?? '—'} />
-      <StatTile label="Questions answered" value={stats?.questionsAnswered ?? '—'} />
-      <StatTile label="Time saved" value={stats ? `${stats.estimatedHoursSaved}h` : '—'} />
-      <StatTile label="Leads captured" value={stats?.totalLeadsCaptured ?? '—'} />
-    </div>
   )
 }
 
@@ -732,16 +720,27 @@ export default function Assistant() {
 
       <AssistantCard />
 
-      <h3 className="text-sm font-semibold text-muted-foreground">Overview</h3>
-      <OverviewTab clientId={clientId} />
+      <Tabs defaultValue="insights">
+        <TabsList>
+          <TabsTrigger value="insights">Insights</TabsTrigger>
+          <TabsTrigger value="widget">Widget setup</TabsTrigger>
+          <TabsTrigger value="knowledge">Knowledge base</TabsTrigger>
+        </TabsList>
 
-      <h3 className="text-sm font-semibold text-muted-foreground">Widget setup</h3>
-      {client
-        ? <WidgetTab client={client} />
-        : <Card><CardContent className="py-6 text-sm text-muted-foreground">Loading widget settings…</CardContent></Card>}
+        <TabsContent value="insights">
+          <AssistantInsights clientId={clientId} client={client} />
+        </TabsContent>
 
-      <h3 className="text-sm font-semibold text-muted-foreground">Knowledge base</h3>
-      <KnowledgeTab clientId={clientId} />
+        <TabsContent value="widget">
+          {client
+            ? <WidgetTab client={client} />
+            : <Card><CardContent className="py-6 text-sm text-muted-foreground">Loading widget settings…</CardContent></Card>}
+        </TabsContent>
+
+        <TabsContent value="knowledge">
+          <KnowledgeTab clientId={clientId} />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

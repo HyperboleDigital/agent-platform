@@ -9,6 +9,7 @@ import { chatRouter } from './routes/chat'
 import { contactRouter } from './routes/contact'
 import { authRouter } from './routes/auth'
 import { clientsRouter } from './routes/clients'
+import { analyticsRouter } from './routes/analytics'
 import { webhookRouter } from './routes/webhooks'
 import { billingRouter, stripeWebhookHandler } from './routes/billing'
 import { overviewRouter } from './routes/overview'
@@ -88,6 +89,7 @@ app.use('/contact', contactRouter)              // widget contact form → human
 app.use('/widget-config', widgetConfigRouter)   // widget appearance config (public, read-only)
 app.use('/auth', authRouter)                    // Gmail OAuth callback only (public — Google redirects here)
 app.use('/p', previewRouter)                    // prospect mockup preview pages (public — prospects have no login)
+app.use('/clients/:id/analytics', requireAuth, analyticsRouter) // client chat analytics (auth + per-tenant authz)
 app.use('/clients', requireAuth, clientsRouter) // dashboard CRUD (auth + per-tenant authz)
 app.use('/webhooks', requireAuth, webhookRouter) // external triggers (auth)
 app.use('/billing', requireAuth, billingRouter) // Stripe checkout/portal/status (auth + per-tenant authz)

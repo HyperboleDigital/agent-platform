@@ -55,12 +55,23 @@ chatRouter.post('/', async (req, res) => {
   const startedAt = Date.now()
   try {
     const result = await runAgent(message)
+    const t = result.telemetry
     void logMessage({
       clientId: message.clientId,
       channel: 'chat',
       intent: result.intent,
       resolved: !result.escalate,
-      durationMs: Date.now() - startedAt
+      durationMs: Date.now() - startedAt,
+      sessionId: t?.sessionId,
+      userMessage: t?.userMessage,
+      assistantResponse: t?.assistantResponse,
+      confidence: t?.confidence,
+      escalated: t?.escalated,
+      escalationReason: t?.escalationReason,
+      resolvedBy: t?.resolvedBy,
+      toolsUsed: t?.toolsUsed,
+      retrievedDocIds: t?.retrievedDocIds,
+      queryEmbedding: t?.queryEmbedding
     })
     res.json({ reply: result.reply, intent: result.intent, action: result.action })
   } catch (err) {

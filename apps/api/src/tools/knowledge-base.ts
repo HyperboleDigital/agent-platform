@@ -4,10 +4,29 @@ import { embeddingsEnabled, embedQuery, embedDocuments, chunkText } from '../lib
 import { deleteKnowledgeFile } from '../lib/knowledge-files'
 
 interface DocRow {
+  id?: string
   title: string
   content: string
   url?: string | null
+  similarity?: number
 }
+
+// Structured result of a knowledge-base search. `context` is the formatted text
+// handed to the model; `matches` carries the instrumentation the orchestrator
+// needs — which chunks were retrieved and (for vector search) how close the top
+// hit was. `queryEmbedding` is the query vector when one was computed, reused
+// downstream (message_logs.query_embedding) so Top-Questions clustering is free.
+export interface SearchResult {
+  context: string
+  matches: { id: string | null; similarity: number | null; title: string }[]
+  // Top match cosine similarity (0..1) when vector search ran, else null. This
+  // is the real retrieval-confidence signal — null means we fell back to
+  // keyword search, where there's no comparable score.
+  topSimilarity: number | null
+  queryEmbedding: number[] | null
+}
+
+const NO_RESULTS = 'No relevant information found in the knowledge base.'
 
 function format(rows: DocRow[]): string {
   return rows
@@ -18,7 +37,14 @@ function format(rows: DocRow[]): string {
     .join('\n\n---\n\n')
 }
 
-export async function searchDocs(query: string, clientId: string): Promise<string> {
+function toMatches(rows: DocRow[]): SearchResult['matches'] {
+  return rows.map(r => ({ id: r.id ?? null, similarity: r.similarity ?? null, title: r.title }))
+}
+
+// Full search with instrumentation. Used by the chat orchestrator, which needs
+// the retrieved doc ids + top similarity for logging and the low-confidence
+// fallback. Prefer searchDocs() when you only need the text (see content.ts).
+export async function searchDocsDetailed(query: string, clientId: string): Promise<SearchResult> {
   // 1. Vector search when embeddings are configured.
   if (embeddingsEnabled()) {
     try {
@@ -28,16 +54,34 @@ export async function searchDocs(query: string, clientId: string): Promise<strin
         match_client_id: clientId,
         match_count: 3
       })
-      if (!error && data?.length) return format(data as DocRow[])
+      if (!error && data?.length) {
+        const rows = data as DocRow[]
+        return {
+          context: format(rows),
+          matches: toMatches(rows),
+          topSimilarity: rows[0]?.similarity ?? null,
+          queryEmbedding: embedding
+        }
+      }
+      // Embeddings configured but no rows (or an error) → fall through to
+      // keyword search, but keep the query embedding so it's still logged.
+      return { ...(await keywordSearch(query, clientId)), queryEmbedding: embedding }
     } catch (err) {
       console.error('[knowledge] vector search failed, falling back', err)
     }
   }
 
+  return { ...(await keywordSearch(query, clientId)), queryEmbedding: null }
+}
+
+// Full-text + ilike fallback. No similarity score exists for keyword matches,
+// so topSimilarity is null (the orchestrator treats null as "can't judge
+// confidence" and won't trip the low-confidence fallback on keyword-only setups).
+async function keywordSearch(query: string, clientId: string): Promise<Omit<SearchResult, 'queryEmbedding'>> {
   // 2. Full-text search.
   let { data } = await supabase
     .from('knowledge_base')
-    .select('content, title, url')
+    .select('id, content, title, url')
     .eq('client_id', clientId)
     .textSearch('content', query, { type: 'websearch' })
     .limit(3)
@@ -47,14 +91,24 @@ export async function searchDocs(query: string, clientId: string): Promise<strin
     const firstWord = query.split(' ')[0]
     ;({ data } = await supabase
       .from('knowledge_base')
-      .select('content, title, url')
+      .select('id, content, title, url')
       .eq('client_id', clientId)
       .ilike('content', `%${firstWord}%`)
       .limit(3))
   }
 
-  if (!data?.length) return 'No relevant information found in the knowledge base.'
-  return format(data as DocRow[])
+  const rows = (data ?? []) as DocRow[]
+  return {
+    context: rows.length ? format(rows) : NO_RESULTS,
+    matches: toMatches(rows),
+    topSimilarity: null
+  }
+}
+
+// Text-only convenience wrapper for callers that don't need instrumentation
+// (e.g. content generation grounds a draft in the KB — see lib/content.ts).
+export async function searchDocs(query: string, clientId: string): Promise<string> {
+  return (await searchDocsDetailed(query, clientId)).context
 }
 
 export interface KnowledgeDoc {
