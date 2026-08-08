@@ -40,6 +40,16 @@ export interface MessageTelemetry {
 
 export type Vertical = 'local' | 'b2b'
 
+// Default knowledge-base retrieval confidence (top match cosine similarity)
+// below which the assistant admits it's unsure and offers a human instead of
+// answering. Shared so the orchestrator (which enforces it) and the analytics
+// "unanswered" filter (which reports on it) can never drift apart.
+//
+// Calibrated for voyage-3.5-lite, whose good-match similarities land ~0.45–0.55
+// — a higher bar (e.g. 0.7) punts answerable questions to a human and tanks the
+// deflection rate. Per-client override via AgentConfig.confidenceThreshold.
+export const DEFAULT_CONFIDENCE_THRESHOLD = 0.35
+
 // A client's `domain` is the one persistent website URL used across the
 // platform — Site Health (uptime/SSL), the SEO audit crawl target, and the
 // Search Console default. Shared here (not duplicated in the API and the
@@ -117,9 +127,9 @@ export interface AgentConfig {
   autoSendThreshold: number
   emailDraft: boolean
   // Below this KB-retrieval confidence (top match cosine similarity, 0..1) the
-  // agent admits it's unsure and offers a human instead of answering. Default
-  // 0.7 (see orchestrator DEFAULT_CONFIDENCE_THRESHOLD). Private — not in
-  // widgetConfig, which is world-readable.
+  // agent admits it's unsure and offers a human instead of answering. Defaults
+  // to DEFAULT_CONFIDENCE_THRESHOLD. Private — not in widgetConfig, which is
+  // world-readable.
   confidenceThreshold?: number
   // Business hours for the "after-hours coverage" analytics metric. A message
   // outside these hours is one a human would likely have missed. Unset = the

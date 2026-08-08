@@ -1,4 +1,5 @@
 import type { IncomingMessage, AgentResponse, AgentConfig } from '@agent-platform/shared'
+import { DEFAULT_CONFIDENCE_THRESHOLD } from '@agent-platform/shared'
 import { searchDocsDetailed } from '../tools/knowledge-base'
 import { bookCalendly } from '../tools/calendly'
 import { logLead } from '../tools/crm'
@@ -56,13 +57,11 @@ const tools: ToolDef[] = [
   }
 ]
 
-// When knowledge-base retrieval is this weak (top match cosine similarity below
-// the threshold), we don't let the model answer from it — better to admit we're
-// unsure and offer a human than to guess at a prospect. Per-client override via
-// agentConfig.confidenceThreshold; 0.7 is a sane default for voyage-3.5-lite.
-// Only applies when vector search ran (keyword-only search has no comparable
-// score, so topSimilarity is null and the fallback never trips).
-const DEFAULT_CONFIDENCE_THRESHOLD = 0.7
+// When knowledge-base retrieval is weak (top match cosine similarity below the
+// per-client threshold, default DEFAULT_CONFIDENCE_THRESHOLD), we don't let the
+// model answer from it — better to admit we're unsure and offer a human than to
+// guess at a prospect. Only applies when vector search ran (keyword-only search
+// has no comparable score, so topSimilarity is null and the fallback never trips).
 
 function buildSystemPrompt(config: Partial<AgentConfig>, clientName: string): string {
   return `You are the friendly customer support assistant for ${clientName}. You're warm, upbeat, and genuinely helpful — like a knowledgeable teammate, not a robot.

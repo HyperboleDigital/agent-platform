@@ -3,7 +3,7 @@ import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import { ArrowDown, ArrowUp, Download, MessageSquare, HelpCircle, AlertTriangle, BookOpen, SlidersHorizontal } from 'lucide-react'
 import type { AnalyticsQuery, HeadlineMetric } from '@/lib/api'
-import type { Client, BusinessHours } from '@agent-platform/shared'
+import { DEFAULT_CONFIDENCE_THRESHOLD, type Client, type BusinessHours } from '@agent-platform/shared'
 import { api } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -131,7 +131,7 @@ const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
 function BehaviourSettings({ client }: { client: Client }) {
   const cfg = client.agentConfig ?? ({} as Client['agentConfig'])
-  const [threshold, setThreshold] = useState<number>(cfg.confidenceThreshold ?? 0.7)
+  const [threshold, setThreshold] = useState<number>(cfg.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD)
   const [hours, setHours] = useState<BusinessHours>(cfg.businessHours ?? DEFAULT_HOURS)
   const [saving, setSaving] = useState(false)
 

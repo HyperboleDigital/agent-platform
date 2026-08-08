@@ -21,7 +21,7 @@ const { A, seed } = vi.hoisted(() => {
     { client_id: B, email: 'b_leak@bad.test', session_id: 'B_SESS_LEAK', created_at: now }
   ],
   message_logs: [
-    { client_id: A, channel: 'chat', created_at: now, user_message: 'A_QUESTION about pricing', assistant_response: 'sure', confidence: 0.4, escalated: false, escalation_reason: null, resolved_by: 'agent', retrieved_doc_ids: ['chunkA'], query_embedding: null, intent: 'faq' },
+    { client_id: A, channel: 'chat', created_at: now, user_message: 'A_QUESTION about pricing', assistant_response: 'sure', confidence: 0.2, escalated: false, escalation_reason: null, resolved_by: 'agent', retrieved_doc_ids: ['chunkA'], query_embedding: null, intent: 'faq' },
     { client_id: A, channel: 'chat', created_at: now, user_message: 'A_QUESTION escalate me', assistant_response: 'ok', confidence: null, escalated: true, escalation_reason: 'user asked', resolved_by: 'human', retrieved_doc_ids: [], query_embedding: null, intent: 'escalate' },
     { client_id: B, channel: 'chat', created_at: now, user_message: 'SECRET_B_QUESTION', assistant_response: 'leak', confidence: 0.2, escalated: true, escalation_reason: 'B secret', resolved_by: 'human', retrieved_doc_ids: ['chunkB'], query_embedding: null, intent: 'faq' }
   ],
@@ -83,7 +83,7 @@ describe('analytics is scoped by client_id — no cross-tenant leakage', () => {
 
   it('getUnanswered returns only tenant A low-confidence/escalated turns', async () => {
     const u = await getUnanswered(A, wideRange)
-    // Both A rows qualify (one confidence 0.4 < 0.7, one escalated); B's does not.
+    // Both A rows qualify (one confidence 0.2 < 0.35 default, one escalated); B's does not.
     expect(u.length).toBe(2)
     expect(u.every(e => e.question.includes('A_QUESTION'))).toBe(true)
     assertNoBLeak(u)

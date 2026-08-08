@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { getClientById } from './clients'
-import type { BusinessHours } from '@agent-platform/shared'
+import { DEFAULT_CONFIDENCE_THRESHOLD, type BusinessHours } from '@agent-platform/shared'
 
 // Client-facing chat analytics. Every query here is scoped by client_id — that
 // is the tenant boundary, and it is NOT optional (see the cross-tenant leakage
@@ -89,7 +89,7 @@ async function businessHoursFor(clientId: string): Promise<BusinessHours> {
 
 async function confidenceThresholdFor(clientId: string): Promise<number> {
   const client = await getClientById(clientId)
-  return client?.agentConfig?.confidenceThreshold ?? 0.7
+  return client?.agentConfig?.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD
 }
 
 // ── sessions (conversation-level source rows) ────────────────────────────────
