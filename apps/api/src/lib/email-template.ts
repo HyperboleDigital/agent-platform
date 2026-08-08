@@ -122,7 +122,7 @@ export function renderEmailHtml(brand: EmailBrand, content: EmailContent): strin
   const label = escapeHtml(brand.label ?? 'Chat Assistant')
   const headerMark = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td align="left" width="130" style="width:130px;vertical-align:middle;">${mark}</td>
-        <td align="center" style="vertical-align:middle;font:600 16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:.02em;white-space:nowrap;">${label}</td>
+        <td align="center" style="vertical-align:middle;font:600 16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:.02em;">${label}</td>
         <td width="130" style="width:130px;">&nbsp;</td>
       </tr></table>`
 

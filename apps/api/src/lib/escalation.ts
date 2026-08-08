@@ -28,13 +28,18 @@ function asEmail(value: string): string | null {
 
 function brandFor(client: Client): EmailBrand {
   const widget = client.widgetConfig ?? {}
+  const businessName = widget.title || client.name
   return {
-    businessName: widget.title || client.name,
+    businessName,
     color: widget.color || '',           // template falls back to its default
     // An uploaded logo is served from our own origin as an absolute URL; a
     // manually-entered one is already absolute. Either way it must be publicly
     // reachable, since an email client fetches it with no session.
-    logoUrl: widget.logoPath ? logoUrl(client.id) : widget.logo
+    logoUrl: widget.logoPath ? logoUrl(client.id) : widget.logo,
+    // Names the client, not just the product — "Spec-ID Chat Assistant"
+    // reads as theirs; the template's generic "Chat Assistant" default is
+    // only for callers that don't have a client to brand this to.
+    label: `${businessName} Chat Assistant`
   }
 }
 
