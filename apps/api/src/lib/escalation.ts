@@ -114,8 +114,10 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
       rows,
       quote: input.message?.trim() ? { title: 'What they said', text: input.message } : undefined,
       cta: visitorEmail ? { label: `Reply to ${input.name || visitorEmail}`, url: `mailto:${visitorEmail}` } : undefined,
+      // The Reply-To CTA above already makes "reply reaches them" obvious;
+      // only worth calling out explicitly when there's NOT a reply path.
       footerNote: visitorEmail
-        ? 'Replying to this email goes straight to them.'
+        ? undefined
         : "This visitor didn't leave contact details, so there's no one to reply to directly."
     })
 
