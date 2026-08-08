@@ -210,9 +210,15 @@
       background: var(--p);
       color: white;
       padding: 8px 14px;
-      border-radius: 999px;
-      font-size: 13px; font-weight: 600;
-      white-space: nowrap;
+      border-radius: 20px;
+      font-size: 13px; font-weight: 600; line-height: 1.35;
+      /* Prompts are free text (operator-configured, or a client name
+         interpolated into the built-in default) with no length limit — left
+         unconstrained, a long one stretches edge-to-edge across the screen
+         and smears over whatever page content happens to be scrolled behind
+         it. Capping the width and allowing it to wrap keeps its footprint
+         small regardless of scroll position or how long the text is. */
+      max-width: min(260px, calc(100vw - 96px));
       box-shadow: 0 8px 24px var(--p-shadow), 0 2px 6px rgba(0,0,0,0.08);
       pointer-events: none;
       user-select: none;
