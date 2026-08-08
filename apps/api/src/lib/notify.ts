@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { sendPlainEmail, gmailConnected } from './gmail'
+import { sendPlainEmail, sendPlatformEmail, platformGmailConnected } from './gmail'
 
 // Central event router for platform notifications (change requests, and
 // report.ready in a later slice). Fans out to a client's configured
@@ -97,13 +97,15 @@ export interface GuardedEmailResult {
   sent: boolean
   recipient: string | null // the address actually sent to (test-mode may redirect it)
   testMode: boolean
-  reason?: 'no_sender_configured' | 'sender_not_connected' | 'daily_cap_reached'
+  reason?: 'sender_not_connected' | 'daily_cap_reached'
 }
 
 // The single guardrailed email path for the whole platform. Every
-// platform-sent email — change-request notifications AND reports — goes
-// through here so the guardrails can't be bypassed:
-//   - sends from PLATFORM_SENDER_CLIENT_ID's Gmail, never a client's own
+// platform-sent email — change-request notifications, reports, and
+// Clerk-relayed system emails — goes through here so the guardrails can't be
+// bypassed:
+//   - sends from the platform's OWN Gmail (platform_gmail_token, connected
+//     from Overview), never a client's own
 //   - REPORT_EMAIL_TEST_MODE (default on) redirects to REPORT_TEST_INBOX
 //   - a persisted daily cap across ALL platform email (notification_log)
 //   - never called from any scheduler (see module header)
@@ -115,11 +117,15 @@ export async function sendGuardedEmail(opts: {
   to: string
   subject: string
   body: string
+  // Optional HTML twin + display name, passed straight through to
+  // sendPlainEmail — used by the Clerk email relay (see routes/webhooks.ts)
+  // to forward Clerk's own pre-rendered invitation HTML rather than a
+  // plain-text-only message.
+  html?: string
+  fromName?: string
 }): Promise<GuardedEmailResult> {
   const testMode = EMAIL_TEST_MODE
-  const senderClientId = process.env.PLATFORM_SENDER_CLIENT_ID
-  if (!senderClientId) { console.warn('[notify] PLATFORM_SENDER_CLIENT_ID not set — email skipped'); return { sent: false, recipient: null, testMode, reason: 'no_sender_configured' } }
-  if (!(await gmailConnected(senderClientId))) { console.warn('[notify] platform sender Gmail not connected — email skipped'); return { sent: false, recipient: null, testMode, reason: 'sender_not_connected' } }
+  if (!(await platformGmailConnected())) { console.warn('[notify] platform Gmail not connected — email skipped (connect one from Overview)'); return { sent: false, recipient: null, testMode, reason: 'sender_not_connected' } }
 
   if ((await emailsSentToday()) >= NOTIFY_EMAIL_DAILY_CAP) {
     console.warn(`[notify] daily email cap (${NOTIFY_EMAIL_DAILY_CAP}) reached — skipping`)
@@ -129,7 +135,7 @@ export async function sendGuardedEmail(opts: {
   const recipient = testMode ? (TEST_INBOX ?? opts.to) : opts.to
   if (testMode && !TEST_INBOX) console.warn('[notify] REPORT_EMAIL_TEST_MODE is on but REPORT_TEST_INBOX is unset — sending to the real recipient anyway')
 
-  await sendPlainEmail(senderClientId, recipient, opts.subject, opts.body)
+  await sendPlatformEmail(recipient, opts.subject, opts.body, { html: opts.html, fromName: opts.fromName })
   await logSend(opts.clientId, opts.event, 'email', recipient)
   return { sent: true, recipient, testMode }
 }

@@ -10,7 +10,7 @@ import { contactRouter } from './routes/contact'
 import { authRouter } from './routes/auth'
 import { clientsRouter } from './routes/clients'
 import { analyticsRouter } from './routes/analytics'
-import { webhookRouter } from './routes/webhooks'
+import { webhookRouter, clerkWebhookHandler } from './routes/webhooks'
 import { billingRouter, stripeWebhookHandler } from './routes/billing'
 import { overviewRouter } from './routes/overview'
 import { prospectingRouter } from './routes/prospecting'
@@ -56,6 +56,11 @@ app.use((req, res, next) => {
 // signed — must be registered with express.raw() BEFORE the global
 // express.json() below, or the body would already be parsed/mutated.
 app.post('/billing/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler)
+
+// Same reasoning as the Stripe webhook above — Svix signature verification
+// needs Clerk's exact raw bytes, and this is an unauthenticated,
+// signature-verified external caller, not a dashboard request.
+app.post('/webhooks/clerk', express.raw({ type: 'application/json' }), clerkWebhookHandler)
 
 app.use(express.json({ limit: '1mb' }))
 app.use(clerkMiddleware()) // attaches req.auth when a Clerk session is present; doesn't block anonymous requests

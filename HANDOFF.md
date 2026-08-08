@@ -269,9 +269,10 @@ This codebase had a **582-email incident** in its history (an unbounded
 loop auto-sent that many emails to a real inbox). Every platform-sent
 email since goes through `sendGuardedEmail` in `lib/notify.ts`:
 
-- Sent from a **platform** Gmail connection (`PLATFORM_SENDER_CLIENT_ID`
-  → currently Spec-ID's connection, a stand-in — see TODO.md), never a
-  client's own inbox.
+- Sent from a **platform** Gmail connection (`platform_gmail_token` —
+  its own OAuth grant, connected from Overview → Platform email sender;
+  see 2026-08-08 in TODO.md for why this replaced borrowing a client's
+  own connection), never a client's own inbox.
 - `REPORT_EMAIL_TEST_MODE` (default effectively on) redirects **every**
   recipient to `REPORT_TEST_INBOX` regardless of what's configured
   elsewhere — this is deliberate defense-in-depth, not a bug.

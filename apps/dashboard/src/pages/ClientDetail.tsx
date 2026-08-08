@@ -674,9 +674,15 @@ function ConnectorsTab({ clientId, client }: { clientId: string; client: import(
               {data.gmail.connectedAt && (
                 <p className="mt-1.5 text-xs text-muted-foreground">Connected {new Date(data.gmail.connectedAt).toLocaleDateString()}</p>
               )}
+              {data.gmail.status === 'not_connected' && (
+                <p className="mt-1.5 max-w-md text-xs text-muted-foreground">
+                  Escalation emails still send — via Hyperbole's platform sender, using this client's own branding — until this is connected.
+                  Connect to send from their own address instead.
+                </p>
+              )}
               {data.gmail.status === 'error' && (
-                <p className="mt-1.5 max-w-md text-xs text-destructive">
-                  {data.gmail.error ?? 'Token is no longer valid.'} Escalation emails can't be sent until reconnected (Slack still works).
+                <p className="mt-1.5 max-w-md text-xs text-warning">
+                  {data.gmail.error ?? 'Token is no longer valid.'} Escalation emails are falling back to Hyperbole's platform sender until reconnected.
                 </p>
               )}
               {!data.gmail.configured && (
@@ -888,7 +894,10 @@ function TierCard({ clientId, client }: { clientId: string; client: import('@age
                   <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
                   <span>
                     {f.text}
-                    {f.built && f.section !== undefined && (
+                    {/* 'content' is superadmin-only tooling — for a client that
+                        link would just bounce them back to Home, so don't
+                        offer it. The bullet itself stays: they ARE getting it. */}
+                    {f.built && f.section !== undefined && !(f.section === 'content' && !me?.isSuperadmin) && (
                       <Link
                         to={`/clients/${clientId}${f.section ? `/${f.section}` : ''}`}
                         className="ml-2 text-xs text-primary hover:underline"

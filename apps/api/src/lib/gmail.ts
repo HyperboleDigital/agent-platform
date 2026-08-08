@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import { google } from 'googleapis'
 import { supabase } from './supabase'
 import { encryptSecret, decryptSecret } from './crypto'
@@ -51,6 +52,21 @@ export function getAuthUrl(clientId: string): string {
   })
 }
 
+// The platform's OWN sender (see platform_gmail_token) — not any client's.
+// `state: 'platform'` is a reserved sentinel; no client id can ever equal it
+// (Postgres uuids never collide with a plain word), so routes/auth.ts's
+// callback can tell the two apart with a simple string check.
+export const PLATFORM_STATE = 'platform'
+
+export function getPlatformAuthUrl(): string {
+  return oauthClient().generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: SCOPES,
+    state: PLATFORM_STATE
+  })
+}
+
 async function emailFromCredentials(client: ReturnType<typeof oauthClient>): Promise<string> {
   const oauth2 = google.oauth2({ version: 'v2', auth: client })
   const me = await oauth2.userinfo.get()
@@ -83,6 +99,40 @@ async function connect(clientId: string): Promise<{ email: string; client: Retur
     .select('email, refresh_token')
     .eq('client_id', clientId)
     .single()
+  if (!data) return null
+
+  const client = oauthClient()
+  client.setCredentials({ refresh_token: decryptSecret(data.refresh_token as string) })
+  return { email: data.email as string, client }
+}
+
+// Exchanges the auth code for the PLATFORM's own connection (see
+// getPlatformAuthUrl above) and persists it as the singleton row.
+export async function handlePlatformCallback(code: string): Promise<string> {
+  const client = oauthClient()
+  const { tokens } = await client.getToken(code)
+  if (!tokens.refresh_token) {
+    throw new Error('No refresh token returned — revoke access and retry with prompt=consent.')
+  }
+  client.setCredentials(tokens)
+  const email = await emailFromCredentials(client)
+
+  await supabase.from('platform_gmail_token').upsert({
+    id: true,
+    email,
+    refresh_token: encryptSecret(tokens.refresh_token),
+    updated_at: new Date().toISOString()
+  })
+
+  return email
+}
+
+async function connectPlatform(): Promise<{ email: string; client: ReturnType<typeof oauthClient> } | null> {
+  const { data } = await supabase
+    .from('platform_gmail_token')
+    .select('email, refresh_token')
+    .eq('id', true)
+    .maybeSingle()
   if (!data) return null
 
   const client = oauthClient()
@@ -132,35 +182,152 @@ export async function disconnectGmail(clientId: string): Promise<void> {
   if (error) throw error
 }
 
+// Same health check as checkGmailStatus, for the platform's own connection.
+export async function checkPlatformGmailStatus(): Promise<GmailStatus> {
+  const { data } = await supabase
+    .from('platform_gmail_token')
+    .select('email, refresh_token, created_at')
+    .eq('id', true)
+    .maybeSingle()
+
+  if (!data) return { connected: false, status: 'not_connected' }
+
+  try {
+    const client = oauthClient()
+    client.setCredentials({ refresh_token: decryptSecret(data.refresh_token as string) })
+    await client.getAccessToken()
+    return { connected: true, email: data.email as string, connectedAt: data.created_at as string, status: 'ok' }
+  } catch (err: any) {
+    return {
+      connected: true,
+      email: data.email as string,
+      connectedAt: data.created_at as string,
+      status: 'error',
+      error: err?.message ?? 'Token invalid or revoked'
+    }
+  }
+}
+
+// Removes the platform's own connection — every platform-sent email
+// (Clerk-relayed system emails, reports, change-request notifications) is
+// skipped, not routed to any client's Gmail, until reconnected.
+export async function disconnectPlatformGmail(): Promise<void> {
+  const { error } = await supabase.from('platform_gmail_token').delete().eq('id', true)
+  if (error) throw error
+}
+
+export interface SendEmailOptions {
+  // Display name on the From line, e.g. "Spec-ID Assistant" — the address
+  // itself is always the connected Gmail account (Gmail refuses to send as an
+  // arbitrary address; only the authenticated account or a verified alias).
+  fromName?: string
+  // Where a human's "Reply" actually goes. For a lead this is the visitor's
+  // own address, so the salesperson replies straight to the prospect instead
+  // of to their own inbox.
+  replyTo?: string
+  // When present the message is sent as multipart/alternative: this HTML plus
+  // `body` as the plain-text fallback, so clients that block HTML (and
+  // notification previews) still read correctly.
+  html?: string
+  extraHeaders?: Record<string, string>
+}
+
+// Shared MIME-building + send, given an already-resolved connection — the
+// only difference between a client's own send (sendPlainEmail) and the
+// platform's (sendPlatformEmail) is which connection gets resolved, so this
+// is the one place that logic can't drift between the two.
+async function sendViaConnection(
+  conn: { email: string; client: ReturnType<typeof oauthClient> },
+  to: string,
+  subject: string,
+  body: string,
+  optionsOrHeaders: SendEmailOptions | Record<string, string> = {}
+): Promise<void> {
+  // Back-compat: this used to take a bare extraHeaders map as the 5th arg.
+  const isOptions = ['fromName', 'replyTo', 'html', 'extraHeaders']
+    .some(k => k in optionsOrHeaders)
+  const options: SendEmailOptions = isOptions
+    ? optionsOrHeaders as SendEmailOptions
+    : { extraHeaders: optionsOrHeaders as Record<string, string> }
+
+  // A display name containing a comma/quote would break the address list, so
+  // it's quoted with inner quotes stripped, then RFC-2047 encoded if non-ASCII.
+  const from = options.fromName
+    ? `${encodeHeaderValue(`"${headerSafe(options.fromName).replace(/"/g, '')}"`)} <${headerSafe(conn.email)}>`
+    : headerSafe(conn.email)
+
+  const headerLines = [
+    `From: ${from}`,
+    `To: ${headerSafe(to)}`,
+    ...(options.replyTo ? [`Reply-To: ${headerSafe(options.replyTo)}`] : []),
+    `Subject: ${encodeHeaderValue(headerSafe(subject))}`,
+    `${STAMP_HEADER}: escalation`,
+    ...Object.entries(options.extraHeaders ?? {}).map(([k, v]) => `${headerSafe(k)}: ${headerSafe(v)}`)
+  ]
+
+  // Bodies are NOT header-sanitized (newlines are fine there) but always sit
+  // after the blank line, so they can't inject headers regardless.
+  let mime: string
+  if (options.html) {
+    // Boundary is random so body text can never accidentally contain it.
+    const boundary = `==_ap_${randomBytes(12).toString('hex')}`
+    mime = [
+      ...headerLines,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      '',
+      body,
+      `--${boundary}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      '',
+      options.html,
+      `--${boundary}--`
+    ].join('\r\n')
+  } else {
+    mime = [...headerLines, 'Content-Type: text/plain; charset="UTF-8"', '', body].join('\r\n')
+  }
+
+  const gmail = google.gmail({ version: 'v1', auth: conn.client })
+  await gmail.users.messages.send({ userId: 'me', requestBody: { raw: Buffer.from(mime).toString('base64url') } })
+}
+
 // Sends a standalone email from the client's connected Gmail. Used for
-// escalation notices to a human. No-op-safe: throws if not connected, callers
-// decide how to degrade.
+// escalation/lead notices to a human. No-op-safe: throws if not connected,
+// callers decide how to degrade.
 export async function sendPlainEmail(
   clientId: string,
   to: string,
   subject: string,
   body: string,
-  extraHeaders: Record<string, string> = {}
+  options: SendEmailOptions | Record<string, string> = {}
 ): Promise<void> {
   const conn = await connect(clientId)
   if (!conn) throw new Error(`No Gmail connection for client ${clientId}`)
+  await sendViaConnection(conn, to, subject, body, options)
+}
 
-  const headerLines = [
-    `From: ${headerSafe(conn.email)}`,
-    `To: ${headerSafe(to)}`,
-    `Subject: ${encodeHeaderValue(headerSafe(subject))}`,
-    `${STAMP_HEADER}: escalation`,
-    ...Object.entries(extraHeaders).map(([k, v]) => `${headerSafe(k)}: ${headerSafe(v)}`),
-    'Content-Type: text/plain; charset="UTF-8"'
-  ]
-  // Body is NOT header-sanitized (newlines are fine in the body), but it comes
-  // after the blank line so it can't inject headers regardless.
-  const raw = Buffer.from([...headerLines, '', body].join('\r\n')).toString('base64url')
-
-  const gmail = google.gmail({ version: 'v1', auth: conn.client })
-  await gmail.users.messages.send({ userId: 'me', requestBody: { raw } })
+// Sends from the PLATFORM's own Gmail (see platform_gmail_token) — used for
+// every platform-sent email: Clerk-relayed system emails, reports,
+// change-request notifications. Never a client's own inbox. No-op-safe:
+// throws if not connected, callers (sendGuardedEmail) decide how to degrade.
+export async function sendPlatformEmail(
+  to: string,
+  subject: string,
+  body: string,
+  options: SendEmailOptions | Record<string, string> = {}
+): Promise<void> {
+  const conn = await connectPlatform()
+  if (!conn) throw new Error('No platform Gmail connection — connect one from Overview')
+  await sendViaConnection(conn, to, subject, body, options)
 }
 
 export async function gmailConnected(clientId: string): Promise<boolean> {
   return (await connect(clientId)) !== null
+}
+
+export async function platformGmailConnected(): Promise<boolean> {
+  return (await connectPlatform()) !== null
 }

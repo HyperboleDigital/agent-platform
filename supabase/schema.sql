@@ -185,6 +185,20 @@ create table if not exists gmail_tokens (
   updated_at    timestamptz not null default now()
 );
 
+-- ── platform_gmail_token ─────────────────────────────────────────────────────
+-- The platform's OWN Gmail sender — independent of any client record. Powers
+-- ALL platform-sent email (Clerk-relayed system emails, reports,
+-- change-request notifications) via lib/notify.ts's sendGuardedEmail.
+-- Connected by a superadmin from Overview (not tied to onboarding/deleting
+-- any client). Singleton: the `boolean` PK + check allows exactly one row.
+create table if not exists platform_gmail_token (
+  id            boolean primary key default true check (id),
+  email         text not null,
+  refresh_token text not null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
 -- ── match_knowledge RPC ──────────────────────────────────────────────────────
 -- Cosine-similarity search over knowledge_base embeddings, scoped to a client.
 -- Called from tools/knowledge-base.ts when VOYAGE_API_KEY is configured.

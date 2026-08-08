@@ -1106,7 +1106,13 @@ export const api = {
     startAudit: (url: string) => request<SeoCrawl>('/overview/audits', { method: 'POST', body: JSON.stringify({ url }) }),
     refreshAudit: (crawlId: string) => request<SeoCrawl>(`/overview/audits/${crawlId}`),
     updateRequestStatus: (clientId: string, reqId: string, status: RequestStatus) =>
-      request<ChangeRequest>(`/overview/requests/${clientId}/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
+      request<ChangeRequest>(`/overview/requests/${clientId}/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    // The platform's own Gmail sender — used for ALL platform-sent email
+    // (Clerk-relayed invitations, reports, change-request notifications),
+    // never a client's own inbox. See lib/gmail.ts's platform_gmail_token.
+    platformGmail: () => request<ConnectorStatus['gmail']>('/overview/platform-gmail'),
+    platformGmailAuthUrl: () => request<{ url: string }>('/overview/platform-gmail/auth-url'),
+    disconnectPlatformGmail: () => request<{ ok: boolean }>('/overview/platform-gmail', { method: 'DELETE' })
   },
 
   prospecting: {

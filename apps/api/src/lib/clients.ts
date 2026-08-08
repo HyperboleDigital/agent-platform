@@ -1,6 +1,7 @@
 import { clerkClient } from '@clerk/express'
 import { supabase } from './supabase'
 import { normalizeDomain, isPublicHost, type Client } from '@agent-platform/shared'
+import { getNotificationSettings, updateNotificationSettings } from './notify'
 
 interface ClientRow {
   id: string
@@ -236,6 +237,20 @@ export async function inviteClientUser(clientId: string, email: string): Promise
     role: 'org:admin',
     redirectUrl: `${dashboardUrl}/sign-up`
   })
+
+  // Default the escalation + notification email to whoever's being onboarded
+  // — this function is the only path that invites a NEW client's first user
+  // (adding more people later goes through lib/team.ts's inviteMember, which
+  // never touches these), so in practice this always means "the first user in
+  // the org." Guarded by "only if unset" so it's idempotent, never overwrites
+  // a value someone already configured, and a later re-invite can't reset it.
+  if (!client.agentConfig?.escalationEmail) {
+    await upsertClient({ id: clientId, agentConfig: { ...client.agentConfig, escalationEmail: email } })
+  }
+  const notifSettings = await getNotificationSettings(clientId)
+  if (!notifSettings.email_to) {
+    await updateNotificationSettings(clientId, { email_enabled: true, email_to: email })
+  }
 
   return { clerkOrgId: orgId, invitationId: invitation.id }
 }

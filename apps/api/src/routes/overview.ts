@@ -3,6 +3,7 @@ import { getIdentity } from '../lib/authz'
 import { getOverviewSummary, getClientRollups } from '../lib/overview'
 import { listOpenRequests, updateRequestStatus } from '../lib/change-requests'
 import { startAdhocCrawl, refreshAdhocCrawl, listAdhocCrawls, crawlConfigured } from '../lib/dataforseo'
+import { gmailConfigured, getPlatformAuthUrl, checkPlatformGmailStatus, disconnectPlatformGmail } from '../lib/gmail'
 
 export const overviewRouter = Router()
 
@@ -16,6 +17,32 @@ overviewRouter.use((req, res, next) => {
 
 overviewRouter.get('/summary', async (_req, res) => {
   res.json(await getOverviewSummary())
+})
+
+// ── Platform email sender ────────────────────────────────────────────────────
+// The Gmail connection ALL platform-sent email uses (Clerk-relayed system
+// emails, reports, change-request notifications) — never a client's own
+// inbox. See lib/gmail.ts's platform_gmail_token functions and TODO.md for
+// why this replaced borrowing a client's connection.
+overviewRouter.get('/platform-gmail', async (_req, res) => {
+  const gmail = gmailConfigured()
+    ? await checkPlatformGmailStatus()
+    : { connected: false, status: 'not_configured' as const }
+  res.json({ configured: gmailConfigured(), ...gmail })
+})
+
+overviewRouter.get('/platform-gmail/auth-url', async (_req, res) => {
+  if (!gmailConfigured()) return res.status(500).json({ error: 'Gmail OAuth not configured' })
+  res.json({ url: getPlatformAuthUrl() })
+})
+
+overviewRouter.delete('/platform-gmail', async (_req, res) => {
+  try {
+    await disconnectPlatformGmail()
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to disconnect' })
+  }
 })
 
 overviewRouter.get('/clients', async (_req, res) => {

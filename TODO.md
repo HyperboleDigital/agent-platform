@@ -151,10 +151,11 @@ keep seeing it as "coming to the dashboard."
   fields" and re-save the mapping.
 - **`SUPERADMIN_SLACK_WEBHOOK` / `SUPERADMIN_NOTIFY_EMAIL`** — both set
   and confirmed delivering (change-request notifications tested live).
-  `PLATFORM_SENDER_CLIENT_ID` currently points at Spec-ID's Gmail
-  connection as a stand-in sender — swap to a real Hyperbole Digital
-  client record once one exists, so platform emails don't appear to come
-  from a test client.
+  ~~`PLATFORM_SENDER_CLIENT_ID` currently points at Spec-ID's Gmail
+  connection as a stand-in sender~~ — resolved 2026-08-08: platform email
+  now has its own Gmail connection (`platform_gmail_token`, connected from
+  Overview → Platform email sender), fully independent of any client
+  record. `PLATFORM_SENDER_CLIENT_ID` no longer exists.
 
 ## Shipped 2026-07-26 (keyword research — SEMrush-style)
 
