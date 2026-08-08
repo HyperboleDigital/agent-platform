@@ -219,7 +219,15 @@
          it. Capping the width and allowing it to wrap keeps its footprint
          small regardless of scroll position or how long the text is. */
       max-width: min(260px, calc(100vw - 96px));
-      box-shadow: 0 8px 24px var(--p-shadow), 0 2px 6px rgba(0,0,0,0.08);
+      /* The chip floats over arbitrary page content, so it has to read as
+         clearly ABOVE it — otherwise a heading running behind it looks like
+         the two are tangled together. A white ring separates the chip from
+         whatever colour is behind it (the brand fill alone can blend into a
+         same-coloured section), and the deeper shadow lifts it off the page.
+         Keep this feature visible rather than hiding it on scroll — the
+         rotating questions are a core part of what draws visitors in. */
+      border: 2px solid rgba(255,255,255,0.92);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.22), 0 3px 10px rgba(0,0,0,0.14), 0 0 0 1px var(--p-shadow);
       pointer-events: none;
       user-select: none;
       transform-origin: bottom right;
@@ -229,10 +237,17 @@
     #ap-prompt::after {
       content: '';
       position: absolute;
-      bottom: -4px;
+      /* Sits 1px lower than the untinted version to tuck the square's top
+         corner behind the chip body, so only the pointing half shows and the
+         white ring below reads as continuous with the chip's border. */
+      bottom: -5px;
       right: 24px;
       width: 10px; height: 10px;
       background: var(--p);
+      /* Matches the chip's ring so the arrow doesn't look like a detached
+         diamond once the border above is applied. */
+      border-right: 2px solid rgba(255,255,255,0.92);
+      border-bottom: 2px solid rgba(255,255,255,0.92);
       transform: rotate(45deg);
     }
     /* Retract: shrink + slide down-right into the icon, then fade. Ease-in so
@@ -618,6 +633,18 @@
       #ap-bubble {
         bottom: calc(16px + env(safe-area-inset-bottom));
         right: max(16px, env(safe-area-inset-right));
+      }
+      /* MUST track the bubble. The chip is anchored to the bubble visually
+         (its ::after arrow points down at it, and its scale animations
+         originate from it), but they're independent fixed elements — so any
+         change to the bubble's offsets has to be mirrored here or the chip
+         detaches and drifts over page content.
+         bubble bottom + 64px height + 12px gap = chip bottom.
+         The +6px on right matches the desktop rule's 30px vs 24px inset,
+         which is what centres the arrow over the bubble. */
+      #ap-prompt {
+        bottom: calc(16px + env(safe-area-inset-bottom) + 76px);
+        right: calc(max(16px, env(safe-area-inset-right)) + 6px);
       }
     }
   `;
