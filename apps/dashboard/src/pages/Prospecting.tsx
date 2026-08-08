@@ -3,7 +3,7 @@ import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import {
   Target, Search, Download, Sparkles, Copy, Globe, GlobeLock, Star, ChevronDown, ChevronRight,
-  Image as ImageIcon, Link2, EyeOff, Upload, Trash2, Palette, ExternalLink, FlaskConical, X,
+  Image as ImageIcon, Link2, EyeOff, Upload, Trash2, Palette, ExternalLink, FlaskConical, X, Plus,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type {
@@ -204,12 +204,129 @@ export default function Prospecting() {
 // what's uploaded here and nothing else. An empty library means generated pages
 // fall back to whatever the model reaches for by default, which is exactly what
 // this exists to prevent.
+//
+// References are organized into operator-named libraries (e.g. "Roofing",
+// "Med Spa") so a specific one can be chosen per prospect at generation time —
+// see the library picker in MockupPanel below. A reference with no library
+// sits in the "Unassigned" pool, which is what gets used when a prospect's
+// generation doesn't have a library chosen either.
 const DESIGN_REFS_KEY = 'design-references'
+const DESIGN_LIBS_KEY = 'design-libraries'
+const UNASSIGNED = '__unassigned__' // sentinel for "no library" in <select>s
+
+// Exported so MockupPanel's library picker (same data, different purpose) can
+// share one SWR cache instead of a second fetch.
+export function useDesignLibraries() {
+  return useSWR(DESIGN_LIBS_KEY, () => api.prospecting.designLibraries())
+}
+
+// Compact manager: add a library by name, rename/delete existing ones. Kept
+// terse since this is a superadmin-only tool — no dedicated page needed.
+function LibraryManager() {
+  const { data: libraries } = useDesignLibraries()
+  const [name, setName] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+
+  async function add() {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    setAdding(true)
+    try {
+      await api.prospecting.createDesignLibrary(trimmed)
+      setName('')
+      mutate(DESIGN_LIBS_KEY)
+      toast.success(`"${trimmed}" library created`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create library')
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function rename(id: string) {
+    const trimmed = editingName.trim()
+    setEditingId(null)
+    if (!trimmed) return
+    try {
+      await api.prospecting.updateDesignLibrary(id, { name: trimmed })
+      mutate(DESIGN_LIBS_KEY)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to rename library')
+    }
+  }
+
+  async function remove(id: string) {
+    try {
+      await api.prospecting.deleteDesignLibrary(id)
+      mutate(DESIGN_LIBS_KEY)
+      mutate(DESIGN_REFS_KEY)
+      toast.success('Library deleted — its references are now unassigned')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete library')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {libraries?.map(lib => (
+          <div key={lib.id} className="group flex items-center gap-1 rounded-full border border-border py-0.5 pl-2.5 pr-1 text-xs">
+            {editingId === lib.id ? (
+              <input
+                autoFocus
+                value={editingName}
+                onChange={e => setEditingName(e.target.value)}
+                onBlur={() => rename(lib.id)}
+                onKeyDown={e => { if (e.key === 'Enter') rename(lib.id); if (e.key === 'Escape') setEditingId(null) }}
+                className="h-5 w-28 border-b border-primary bg-transparent outline-none"
+              />
+            ) : (
+              <button
+                onClick={() => { setEditingId(lib.id); setEditingName(lib.name) }}
+                className="font-medium hover:underline"
+                title="Click to rename"
+              >
+                {lib.name} <span className="text-muted-foreground">({lib.referenceCount ?? 0})</span>
+              </button>
+            )}
+            <button
+              onClick={() => remove(lib.id)}
+              aria-label={`Delete ${lib.name} library`}
+              className="rounded-full p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+        {!libraries?.length && <span className="text-xs text-muted-foreground">No libraries yet — add one below.</span>}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Input
+          value={name}
+          onChange={e => setName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') add() }}
+          placeholder="New library name — e.g. Roofing, Med Spa"
+          className="h-7 w-56 text-xs"
+        />
+        <Button variant="outline" size="sm" onClick={add} disabled={adding || !name.trim()} className="h-7 px-2 text-xs">
+          <Plus className="h-3 w-3" /> Add
+        </Button>
+      </div>
+    </div>
+  )
+}
 
 function DesignLibrary() {
-  const { data: references } = useSWR(DESIGN_REFS_KEY, () => api.prospecting.designReferences())
+  const { data: libraries } = useDesignLibraries()
+  const [filter, setFilter] = useState<string>('') // '' = all, UNASSIGNED, or a library id
+  const { data: references } = useSWR(
+    [DESIGN_REFS_KEY, filter],
+    () => api.prospecting.designReferences({ libraryId: filter || undefined })
+  )
   const [uploading, setUploading] = useState(false)
-  const [vertical, setVertical] = useState('')
+  const [uploadLibraryId, setUploadLibraryId] = useState('')
   const [notes, setNotes] = useState('')
 
   async function uploadFiles(files: FileList | null) {
@@ -218,11 +335,12 @@ function DesignLibrary() {
     try {
       for (const file of Array.from(files)) {
         await api.prospecting.uploadDesignReference(file, {
-          vertical: vertical.trim() || undefined,
+          libraryId: uploadLibraryId && uploadLibraryId !== UNASSIGNED ? uploadLibraryId : undefined,
           notes: notes.trim() || undefined,
         })
       }
-      mutate(DESIGN_REFS_KEY)
+      mutate([DESIGN_REFS_KEY, filter])
+      mutate(DESIGN_LIBS_KEY) // reference counts changed
       setNotes('')
       toast.success(files.length === 1 ? 'Reference added' : `${files.length} references added`)
     } catch (err) {
@@ -235,7 +353,8 @@ function DesignLibrary() {
   async function remove(refId: string) {
     try {
       await api.prospecting.deleteDesignReference(refId)
-      mutate(DESIGN_REFS_KEY)
+      mutate([DESIGN_REFS_KEY, filter])
+      mutate(DESIGN_LIBS_KEY)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete')
     }
@@ -246,29 +365,59 @@ function DesignLibrary() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><Palette className="h-4 w-4" />Design library ({references?.length ?? 0})</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3 pt-0">
+      <CardContent className="flex flex-col gap-4 pt-0">
         <p className="text-sm text-muted-foreground">
           Upload designs you want concepts to look like — Figma comps, screenshots of sites you admire,
-          anything visual. Generated concepts imitate these. Tag by vertical to keep a plumber's concept
-          from borrowing a dental clinic's look; untagged references apply to everyone.
+          anything visual. Generated concepts imitate these. Organize them into libraries below, then
+          choose the right one per prospect when generating a concept; unassigned references are the
+          default pool for prospects with no library chosen.
         </p>
 
+        <LibraryManager />
+
+        <div className="flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center">
+          <label className="text-xs text-muted-foreground">Showing:</label>
+          <select
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+          >
+            <option value="">All references</option>
+            <option value={UNASSIGNED}>Unassigned only</option>
+            {libraries?.map(lib => <option key={lib.id} value={lib.id}>{lib.name}</option>)}
+          </select>
+        </div>
+
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Input value={vertical} onChange={e => setVertical(e.target.value)} placeholder="Vertical (optional) — e.g. trades, medical" className="h-8 sm:w-56" />
+          <select
+            value={uploadLibraryId}
+            onChange={e => setUploadLibraryId(e.target.value)}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs sm:w-56"
+          >
+            <option value="">Unassigned</option>
+            {libraries?.map(lib => <option key={lib.id} value={lib.id}>{lib.name}</option>)}
+          </select>
           <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes — e.g. love the hero spacing, ignore the colours" className="h-8 flex-1" />
         </div>
 
         <label className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border py-6 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground ${uploading ? 'pointer-events-none opacity-60' : ''}`}>
           <Upload className="h-4 w-4" />
           {uploading ? 'Uploading…' : 'Drop images here, or click to choose'}
-          <span className="text-xs">PNG, JPEG, WebP or GIF — the vertical and notes above are applied to this batch</span>
+          <span className="text-xs">PNG, JPEG, WebP or GIF — the library and notes above are applied to this batch</span>
           <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple className="hidden" onChange={e => { uploadFiles(e.target.files); e.target.value = '' }} />
         </label>
 
         {references?.length
           ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              {references.map(r => <DesignReferenceCard key={r.id} reference={r} onDelete={() => remove(r.id)} />)}
+              {references.map(r => (
+                <DesignReferenceCard
+                  key={r.id}
+                  reference={r}
+                  libraryName={libraries?.find(l => l.id === r.libraryId)?.name ?? null}
+                  onDelete={() => remove(r.id)}
+                />
+              ))}
             </div>
           )
           : (
@@ -283,7 +432,7 @@ function DesignLibrary() {
   )
 }
 
-function DesignReferenceCard({ reference, onDelete }: { reference: DesignReference; onDelete: () => void }) {
+function DesignReferenceCard({ reference, libraryName, onDelete }: { reference: DesignReference; libraryName: string | null; onDelete: () => void }) {
   const [url, setUrl] = useState<string | null>(null)
 
   useEffect(() => {
@@ -309,7 +458,7 @@ function DesignReferenceCard({ reference, onDelete }: { reference: DesignReferen
         : <div className="aspect-[4/3] w-full animate-pulse bg-muted" />}
       <div className="flex flex-col gap-0.5 px-2 py-1.5">
         <span className="truncate text-xs font-medium">{reference.label}</span>
-        {reference.vertical && <Badge variant="outline" className="w-fit text-[10px]">{reference.vertical}</Badge>}
+        <Badge variant="outline" className="w-fit text-[10px]">{libraryName ?? 'Unassigned'}</Badge>
         {reference.notes && <span className="line-clamp-2 text-[11px] text-muted-foreground">{reference.notes}</span>}
       </div>
       <button
@@ -565,11 +714,25 @@ function MockupPanel({ prospect, latestCrawlId }: { prospect: Prospect; latestCr
   const previewsKey = ['prospect-previews', prospect.id]
   const { data: mockups } = useSWR(mockupsKey, () => api.prospecting.mockups(prospect.id))
   const { data: previews } = useSWR(previewsKey, () => api.prospecting.previews(prospect.id))
+  const { data: libraries } = useDesignLibraries()
   const [notes, setNotes] = useState('')
+  // '' means "no library" — falls back to the unassigned pool server-side.
+  // Pre-select whichever library's name best matches this prospect's Places
+  // category (e.g. "Roofing" ~ "Roofing contractor"), but this is only a
+  // starting point — always overridable before generating.
+  const [libraryId, setLibraryId] = useState('')
+  const [libraryTouched, setLibraryTouched] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [linking, setLinking] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [promptPreview, setPromptPreview] = useState<MockupPreview | null>(null)
+
+  useEffect(() => {
+    if (libraryTouched || !libraries?.length || !prospect.category) return
+    const category = prospect.category.toLowerCase()
+    const match = libraries.find(lib => category.includes(lib.name.toLowerCase()) || lib.name.toLowerCase().includes(category))
+    if (match) setLibraryId(match.id)
+  }, [libraries, prospect.category, libraryTouched])
 
   const latest: ProspectMockup | undefined = mockups?.[0]
   const activePreview: ProspectPreview | undefined = previews?.find(p => !p.revokedAt)
@@ -577,7 +740,7 @@ function MockupPanel({ prospect, latestCrawlId }: { prospect: Prospect; latestCr
   async function generate() {
     setGenerating(true)
     try {
-      await api.prospecting.generateMockup(prospect.id, { directionNotes: notes.trim() || undefined })
+      await api.prospecting.generateMockup(prospect.id, { directionNotes: notes.trim() || undefined, libraryId: libraryId || null })
       mutate(mockupsKey)
       toast.success('Concept generated')
     } catch (err) {
@@ -594,7 +757,7 @@ function MockupPanel({ prospect, latestCrawlId }: { prospect: Prospect; latestCr
   async function previewPrompt() {
     setPreviewing(true)
     try {
-      setPromptPreview(await api.prospecting.previewMockup(prospect.id, { directionNotes: notes.trim() || undefined }))
+      setPromptPreview(await api.prospecting.previewMockup(prospect.id, { directionNotes: notes.trim() || undefined, libraryId: libraryId || null }))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to build preview')
     } finally {
@@ -641,6 +804,15 @@ function MockupPanel({ prospect, latestCrawlId }: { prospect: Prospect; latestCr
         <Button variant="ghost" size="sm" onClick={previewPrompt} disabled={previewing}>
           <FlaskConical className="h-3.5 w-3.5" />{previewing ? 'Building…' : 'Preview prompt (free)'}
         </Button>
+        <select
+          value={libraryId}
+          onChange={e => { setLibraryId(e.target.value); setLibraryTouched(true) }}
+          title="Which design library to imitate for this prospect's concept"
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        >
+          <option value="">No library (unassigned pool)</option>
+          {libraries?.map(lib => <option key={lib.id} value={lib.id}>{lib.name} ({lib.referenceCount ?? 0})</option>)}
+        </select>
         <Input
           value={notes}
           onChange={e => setNotes(e.target.value)}
@@ -735,8 +907,8 @@ function PromptPreviewPanel({ preview, onClose }: { preview: MockupPreview; onCl
       )}
       {preview.images.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          No images will be sent — no design references matched this prospect's vertical (or none are
-          untagged), and no screenshot of their current site was captured.
+          No images will be sent — the chosen library (or the unassigned pool, if none was chosen) has
+          no references, and no screenshot of their current site was captured.
         </p>
       )}
     </div>

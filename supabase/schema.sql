@@ -376,10 +376,23 @@ create index if not exists prospects_area_idx on prospects (area, category);
 -- `vertical` is a coarse tag (trades, medical, hospitality, ...). NULL means
 -- "applies to any business" and acts as the fallback pool when a prospect's
 -- vertical has no references of its own. `notes` is fed to the model verbatim.
+-- Operator-named collections of design inspo (see design_references below).
+-- Chosen explicitly per prospect at mockup-generation time — see prospect_mockups.
+create table if not exists design_libraries (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  description text,
+  created_at  timestamptz not null default now()
+);
+create unique index if not exists design_libraries_name_lower_idx on design_libraries (lower(name));
+
 create table if not exists design_references (
   id            uuid primary key default gen_random_uuid(),
   label         text not null,
+  -- Deprecated — superseded by library_id (migrate_2026-08-08b_design-libraries.sql).
+  -- No longer read or written; kept rather than dropped (migrations here are additive-only).
   vertical      text,
+  library_id    uuid references design_libraries(id) on delete set null,
   notes         text,
   storage_path  text not null,                 -- design-inspo bucket
   content_type  text not null,
@@ -387,6 +400,7 @@ create table if not exists design_references (
   active        boolean not null default true, -- retire without losing provenance
   created_at    timestamptz not null default now()
 );
+create index if not exists design_references_library_idx on design_references (library_id, active);
 create index if not exists design_references_active_idx
   on design_references (active, vertical, created_at desc);
 
@@ -414,6 +428,7 @@ create table if not exists prospect_mockups (
   format          text not null default 'image' check (format in ('image', 'html')),
   current_screenshot_path text,                         -- prospect-screenshots: their site today
   reference_ids   uuid[],                               -- design_references that steered this
+  library_id      uuid references design_libraries(id) on delete set null, -- which library was chosen for this generation, if any
   model           text,
   created_at      timestamptz not null default now()
 );

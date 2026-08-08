@@ -3,7 +3,7 @@ import { isPublicHost, normalizeDomain } from '@agent-platform/shared'
 import { supabase } from './supabase'
 import { getProspect, type Prospect } from './prospecting'
 import { completeWithImages, type VisionImage, type VisionMediaType } from './llm/complete'
-import { selectReferencesForVertical, getReferenceImage, type DesignReference } from './design-references'
+import { selectReferencesForLibrary, getReferenceImage, type DesignReference } from './design-references'
 import { captureUrl, screenshotsConfigured } from './screenshots'
 
 // Prospecting — a generated "here's what your homepage could look like"
@@ -265,6 +265,7 @@ export interface ProspectMockup {
   storagePath: string | null
   currentScreenshotPath: string | null
   referenceIds: string[] | null
+  libraryId: string | null
   model: string | null
   createdAt: string
 }
@@ -281,6 +282,7 @@ interface Row {
   storage_path: string | null
   current_screenshot_path: string | null
   reference_ids: string[] | null
+  library_id: string | null
   model: string | null
   created_at: string
 }
@@ -298,6 +300,7 @@ function fromRow(r: Row): ProspectMockup {
     storagePath: r.storage_path,
     currentScreenshotPath: r.current_screenshot_path,
     referenceIds: r.reference_ids,
+    libraryId: r.library_id,
     model: r.model,
     createdAt: r.created_at
   }
@@ -335,7 +338,7 @@ interface GenerationContext {
 
 async function buildGenerationContext(
   prospect: Prospect,
-  opts: { directionNotes?: string }
+  opts: { directionNotes?: string; libraryId?: string | null }
 ): Promise<GenerationContext> {
   // A no-website prospect is the prime target — there's nothing to scrape, so
   // the concept is grounded in the Places data alone.
@@ -355,7 +358,7 @@ async function buildGenerationContext(
     }
   }
 
-  const references = await selectReferencesForVertical(prospect.category)
+  const references = await selectReferencesForLibrary(opts.libraryId)
   const images: VisionImage[] = []
   for (const reference of references) {
     try {
@@ -392,7 +395,7 @@ async function buildGenerationContext(
 // was actually sent rather than silently changing under the prospect.
 export async function generateMockup(
   prospectId: string,
-  opts: { styleKey?: string; directionNotes?: string } = {}
+  opts: { styleKey?: string; directionNotes?: string; libraryId?: string | null } = {}
 ): Promise<ProspectMockup> {
   if (!mockupsConfigured()) throw new Error('ANTHROPIC_API_KEY is not configured on this deployment')
 
@@ -429,6 +432,7 @@ export async function generateMockup(
       html,
       current_screenshot_path: currentScreenshotPath,
       reference_ids: ctx.references.map(r => r.id),
+      library_id: opts.libraryId ?? null,
       model: process.env.ANTHROPIC_CONTENT_MODEL ?? 'claude-sonnet-5'
     })
     .select()
@@ -470,7 +474,7 @@ function filenameFor(index: number, caption: string): string {
 
 export async function previewGeneration(
   prospectId: string,
-  opts: { directionNotes?: string } = {}
+  opts: { directionNotes?: string; libraryId?: string | null } = {}
 ): Promise<MockupPreview> {
   const prospect = await getProspect(prospectId)
   if (!prospect) throw new Error('Prospect not found')

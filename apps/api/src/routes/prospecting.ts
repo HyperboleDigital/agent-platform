@@ -13,6 +13,7 @@ import {
 import { createPreview, listPreviews, revokePreview, previewUrl } from '../lib/prospect-previews'
 import {
   listReferences, getReference, uploadReference, updateReference, deleteReference, getReferenceImage,
+  listLibraries, createLibrary, updateLibrary, deleteLibrary,
 } from '../lib/design-references'
 
 export const prospectingRouter = Router()
@@ -88,6 +89,53 @@ prospectingRouter.get('/mockups/:mockupId/image', async (req, res) => {
   }
 })
 
+// ── Design libraries ──────────────────────────────────────────────────────────
+// Operator-named collections of the inspo images below — e.g. "Roofing",
+// "Med Spa" — chosen explicitly per prospect when generating a concept
+// (POST /:id/mockups). Registered before the '/:id' routes for the same
+// shadowing reason as design-references.
+
+prospectingRouter.get('/design-libraries', async (_req, res) => {
+  try {
+    res.json(await listLibraries())
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to list design libraries' })
+  }
+})
+
+prospectingRouter.post('/design-libraries', async (req, res) => {
+  const { name, description } = req.body ?? {}
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
+  try {
+    res.json(await createLibrary({ name, description: typeof description === 'string' ? description : null }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create design library' })
+  }
+})
+
+prospectingRouter.patch('/design-libraries/:libraryId', async (req, res) => {
+  const { name, description } = req.body ?? {}
+  try {
+    res.json(await updateLibrary(req.params.libraryId, {
+      ...(typeof name === 'string' ? { name } : {}),
+      ...(description !== undefined ? { description } : {}),
+    }))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update design library' })
+  }
+})
+
+// References inside a deleted library are NOT deleted — they become
+// unassigned (see lib/design-references.ts deleteLibrary).
+prospectingRouter.delete('/design-libraries/:libraryId', async (req, res) => {
+  try {
+    await deleteLibrary(req.params.libraryId)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete design library' })
+  }
+})
+
 // ── Design reference library ─────────────────────────────────────────────────
 // The operator's inspo images. Concept generation imitates these and nothing
 // else, so this is where design direction actually lives. Registered before
@@ -95,7 +143,9 @@ prospectingRouter.get('/mockups/:mockupId/image', async (req, res) => {
 
 prospectingRouter.get('/design-references', async (req, res) => {
   try {
-    res.json(await listReferences({ includeInactive: req.query.includeInactive === 'true' }))
+    const includeInactive = req.query.includeInactive === 'true'
+    const libraryId = typeof req.query.libraryId === 'string' ? req.query.libraryId : undefined
+    res.json(await listReferences({ includeInactive, libraryId: libraryId === 'unassigned' ? null : libraryId }))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to list design references' })
   }
@@ -109,11 +159,11 @@ prospectingRouter.post('/design-references', upload.single('file'), async (req, 
   if (!ALLOWED_REFERENCE_TYPES.includes(file.mimetype)) {
     return res.status(400).json({ error: `Unsupported image type: ${file.mimetype}. Use PNG, JPEG, WebP, or GIF.` })
   }
-  const { label, vertical, notes } = req.body ?? {}
+  const { label, libraryId, notes } = req.body ?? {}
   try {
     res.json(await uploadReference({
       label: typeof label === 'string' && label.trim() ? label.trim() : file.originalname,
-      vertical: typeof vertical === 'string' ? vertical : null,
+      libraryId: typeof libraryId === 'string' && libraryId ? libraryId : null,
       notes: typeof notes === 'string' ? notes : null,
       contentType: file.mimetype,
       buffer: file.buffer,
@@ -134,11 +184,11 @@ prospectingRouter.get('/design-references/:refId/image', async (req, res) => {
 })
 
 prospectingRouter.patch('/design-references/:refId', async (req, res) => {
-  const { label, vertical, notes, active } = req.body ?? {}
+  const { label, libraryId, notes, active } = req.body ?? {}
   try {
     res.json(await updateReference(req.params.refId, {
       ...(typeof label === 'string' ? { label } : {}),
-      ...(vertical !== undefined ? { vertical } : {}),
+      ...(libraryId !== undefined ? { libraryId } : {}),
       ...(notes !== undefined ? { notes } : {}),
       ...(typeof active === 'boolean' ? { active } : {}),
     }))
@@ -248,11 +298,12 @@ prospectingRouter.get('/:id/mockups', async (req, res) => {
 // so an already-shared preview keeps showing what was actually sent.
 prospectingRouter.post('/:id/mockups', async (req, res) => {
   if (!mockupsConfigured()) return res.status(400).json({ error: 'OPENAI_API_KEY is not configured on this deployment' })
-  const { styleKey, directionNotes } = req.body ?? {}
+  const { styleKey, directionNotes, libraryId } = req.body ?? {}
   try {
     res.json(await generateMockup(req.params.id, {
       styleKey: typeof styleKey === 'string' ? styleKey : undefined,
       directionNotes: typeof directionNotes === 'string' ? directionNotes : undefined,
+      libraryId: typeof libraryId === 'string' && libraryId ? libraryId : null,
     }))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to generate mockup' })
@@ -266,10 +317,11 @@ prospectingRouter.post('/:id/mockups', async (req, res) => {
 // No mockupsConfigured() guard: unlike generation, this never touches
 // Anthropic, so it works even before ANTHROPIC_API_KEY is set.
 prospectingRouter.post('/:id/mockups/preview', async (req, res) => {
-  const { directionNotes } = req.body ?? {}
+  const { directionNotes, libraryId } = req.body ?? {}
   try {
     res.json(await previewGeneration(req.params.id, {
       directionNotes: typeof directionNotes === 'string' ? directionNotes : undefined,
+      libraryId: typeof libraryId === 'string' && libraryId ? libraryId : null,
     }))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to build preview' })

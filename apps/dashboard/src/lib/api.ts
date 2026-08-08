@@ -532,6 +532,7 @@ export interface ProspectMockup {
   storagePath: string | null
   currentScreenshotPath: string | null
   referenceIds: string[] | null
+  libraryId: string | null
   model: string | null
   createdAt: string
 }
@@ -547,12 +548,22 @@ export interface MockupPreview {
   images: { caption: string; filename: string; dataUrl: string }[]
 }
 
+// Operator-named collection of design inspo images — e.g. "Roofing", "Med Spa".
+// Chosen explicitly per prospect when generating a concept.
+export interface DesignLibrary {
+  id: string
+  name: string
+  description: string | null
+  createdAt: string
+  referenceCount?: number
+}
+
 // The operator's design inspiration library. Concept generation imitates these
 // and nothing else — this is where design direction lives.
 export interface DesignReference {
   id: string
   label: string
-  vertical: string | null
+  libraryId: string | null
   notes: string | null
   storagePath: string
   contentType: string
@@ -1122,9 +1133,9 @@ export const api = {
     },
     mockupStyles: () => request<MockupStyle[]>('/prospecting/mockup-styles'),
     mockups: (id: string) => request<ProspectMockup[]>(`/prospecting/${id}/mockups`),
-    generateMockup: (id: string, opts: { styleKey?: string; directionNotes?: string } = {}) =>
+    generateMockup: (id: string, opts: { styleKey?: string; directionNotes?: string; libraryId?: string | null } = {}) =>
       request<ProspectMockup>(`/prospecting/${id}/mockups`, { method: 'POST', body: JSON.stringify(opts) }),
-    previewMockup: (id: string, opts: { directionNotes?: string } = {}) =>
+    previewMockup: (id: string, opts: { directionNotes?: string; libraryId?: string | null } = {}) =>
       request<MockupPreview>(`/prospecting/${id}/mockups/preview`, { method: 'POST', body: JSON.stringify(opts) }),
     // The image needs the auth header, so it can't be a plain <img src>; fetch
     // the bytes and hand back an object URL the caller must revoke.
@@ -1139,13 +1150,26 @@ export const api = {
     revokePreview: (previewId: string) =>
       request<ProspectPreview>(`/prospecting/previews/${previewId}/revoke`, { method: 'POST' }),
 
-    designReferences: (includeInactive = false) =>
-      request<DesignReference[]>(`/prospecting/design-references${includeInactive ? '?includeInactive=true' : ''}`),
-    uploadDesignReference: async (file: File, meta: { label?: string; vertical?: string; notes?: string } = {}) => {
+    designLibraries: () => request<DesignLibrary[]>('/prospecting/design-libraries'),
+    createDesignLibrary: (name: string, description?: string) =>
+      request<DesignLibrary>('/prospecting/design-libraries', { method: 'POST', body: JSON.stringify({ name, description }) }),
+    updateDesignLibrary: (libraryId: string, patch: { name?: string; description?: string | null }) =>
+      request<DesignLibrary>(`/prospecting/design-libraries/${libraryId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    deleteDesignLibrary: (libraryId: string) =>
+      request<{ ok: true }>(`/prospecting/design-libraries/${libraryId}`, { method: 'DELETE' }),
+
+    designReferences: (opts: { includeInactive?: boolean; libraryId?: string } = {}) => {
+      const params = new URLSearchParams()
+      if (opts.includeInactive) params.set('includeInactive', 'true')
+      if (opts.libraryId) params.set('libraryId', opts.libraryId)
+      const qs = params.toString()
+      return request<DesignReference[]>(`/prospecting/design-references${qs ? `?${qs}` : ''}`)
+    },
+    uploadDesignReference: async (file: File, meta: { label?: string; libraryId?: string; notes?: string } = {}) => {
       const form = new FormData()
       form.append('file', file)
       if (meta.label) form.append('label', meta.label)
-      if (meta.vertical) form.append('vertical', meta.vertical)
+      if (meta.libraryId) form.append('libraryId', meta.libraryId)
       if (meta.notes) form.append('notes', meta.notes)
       const res = await fetch(`${BASE}/prospecting/design-references`, {
         method: 'POST',
@@ -1158,7 +1182,7 @@ export const api = {
       }
       return res.json() as Promise<DesignReference>
     },
-    updateDesignReference: (refId: string, patch: { label?: string; vertical?: string | null; notes?: string | null; active?: boolean }) =>
+    updateDesignReference: (refId: string, patch: { label?: string; libraryId?: string | null; notes?: string | null; active?: boolean }) =>
       request<DesignReference>(`/prospecting/design-references/${refId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     deleteDesignReference: (refId: string) =>
       request<{ ok: true }>(`/prospecting/design-references/${refId}`, { method: 'DELETE' }),
