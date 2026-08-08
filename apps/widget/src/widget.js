@@ -16,7 +16,10 @@
   const attr = name => (attrs[name] != null && attrs[name] !== '' ? attrs[name] : undefined);
 
   const CLIENT_ID = attr('data-client-id') || '';
-  const API_URL = attr('data-api-url') || 'http://localhost:3001';
+  // Defaults to our production API so a client's embed snippet doesn't need to
+  // spell out our infrastructure's URL. data-api-url still overrides this —
+  // used by apps/widget/test.html and any local/staging setup.
+  const API_URL = attr('data-api-url') || 'https://api.hyperboledigital.com';
 
   // ─── Remote config ───────────────────────────────────────────────────────
   // Appearance lives in the database so the operator can rebrand a client's

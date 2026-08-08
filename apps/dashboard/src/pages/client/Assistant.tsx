@@ -278,6 +278,12 @@ function KnowledgeTab({ clientId }: { clientId: string }) {
 const WIDGET_URL = import.meta.env.VITE_WIDGET_URL ?? 'https://agent-widget.hyperboledigital.workers.dev/widget.js'
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
 
+// Mirrors widget.js's own hardcoded default (apps/widget/src/widget.js) — when
+// API_URL matches this, the snippet omits data-api-url entirely rather than
+// spelling out our infrastructure's URL in every client's page source; the
+// widget already falls back to the same value on its own.
+const WIDGET_DEFAULT_API_URL = 'https://api.hyperboledigital.com'
+
 // ⚠️ These mirror the built-in fallbacks in apps/widget/src/widget.js (CHIPS
 // and PROMPT_LABELS). They are duplicated on purpose and must be kept in sync
 // by hand: widget.js is served standalone from the Worker with no build step,
@@ -425,10 +431,13 @@ function WidgetTab({ client }: { client: Client }) {
   const dirty = stable(draft) !== stable(client.widgetConfig ?? {})
   const usingDefaultPrompts = !draft.prompts?.length
 
+  // data-api-url is only spelled out when it points somewhere OTHER than the
+  // widget's own hardcoded default (local dev, a tunnel, staging) — a client
+  // sent to production gets the shorter tag, since the widget already falls
+  // back to our production API on its own.
   const snippet = `<script
   src="${WIDGET_URL}"
-  data-client-id="${client.id}"
-  data-api-url="${API_URL}"
+  data-client-id="${client.id}"${API_URL === WIDGET_DEFAULT_API_URL ? '' : `\n  data-api-url="${API_URL}"`}
 ></script>`
 
   function set<K extends keyof WidgetConfig>(key: K, value: WidgetConfig[K]) {

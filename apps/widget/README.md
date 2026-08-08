@@ -31,9 +31,13 @@ snippet is short and the client only ever pastes it once:
 <script
   src="https://agent-widget.yourname.workers.dev/widget.js"
   data-client-id="CLIENT_UUID_FROM_SUPABASE"
-  data-api-url="https://your-api.railway.app"
 ></script>
 ```
+
+`data-api-url` is omitted here on purpose — widget.js has your production API
+URL hardcoded as its default, so a client's page source doesn't need to spell
+out your infrastructure. Only add `data-api-url` to pin a specific site to a
+different API (local dev, staging, a tunnel) — see the table below.
 
 ## Where settings come from
 
@@ -51,14 +55,14 @@ built-in defaults rather than not rendering at all.
 
 ## Customization via data attributes
 
-Only `data-client-id` and `data-api-url` are needed in practice — everything
-else is better set per client in the dashboard. These exist to override the
-stored config on one specific site.
+Only `data-client-id` is needed in practice — everything else is better set
+per client in the dashboard, or left to its hardcoded default. These exist to
+override the stored config (or the API URL) on one specific site.
 
 | Attribute | Falls back to | Description |
 |---|---|---|
 | data-client-id | **required** | UUID from your clients table |
-| data-api-url | localhost:3001 | Your API base URL |
+| data-api-url | your production API (hardcoded in widget.js) | Override for local/staging/tunnel testing |
 | data-title | stored config → client name → `Support` | Header title |
 | data-tagline | stored config → `You can ask me anything` | Subtitle under the title |
 | data-welcome | stored config → `How can I help you today?` | First assistant message |
