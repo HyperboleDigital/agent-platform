@@ -208,12 +208,42 @@ export async function listClientSubscriptions(clientId: string): Promise<ClientS
 // Cancel a specific subscription — guarded so it can only cancel a sub actually
 // attributed to this client (never someone else's). Used to clear a stale plan
 // left over after a tier switch.
+//
+// Idempotent by design: the goal is "this subscription is not billing anymore",
+// so a sub that's already canceled (or already gone) is success, not failure.
+// Stripe raises resource_missing / "No such subscription" for BOTH a bogus id
+// and an already-canceled one, and the stale-sub list that feeds this is backed
+// by Stripe Search — which is eventually consistent and can still show a sub
+// that was canceled moments ago. Without this, clicking Cancel on that row
+// surfaced a raw, alarming "No such subscription: 'sub_...'" for what was
+// actually the desired end state.
 export async function cancelClientSubscription(clientId: string, subId: string): Promise<void> {
-  const sub = await stripe.subscriptions.retrieve(subId)
+  let sub: Stripe.Subscription
+  try {
+    sub = await stripe.subscriptions.retrieve(subId)
+  } catch (err) {
+    // Nothing to cancel — and nothing to leak, since it doesn't exist.
+    if (isResourceMissing(err)) return
+    throw err
+  }
+
   if (sub.metadata?.client_id !== clientId) {
     throw new Error('That subscription is not attributed to this client')
   }
-  await stripe.subscriptions.cancel(subId)
+  if (sub.status === 'canceled') return // already in the desired state
+
+  try {
+    await stripe.subscriptions.cancel(subId)
+  } catch (err) {
+    // Lost a race with another cancel (or Stripe's own lifecycle) — same
+    // end state, so don't turn it into an error.
+    if (isResourceMissing(err)) return
+    throw err
+  }
+}
+
+function isResourceMissing(err: unknown): boolean {
+  return (err as { code?: string })?.code === 'resource_missing'
 }
 
 export async function createPortalSession(clientId: string, returnUrl: string): Promise<string> {
