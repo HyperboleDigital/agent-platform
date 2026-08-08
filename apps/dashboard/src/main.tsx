@@ -28,6 +28,7 @@ import { AuthBridge } from './AuthBridge'
 import { OrgActivator } from './OrgActivator'
 import { AppShell } from './components/app-shell'
 import { ThemeProvider } from './components/theme-provider'
+import { ConfirmProvider } from './components/confirm-dialog'
 import './index.css'
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
@@ -84,7 +85,9 @@ createRoot(document.getElementById('root')!).render(
       >
         <AuthBridge />
         <OrgActivator />
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
         <Toaster theme="dark" richColors position="top-right" />
       </ClerkProvider>
     </ThemeProvider>

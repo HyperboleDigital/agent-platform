@@ -13,6 +13,7 @@ import { StatTile } from '@/components/stat-tile'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/empty-state'
+import { useConfirm } from '@/components/confirm-dialog'
 
 const STATUS_LABEL: Record<CitationStatus, string> = {
   pending: 'Pending',
@@ -43,6 +44,7 @@ function CitationsCard({ clientId, isSuperadmin }: { clientId: string; isSuperad
   const key = ['citations', clientId]
   const { data, isLoading, mutate } = useSWR(key, () => api.clients.citations(clientId))
   const [busy, setBusy] = useState(false)
+  const confirm = useConfirm()
 
   async function seed() {
     setBusy(true)
@@ -67,7 +69,7 @@ function CitationsCard({ clientId, isSuperadmin }: { clientId: string; isSuperad
   }
 
   async function remove(c: Citation) {
-    if (!window.confirm(`Stop tracking ${c.directory}?`)) return
+    if (!(await confirm(`Stop tracking ${c.directory}?`))) return
     try {
       await api.clients.deleteCitation(clientId, c.id)
       await mutate()

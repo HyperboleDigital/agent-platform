@@ -14,6 +14,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KnowledgeFilePreview } from '@/components/attachment-preview'
 import { ReorderableList } from '@/components/reorderable-list'
+import { useConfirm } from '@/components/confirm-dialog'
 import { AssistantInsights } from '@/pages/client/AssistantInsights'
 
 function AssistantCard() {
@@ -56,9 +57,10 @@ function DocumentRow({ clientId, doc, file, onChanged }: {
   const [busy, setBusy] = useState(false)
   const [description, setDescription] = useState(doc.description ?? '')
   const replaceInputRef = useRef<HTMLInputElement>(null)
+  const confirm = useConfirm()
 
   async function remove() {
-    if (!window.confirm(`Delete "${doc.title}"? This can't be undone.`)) return
+    if (!(await confirm({ message: `Delete "${doc.title}"? This can't be undone.` }))) return
     setBusy(true)
     try {
       await api.clients.deleteKnowledgeDocument(clientId, doc.id)

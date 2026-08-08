@@ -21,6 +21,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConversationsChart } from '@/components/charts/conversations-chart'
 import { UsageBar } from '@/components/usage-bar'
+import { useConfirm } from '@/components/confirm-dialog'
 import { SiteHealthCard } from '@/components/site-health-card'
 import { ContactButton } from '@/components/contact-button'
 import { RequestsTable } from '@/components/requests-table'
@@ -528,6 +529,7 @@ function LeadsTab({ clientId }: { clientId: string }) {
   const key = ['leads', clientId]
   const { data: leads } = useSWR(key, () => api.clients.leads(clientId))
   const { data: me } = useSWR('me', api.me)
+  const confirm = useConfirm()
 
   async function setStatus(leadId: string, status: LeadStatus) {
     try {
@@ -539,7 +541,7 @@ function LeadsTab({ clientId }: { clientId: string }) {
   }
 
   async function remove(leadId: string) {
-    if (!window.confirm('Delete this lead? This can\'t be undone.')) return
+    if (!(await confirm('Delete this lead? This can\'t be undone.'))) return
     try {
       await api.clients.deleteLead(clientId, leadId)
       mutate(key)
@@ -625,6 +627,7 @@ function ConnectorsTab({ clientId, client }: { clientId: string; client: import(
   const { data, isLoading } = useSWR(key, () => api.clients.connectors(clientId), { refreshInterval: 30_000 })
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const confirm = useConfirm()
 
   async function connectGmail() {
     setConnecting(true)
@@ -639,7 +642,7 @@ function ConnectorsTab({ clientId, client }: { clientId: string; client: import(
   }
 
   async function disconnectGmail() {
-    if (!window.confirm('Disconnect Gmail? Escalation emails will stop sending until you reconnect (Slack still works).')) return
+    if (!(await confirm('Disconnect Gmail? Escalation emails will stop sending until you reconnect (Slack still works).'))) return
     setDisconnecting(true)
     try {
       await api.clients.disconnectGmail(clientId)

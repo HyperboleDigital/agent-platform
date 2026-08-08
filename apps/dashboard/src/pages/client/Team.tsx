@@ -11,6 +11,7 @@ import { Input, Label } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/empty-state'
+import { useConfirm } from '@/components/confirm-dialog'
 
 function initials(member: TeamMember): string {
   const source = member.name ?? member.email ?? '?'
@@ -46,6 +47,7 @@ export default function Team() {
   const [role, setRole] = useState<TeamRole>('org:member')
   const [inviting, setInviting] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const confirm = useConfirm()
 
   const seatsFull = !!team && team.seatsUsed >= team.seatLimit
   const canManage = team?.canManage ?? false
@@ -68,7 +70,7 @@ export default function Team() {
   }
 
   async function revoke(invitationId: string, address: string) {
-    if (!window.confirm(`Revoke the invite for ${address}?`)) return
+    if (!(await confirm(`Revoke the invite for ${address}?`))) return
     setBusyId(invitationId)
     try {
       await api.clients.revokeTeamInvitation(clientId, invitationId)
@@ -96,7 +98,7 @@ export default function Team() {
 
   async function remove(member: TeamMember) {
     const who = member.name ?? member.email ?? 'this member'
-    if (!window.confirm(`Remove ${who} from the team? They'll lose access to this dashboard.`)) return
+    if (!(await confirm(`Remove ${who} from the team? They'll lose access to this dashboard.`))) return
     setBusyId(member.userId)
     try {
       await api.clients.removeTeamMember(clientId, member.userId)
