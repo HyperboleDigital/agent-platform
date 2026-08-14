@@ -89,6 +89,12 @@ clientsRouter.post('/', async (req, res) => {
       delete req.body.name       // renaming a client is a superadmin action
       delete req.body.vertical   // pricing-sheet tier assignment is a superadmin (billing) action
       delete req.body.tierKey
+      // Widget appearance/behaviour is configured by Hyperbole, not the client
+      // — the Widget setup tab is superadmin-only in the dashboard, and this is
+      // what actually enforces it. agentConfig is deliberately NOT stripped:
+      // clients legitimately write it (escalation email at onboarding, Slack
+      // webhook, assistant settings on the Insights tab they can see).
+      delete req.body.widgetConfig
     }
   } else if (!identity.isSuperadmin) {
     return res.status(403).json({ error: 'Only an admin can create a new client' })
@@ -269,14 +275,14 @@ clientsRouter.delete('/:id/leads/:leadId', async (req, res) => {
 // List knowledge base documents for a client
 clientsRouter.get('/:id/knowledge', async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   res.json(await listDocuments(req.params.id))
 })
 
 // Add a knowledge base document to a client
 clientsRouter.post('/:id/knowledge', async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   const { title, content, url, description } = req.body as { title: string; content: string; url?: string; description?: string }
   if (!title || !content) return res.status(400).json({ error: 'title and content required' })
   const { documentId, ids } = await addDocument(req.params.id, title, content, { url, description })
@@ -290,7 +296,7 @@ clientsRouter.post('/:id/knowledge', async (req, res) => {
 // doesn't accumulate orphans.
 clientsRouter.post('/:id/widget-logo', upload.single('file'), async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
 
   const file = req.file
   if (!file) return res.status(400).json({ error: 'file required (multipart field "file")' })
@@ -324,7 +330,7 @@ clientsRouter.post('/:id/widget-logo', upload.single('file'), async (req, res) =
 // first-letter avatar).
 clientsRouter.delete('/:id/widget-logo', async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
 
   try {
     const client = await getClientById(req.params.id)
@@ -346,7 +352,7 @@ clientsRouter.delete('/:id/widget-logo', async (req, res) => {
 
 clientsRouter.post('/:id/knowledge/upload', upload.single('file'), async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
 
   const file = req.file
   if (!file) return res.status(400).json({ error: 'file required (multipart field "file")' })
@@ -382,7 +388,7 @@ clientsRouter.post('/:id/knowledge/upload', upload.single('file'), async (req, r
 // Delete a whole document (all its chunks, plus its original file if any).
 clientsRouter.delete('/:id/knowledge/:documentId', async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   try {
     await deleteDocument(req.params.id, req.params.documentId)
     res.json({ ok: true })
@@ -394,7 +400,7 @@ clientsRouter.delete('/:id/knowledge/:documentId', async (req, res) => {
 // Edit a document's description — the only field editable after the fact.
 clientsRouter.patch('/:id/knowledge/:documentId', async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   const description = typeof req.body?.description === 'string' ? req.body.description : ''
   try {
     await updateDocumentDescription(req.params.id, req.params.documentId, description)
@@ -408,7 +414,7 @@ clientsRouter.patch('/:id/knowledge/:documentId', async (req, res) => {
 // chunked text rows in /knowledge, which are for search, not display.
 clientsRouter.get('/:id/knowledge/files', async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   res.json(await listKnowledgeFiles(req.params.id))
 })
 
@@ -416,7 +422,7 @@ clientsRouter.get('/:id/knowledge/files', async (req, res) => {
 // minted fresh per request, same pattern as request attachments.
 clientsRouter.get('/:id/knowledge/files/:fileId/url', async (req, res) => {
   const identity = identityOf(req)
-  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   const file = await getKnowledgeFile(req.params.fileId)
   if (!file || file.clientId !== req.params.id) return res.status(404).json({ error: 'File not found' })
   try {

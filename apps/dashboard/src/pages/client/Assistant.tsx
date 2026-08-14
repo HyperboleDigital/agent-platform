@@ -721,6 +721,8 @@ function WidgetTab({ client }: { client: Client }) {
 
 export default function Assistant() {
   const { clientId, client } = useClientCtx()
+  const { data: me } = useSWR('me', api.me)
+  const isSuperadmin = !!me?.isSuperadmin
 
   return (
     <div className="flex flex-col gap-6">
@@ -731,27 +733,37 @@ export default function Assistant() {
 
       <AssistantCard />
 
-      <Tabs defaultValue="insights">
-        <TabsList>
-          <TabsTrigger value="insights">Insights</TabsTrigger>
-          <TabsTrigger value="widget">Widget setup</TabsTrigger>
-          <TabsTrigger value="knowledge">Knowledge base</TabsTrigger>
-        </TabsList>
+      {/* Widget setup and Knowledge base are Hyperbole's side of the assistant —
+          embed snippets, prompt tuning, and the source documents it answers
+          from. A client only needs Insights. With one tab left there's nothing
+          to switch between, so the tab strip is dropped entirely rather than
+          rendered as a single lonely button. The API enforces this separately;
+          hiding the UI is presentation, not access control. */}
+      {isSuperadmin ? (
+        <Tabs defaultValue="insights">
+          <TabsList>
+            <TabsTrigger value="insights">Insights</TabsTrigger>
+            <TabsTrigger value="widget">Widget setup</TabsTrigger>
+            <TabsTrigger value="knowledge">Knowledge base</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="insights">
-          <AssistantInsights clientId={clientId} client={client} />
-        </TabsContent>
+          <TabsContent value="insights">
+            <AssistantInsights clientId={clientId} client={client} />
+          </TabsContent>
 
-        <TabsContent value="widget">
-          {client
-            ? <WidgetTab client={client} />
-            : <Card><CardContent className="py-6 text-sm text-muted-foreground">Loading widget settings…</CardContent></Card>}
-        </TabsContent>
+          <TabsContent value="widget">
+            {client
+              ? <WidgetTab client={client} />
+              : <Card><CardContent className="py-6 text-sm text-muted-foreground">Loading widget settings…</CardContent></Card>}
+          </TabsContent>
 
-        <TabsContent value="knowledge">
-          <KnowledgeTab clientId={clientId} />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="knowledge">
+            <KnowledgeTab clientId={clientId} />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <AssistantInsights clientId={clientId} client={client} />
+      )}
     </div>
   )
 }
