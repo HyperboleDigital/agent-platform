@@ -11,12 +11,14 @@ import { Input, Textarea, Label } from '@/components/ui/input'
 import { EmptyState } from '@/components/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RequestsTable, ACTIVE_STATUSES, HISTORY_STATUSES } from '@/components/requests-table'
+import { useConfirm } from '@/components/confirm-dialog'
 
 export default function Requests() {
   const { clientId } = useClientCtx()
   const key = ['requests', clientId]
   const { data: requests, isLoading } = useSWR(key, () => api.clients.requests(clientId))
   const { data: me } = useSWR('me', api.me)
+  const confirm = useConfirm()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
@@ -69,7 +71,12 @@ export default function Requests() {
   }
 
   async function remove(reqId: string, title: string) {
-    if (!confirm(`Delete "${title}"? This removes the request, its history, comments and any attached files for good.`)) return
+    const ok = await confirm({
+      title: 'Delete request',
+      message: `Delete "${title}"? This removes the request, its history, comments and any attached files for good.`,
+      confirmLabel: 'Delete request',
+    })
+    if (!ok) return
     try {
       await mutate(
         key,

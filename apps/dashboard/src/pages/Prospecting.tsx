@@ -7,6 +7,7 @@ import {
   Wand2, Check, Loader2, Mail,
 } from 'lucide-react'
 import { api, UNGROUPED_KEY, formatCost, UNASSIGNED_LIBRARY } from '@/lib/api'
+import { useConfirm } from '@/components/confirm-dialog'
 import type {
   Prospect, ProspectCandidate, ProspectStatus, SeoCrawl, ProspectMockup, ProspectPreview, DesignReference,
   MockupPreview, ExtractedBrand, GenerationRun, RunStep, CostItem, LayoutFinding,
@@ -1515,6 +1516,7 @@ function MockupPanel({ prospect, latestCrawlId }: { prospect: Prospect; latestCr
   const recentMockups = mockups?.slice(0, 3) ?? []
   const [selectedMockupId, setSelectedMockupId] = useState<string | null>(null)
   const [deletingMockupId, setDeletingMockupId] = useState<string | null>(null)
+  const confirm = useConfirm()
   // A finished run just produced a new mockup — follow it rather than leaving
   // the operator looking at whatever tab they'd previously selected.
   useEffect(() => {
@@ -1639,7 +1641,12 @@ function MockupPanel({ prospect, latestCrawlId }: { prospect: Prospect; latestCr
   }
 
   async function removeMockup(mockupId: string) {
-    if (!confirm('Delete this concept? The generated page and its images are removed for good.')) return
+    const ok = await confirm({
+      title: 'Delete concept',
+      message: 'Delete this concept? The generated page and its images are removed for good.',
+      confirmLabel: 'Delete concept',
+    })
+    if (!ok) return
     setDeletingMockupId(mockupId)
     try {
       await api.prospecting.deleteMockup(mockupId)

@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { StatTile } from '@/components/stat-tile'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/empty-state'
+import { useConfirm } from '@/components/confirm-dialog'
 
 function pct(n: number) {
   return `${Math.round(n * 100)}%`
@@ -176,6 +177,7 @@ export default function Reports() {
   const { clientId } = useClientCtx()
   const { data: reports, isLoading } = useSWR(['reports', clientId], () => api.clients.reports(clientId))
   const { data: me } = useSWR('me', api.me)
+  const confirm = useConfirm()
   const [generating, setGenerating] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sendingReport, setSendingReport] = useState<Report | null>(null)
@@ -187,7 +189,12 @@ export default function Reports() {
     const sentWarning = report.sentTo
       ? `\n\nThis report was already emailed to ${report.sentTo}. Deleting it here does not unsend that email.`
       : ''
-    if (!confirm(`Delete the ${report.periodStart} – ${report.periodEnd} report?${sentWarning}`)) return
+    const ok = await confirm({
+      title: 'Delete report',
+      message: `Delete the ${report.periodStart} – ${report.periodEnd} report?${sentWarning}`,
+      confirmLabel: 'Delete report',
+    })
+    if (!ok) return
     setDeleting(true)
     try {
       await api.clients.deleteReport(clientId, report.id)
