@@ -31,7 +31,7 @@ import { listPosts, getPost, draftPost, updatePost, transitionPost, setFramerIte
 import {
   getFramerConnection, saveFramerConnection, deleteFramerConnection, listCollectionFields, publishToFramer
 } from '../lib/framer'
-import { listReports, getReport, buildReport, sendReport } from '../lib/reports'
+import { listReports, getReport, buildReport, sendReport, deleteReport } from '../lib/reports'
 import { latestBaseline, runSiteBaseline, pagespeedConfigured } from '../lib/site-baseline'
 import { deliverMonthlyReport, previousPeriodKey } from '../lib/report-scheduler'
 import {
@@ -1371,6 +1371,18 @@ clientsRouter.get('/:id/reports/:reportId', async (req, res) => {
   const report = await getReport(req.params.id, req.params.reportId)
   if (!report) return res.status(404).json({ error: 'Not found' })
   res.json(report)
+})
+
+// Superadmin only: clients view their reports, they don't curate them.
+clientsRouter.delete('/:id/reports/:reportId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await deleteReport(req.params.id, req.params.reportId)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete report' })
+  }
 })
 
 // Manual email send — superadmin only, recipient explicit in the body.

@@ -6,6 +6,7 @@ import { getLatestCrawl, getCrawlHistory } from './dataforseo'
 import { getRuns } from './visibility'
 import { sendGuardedEmail, type GuardedEmailResult } from './notify'
 import { latestBaseline, previousBaseline } from './site-baseline'
+import { isEntitled } from './entitlements'
 
 // Client-facing performance reports. buildReport aggregates ONLY data that
 // already exists (no new tracking) into a persisted snapshot, so a report
@@ -39,6 +40,10 @@ export interface ReportData {
     previousMobileScore: number | null
     checks: { key: string; label: string; status: string; detail: string; findings: string[] }[]
   } | null
+  // Null when the client isn't entitled to the chat assistant. A Care client
+  // has no chatbot, so including this section rendered a wall of zeros
+  // ("0 conversations, 0% resolved, 0 hours saved") that reads as the service
+  // performing terribly rather than as a service they don't have.
   chat: {
     conversationsThisMonth: number
     monthlyCap: number
@@ -46,7 +51,7 @@ export interface ReportData {
     estimatedHoursSaved: number
     questionsAnswered: number
     totalLeadsCaptured: number
-  }
+  } | null
   requestsClosed: number
 }
 
@@ -162,20 +167,25 @@ export async function buildReport(clientId: string, periodStart?: string, period
       }
     : null
 
+  // Only report on the chatbot if they actually have one — see ReportData.chat.
+  const chatEntitled = await isEntitled(clientId, 'chat').catch(() => false)
+
   const data: ReportData = {
     clientName: client.name,
     seo,
     visibility,
     siteHealth,
     baseline,
-    chat: {
-      conversationsThisMonth: usage.used,
-      monthlyCap: usage.cap,
-      resolvedRate: stats.resolvedRate,
-      estimatedHoursSaved: stats.estimatedHoursSaved,
-      questionsAnswered: stats.questionsAnswered,
-      totalLeadsCaptured: stats.totalLeadsCaptured
-    },
+    chat: chatEntitled
+      ? {
+          conversationsThisMonth: usage.used,
+          monthlyCap: usage.cap,
+          resolvedRate: stats.resolvedRate,
+          estimatedHoursSaved: stats.estimatedHoursSaved,
+          questionsAnswered: stats.questionsAnswered,
+          totalLeadsCaptured: stats.totalLeadsCaptured
+        }
+      : null,
     requestsClosed: closedRes.count ?? 0
   }
 
@@ -203,6 +213,22 @@ export async function getReport(clientId: string, reportId: string): Promise<Rep
   return data ? fromRow(data as Row) : null
 }
 
+// Scoped by client_id as well as id so a report can never be deleted through
+// the wrong client's route, even with a valid report id from elsewhere.
+//
+// report_deliveries.report_id is ON DELETE SET NULL, so removing a report does
+// NOT free up its month for the monthly scheduler to send again — the delivery
+// claim survives deliberately. Deleting a bad report is a cleanup action, not a
+// way to trigger a re-send.
+export async function deleteReport(clientId: string, reportId: string): Promise<void> {
+  const { error } = await supabase
+    .from('reports')
+    .delete()
+    .eq('client_id', clientId)
+    .eq('id', reportId)
+  if (error) throw new Error(`Failed to delete report: ${error.message}`)
+}
+
 function pct(n: number): string {
   return `${Math.round(n * 100)}%`
 }
@@ -218,14 +244,19 @@ export function renderReportEmail(report: Report): { subject: string; body: stri
   const lines: string[] = [
     `Performance report for ${d.clientName}`,
     `${report.periodStart} to ${report.periodEnd}`,
-    ``,
-    `CHATBOT`,
-    `  Conversations this month: ${d.chat.conversationsThisMonth} of ${d.chat.monthlyCap}`,
-    `  Resolved without a human: ${pct(d.chat.resolvedRate)}`,
-    `  Estimated hours saved: ${d.chat.estimatedHoursSaved}`,
-    `  Leads captured (all time): ${d.chat.totalLeadsCaptured}`,
     ``
   ]
+  // Omitted entirely for clients without the chat assistant — see ReportData.chat.
+  if (d.chat) {
+    lines.push(
+      `CHATBOT`,
+      `  Conversations this month: ${d.chat.conversationsThisMonth} of ${d.chat.monthlyCap}`,
+      `  Resolved without a human: ${pct(d.chat.resolvedRate)}`,
+      `  Estimated hours saved: ${d.chat.estimatedHoursSaved}`,
+      `  Leads captured (all time): ${d.chat.totalLeadsCaptured}`,
+      ``
+    )
+  }
   if (d.seo) {
     lines.push(
       `SEO`,

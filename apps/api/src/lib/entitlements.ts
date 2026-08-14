@@ -23,6 +23,10 @@ export interface ServiceEntitlement {
 
 export interface Entitlements {
   active: boolean // base subscription active (paid/trialing/past_due or comped)
+  // The plan of whatever subscription row exists — INCLUDING a canceled one.
+  // This is not "the plan they're currently on": check `active` before showing
+  // it to anyone. Rendering it unconditionally is how a cancelled client ended
+  // up seeing their old plan's name and price on the dashboard home.
   planKey: string | null
   services: Record<ServiceKey, ServiceEntitlement>
 }

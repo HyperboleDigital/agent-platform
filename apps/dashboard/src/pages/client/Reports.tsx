@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { FileBarChart, Plus, Send, TriangleAlert } from 'lucide-react'
+import { FileBarChart, Plus, Send, TriangleAlert, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { Report } from '@/lib/api'
 import { useClientCtx } from '@/pages/client/ClientLayout'
@@ -16,38 +16,94 @@ function pct(n: number) {
   return `${Math.round(n * 100)}%`
 }
 
+const BASELINE_STATUS_STYLE: Record<string, string> = {
+  good: 'text-success',
+  warn: 'text-warning',
+  poor: 'text-destructive',
+  unknown: 'text-muted-foreground/60',
+}
+
 function ReportView({ report }: { report: Report }) {
   const d = report.data
+  // Chat tiles are omitted entirely for clients without the assistant. Showing
+  // "0 / 0 conversations, 0% resolved" reads as the chatbot failing rather than
+  // as a service they were never sold — see ReportData.chat.
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatTile label="Conversations this month" value={`${d.chat.conversationsThisMonth} / ${d.chat.monthlyCap}`} />
-        <StatTile label="Resolved by bot" value={pct(d.chat.resolvedRate)} />
-        <StatTile label="Est. hours saved" value={`${d.chat.estimatedHoursSaved}h`} />
-        <StatTile label="Requests completed" value={d.requestsClosed} />
-      </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatTile
-          label="SEO score"
-          value={d.seo ? (
-            <span className="flex items-baseline gap-1.5">
-              {d.seo.lastScore}
-              {d.seo.delta !== 0 && (
-                <span className={d.seo.delta > 0 ? 'text-xs text-success' : 'text-xs text-destructive'}>
-                  {d.seo.delta > 0 ? '+' : ''}{d.seo.delta}
+      {d.chat ? (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <StatTile label="Conversations this month" value={`${d.chat.conversationsThisMonth} / ${d.chat.monthlyCap}`} />
+            <StatTile label="Resolved by bot" value={pct(d.chat.resolvedRate)} />
+            <StatTile label="Est. hours saved" value={`${d.chat.estimatedHoursSaved}h`} />
+            <StatTile label="Requests completed" value={d.requestsClosed} />
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <StatTile
+              label="SEO score"
+              value={d.seo ? (
+                <span className="flex items-baseline gap-1.5">
+                  {d.seo.lastScore}
+                  {d.seo.delta !== 0 && (
+                    <span className={d.seo.delta > 0 ? 'text-xs text-success' : 'text-xs text-destructive'}>
+                      {d.seo.delta > 0 ? '+' : ''}{d.seo.delta}
+                    </span>
+                  )}
                 </span>
-              )}
-            </span>
-          ) : '—'}
-        />
-        <StatTile label="AI mention rate" value={d.visibility ? pct(d.visibility.mentionRate) : '—'} />
-        <StatTile label="Questions answered" value={d.chat.questionsAnswered} />
-        <StatTile label="Leads captured" value={d.chat.totalLeadsCaptured} />
-      </div>
+              ) : '—'}
+            />
+            <StatTile label="AI mention rate" value={d.visibility ? pct(d.visibility.mentionRate) : '—'} />
+            <StatTile label="Questions answered" value={d.chat.questionsAnswered} />
+            <StatTile label="Leads captured" value={d.chat.totalLeadsCaptured} />
+          </div>
+        </>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <StatTile label="Requests completed" value={d.requestsClosed} />
+          <StatTile
+            label="SEO score"
+            value={d.seo ? (
+              <span className="flex items-baseline gap-1.5">
+                {d.seo.lastScore}
+                {d.seo.delta !== 0 && (
+                  <span className={d.seo.delta > 0 ? 'text-xs text-success' : 'text-xs text-destructive'}>
+                    {d.seo.delta > 0 ? '+' : ''}{d.seo.delta}
+                  </span>
+                )}
+              </span>
+            ) : '—'}
+          />
+          <StatTile label="AI mention rate" value={d.visibility ? pct(d.visibility.mentionRate) : '—'} />
+        </div>
+      )}
+
+      {d.baseline && (
+        <div className="rounded-md border border-border bg-muted/30 p-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-medium">Site health check</span>
+            {d.baseline.mobileScore != null && (
+              <span className="text-lg font-semibold">{d.baseline.mobileScore}/100</span>
+            )}
+            {d.baseline.mobileScore != null && d.baseline.previousMobileScore != null && (
+              <span className="text-xs text-muted-foreground">
+                was {d.baseline.previousMobileScore} last month
+              </span>
+            )}
+          </div>
+          <ul className="mt-1.5 flex flex-col gap-0.5 text-xs">
+            {d.baseline.checks.map(c => (
+              <li key={c.key} className={BASELINE_STATUS_STYLE[c.status] ?? 'text-muted-foreground'}>
+                {c.label}: <span className="text-muted-foreground">{c.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {d.siteHealth && (
         <div className="rounded-md border border-border bg-muted/30 p-3">
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-medium">Site health</span>
+            <span className="text-sm font-medium">Technical score</span>
             <span className="text-lg font-semibold">{d.siteHealth.score}/100</span>
           </div>
           {d.siteHealth.topIssues.length > 0 && (
@@ -123,8 +179,29 @@ export default function Reports() {
   const [generating, setGenerating] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sendingReport, setSendingReport] = useState<Report | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const selected = reports?.find(r => r.id === selectedId) ?? reports?.[0] ?? null
+
+  async function remove(report: Report) {
+    const sentWarning = report.sentTo
+      ? `\n\nThis report was already emailed to ${report.sentTo}. Deleting it here does not unsend that email.`
+      : ''
+    if (!confirm(`Delete the ${report.periodStart} – ${report.periodEnd} report?${sentWarning}`)) return
+    setDeleting(true)
+    try {
+      await api.clients.deleteReport(clientId, report.id)
+      // Clear the selection so the list falls back to the newest remaining
+      // report rather than holding a now-deleted id.
+      setSelectedId(null)
+      await mutate(['reports', clientId])
+      toast.success('Report deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete report')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   async function generate() {
     setGenerating(true)
@@ -192,9 +269,22 @@ export default function Reports() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>{selected.periodStart} – {selected.periodEnd}</CardTitle>
                 {me?.isSuperadmin && (
-                  <Button size="sm" variant="secondary" onClick={() => setSendingReport(selected)}>
-                    <Send className="h-3.5 w-3.5" /> Send report
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => setSendingReport(selected)}>
+                      <Send className="h-3.5 w-3.5" /> Send report
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => remove(selected)}
+                      disabled={deleting}
+                      className="text-muted-foreground hover:text-destructive"
+                      title="Delete this report"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {deleting ? 'Deleting…' : 'Delete'}
+                    </Button>
+                  </div>
                 )}
               </CardHeader>
               <CardContent className="pt-0">

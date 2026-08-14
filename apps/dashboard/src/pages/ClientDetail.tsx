@@ -180,7 +180,12 @@ function PlanStatusCard({ clientId }: { clientId: string }) {
 
   if (isLoading || !entitlements) return <Skeleton className="h-20 w-full" />
 
-  const tier = tiers?.find(t => t.key === entitlements.planKey) ?? null
+  // Only resolve the tier when the plan is actually active. planKey is derived
+  // from whatever subscription row exists, including a canceled one, so without
+  // this gate a client who cancelled still saw their old plan's name and price
+  // sitting next to a "Not active" badge — reading as though they're still on
+  // (and being charged for) a plan they ended.
+  const tier = entitlements.active ? tiers?.find(t => t.key === entitlements.planKey) ?? null : null
   const priceLabel = tier ? `$${(tier.monthlyPriceCents / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}/mo` : null
   const renewsAt = billing?.subscription?.currentPeriodEnd
   const included = tier?.features.filter(f => f.built).slice(0, 4) ?? []

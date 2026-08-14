@@ -911,6 +911,14 @@ export interface ReportData {
   seo: { firstScore: number; lastScore: number; delta: number; auditsInPeriod: number } | null
   visibility: { mentionRate: number; totalChecks: number } | null
   siteHealth: { score: number; topIssues: { title: string; severity: string; count: number }[] } | null
+  // Care-tier technical baseline; null when no baseline has been run yet.
+  baseline: {
+    mobileScore: number | null
+    previousMobileScore: number | null
+    checks: { key: string; label: string; status: string; detail: string; findings: string[] }[]
+  } | null
+  // Null when the client has no chat assistant — rendering zeros would read as
+  // the chatbot performing badly rather than as a service they don't have.
   chat: {
     conversationsThisMonth: number
     monthlyCap: number
@@ -918,7 +926,7 @@ export interface ReportData {
     estimatedHoursSaved: number
     questionsAnswered: number
     totalLeadsCaptured: number
-  }
+  } | null
   requestsClosed: number
 }
 
@@ -1137,6 +1145,10 @@ export const api = {
     runBaseline: (id: string) => request<SiteBaseline>(`/clients/${id}/baseline/run`, { method: 'POST' }),
     reports: (id: string) => request<Report[]>(`/clients/${id}/reports`),
     generateReport: (id: string) => request<Report>(`/clients/${id}/reports/generate`, { method: 'POST', body: JSON.stringify({}) }),
+    // Superadmin only. Does not free the month for the monthly scheduler to
+    // re-send — see deleteReport() on the API.
+    deleteReport: (id: string, reportId: string) =>
+      request<{ ok: true }>(`/clients/${id}/reports/${reportId}`, { method: 'DELETE' }),
     sendReport: (id: string, reportId: string, to: string) =>
       request<SendReportResult>(`/clients/${id}/reports/${reportId}/send`, { method: 'POST', body: JSON.stringify({ to }) }),
     leads: (id: string) => request<Lead[]>(`/clients/${id}/leads`),
