@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf'
 import type { SeoCrawl } from './api'
 import { buildAuditRows, groupByCategory, type Severity } from './audit-rows'
+import { HYPERBOLE_ICON_PNG_BASE64 } from './hyperbole-icon-base64'
 
 // Generates and downloads a branded PDF audit report directly (no print dialog).
 // Text is drawn with jsPDF primitives so it's crisp and selectable, not a
@@ -33,9 +34,12 @@ export function buildAuditPdf(crawl: SeoCrawl): jsPDF {
   const ensure = (h: number) => { if (y + h > H - M) { doc.addPage(); y = M } }
   const date = new Date(crawl.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
 
-  // Header
+  // Header. The icon works on white paper (the H is dark regardless of its
+  // disc), unlike the wordmark used elsewhere in the app, which is white text
+  // built for a dark surface and would be invisible here.
+  doc.addImage(HYPERBOLE_ICON_PNG_BASE64, 'PNG', M, y - 9, 12, 12)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...ACCENT)
-  doc.text('HYPERBOLE DIGITAL', M, y); y += 20
+  doc.text('HYPERBOLE DIGITAL', M + 16, y); y += 20
   doc.setFontSize(20); doc.setTextColor(...DARK)
   doc.text('SEO Audit Report', M, y); y += 16
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...GRAY)

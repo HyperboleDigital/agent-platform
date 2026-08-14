@@ -65,8 +65,14 @@ const CATALOG: TierInfo[] = [
       // Change requests exist; the turnaround SLA timer and the one-active-at-a-time
       // limit are not enforced yet.
       { text: 'Unlimited small requests — 1–2 business day turnaround, one active request at a time', built: true, section: 'requests' },
-      { text: 'Technical SEO baseline: page speed, meta titles/descriptions, schema markup, mobile, indexing health', built: false },
-      { text: 'Monthly health report', built: false }
+      // Schema markup was dropped from this bullet rather than left in and
+      // unmeasured: nothing in the platform checks structured data, so
+      // claiming it would have been the one unverifiable item in a report the
+      // client can otherwise check line by line. The other four are real —
+      // speed and mobile from a live Lighthouse run, titles/descriptions and
+      // indexing from the site crawl. See lib/site-baseline.ts.
+      { text: 'Technical SEO baseline: page speed, mobile friendliness, meta titles/descriptions, indexing health', built: true, section: '' },
+      { text: 'Monthly health report', built: true, section: 'reports' }
     ]
   },
   {

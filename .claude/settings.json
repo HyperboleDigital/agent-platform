@@ -4,5 +4,8 @@
       "Bash(npm list *)",
       "Bash(npm root *)"
     ]
+  },
+  "enabledPlugins": {
+    "figma@claude-plugins-official": true
   }
 }

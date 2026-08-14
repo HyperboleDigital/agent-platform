@@ -1,0 +1,14 @@
+-- Additive — supports the layout-first concept flow: generate a full-page
+-- design image for THIS business first, then hand it to the HTML pass as the
+-- layout spec instead of making it average the generic library references.
+--
+-- The image is an intermediate artifact, not a deliverable, so it needs its
+-- own column rather than reusing storage_path. storage_path on an html row
+-- must stay null: /prospects/:id/mockups/:mockupId/image and the public
+-- /p/:token/image route both treat "storage_path is set" as "this concept IS
+-- an image" and would serve the rough layout draft to the prospect.
+--
+-- Nullable and unread for existing rows, so concepts generated before this
+-- (and any generated with layout-first off) keep working unchanged.
+-- Safe to run.
+alter table prospect_mockups add column if not exists layout_image_path text;

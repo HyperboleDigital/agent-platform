@@ -224,7 +224,18 @@ export async function getReferenceImage(storagePath: string): Promise<Buffer> {
 // unassigned ("applies to everyone") pool otherwise. Deliberately not
 // blended: choosing a library means using that library, and nothing else.
 // See prospect-mockups.ts buildGenerationContext, the only caller.
-export async function selectReferencesForLibrary(libraryId: string | null | undefined): Promise<DesignReference[]> {
+// `primaryId` pins one reference to the front of the list. Four references of
+// equal weight get averaged into a generic middle — naming one as the layout
+// to follow closely (with the rest as secondary style influence) is how a
+// designer actually works from a main comp plus a mood board, and it's what
+// the prompt keys off to give that first image structural authority.
+export async function selectReferencesForLibrary(
+  libraryId: string | null | undefined,
+  primaryId?: string | null
+): Promise<DesignReference[]> {
   const refs = await listReferences({ libraryId: libraryId ?? null })
-  return refs.slice(0, MAX_REFERENCES_PER_GENERATION)
+  const ordered = primaryId
+    ? [...refs.filter(r => r.id === primaryId), ...refs.filter(r => r.id !== primaryId)]
+    : refs
+  return ordered.slice(0, MAX_REFERENCES_PER_GENERATION)
 }

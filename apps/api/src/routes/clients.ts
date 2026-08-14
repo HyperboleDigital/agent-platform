@@ -32,6 +32,8 @@ import {
   getFramerConnection, saveFramerConnection, deleteFramerConnection, listCollectionFields, publishToFramer
 } from '../lib/framer'
 import { listReports, getReport, buildReport, sendReport } from '../lib/reports'
+import { latestBaseline, runSiteBaseline, pagespeedConfigured } from '../lib/site-baseline'
+import { deliverMonthlyReport, previousPeriodKey } from '../lib/report-scheduler'
 import {
   getTeam, inviteMember, revokeInvitation, removeMember, updateMemberRole, isTeamRole, TeamError
 } from '../lib/team'
@@ -1296,6 +1298,44 @@ clientsRouter.get('/:id/framer-connection/fields', async (req, res) => {
     res.json(await listCollectionFields(id))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to load Framer collection fields' })
+  }
+})
+
+// ── Technical SEO baseline (Care tier) ───────────────────────────────────────
+// Deliberately NOT behind assertEntitled('seo'): Care includes no services, so
+// gating this on the SEO add-on would hide the one technical read the tier
+// actually promises from every client entitled to it.
+
+clientsRouter.get('/:id/baseline', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(await latestBaseline(req.params.id))
+})
+
+clientsRouter.post('/:id/baseline/run', async (req, res) => {
+  const identity = identityOf(req)
+  if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
+  if (!pagespeedConfigured()) return res.status(400).json({ error: 'PAGESPEED_API_KEY is not configured on this deployment' })
+  try {
+    res.json(await runSiteBaseline(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to run the site check' })
+  }
+})
+
+// Superadmin "run the monthly report now" — same code path the scheduler uses,
+// including the once-per-period claim, so testing it cannot cause a client to
+// receive two emails for the same month.
+clientsRouter.post('/:id/reports/run-monthly', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Client not found' })
+  const periodKey = typeof req.body?.periodKey === 'string' ? req.body.periodKey : previousPeriodKey()
+  try {
+    res.json(await deliverMonthlyReport(client.id, client.name, periodKey))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to run the monthly report' })
   }
 })
 

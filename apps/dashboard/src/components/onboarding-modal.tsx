@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { useUser } from '@clerk/react'
 import { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Sparkles, Mail, Plug } from 'lucide-react'
+import { Mail, Plug } from 'lucide-react'
+import hyperboleIcon from '@/img/hyperbole-icon.png'
 import type { Client } from '@agent-platform/shared'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -62,7 +63,7 @@ export function OnboardingModal({ client, chatEntitled }: { client: Client; chat
           {firstTime ? (
             <>
               <h2 className="flex items-center gap-2 text-lg font-semibold">
-                <Sparkles className="h-5 w-5 text-primary" /> Welcome to Hyperbole Digital 👋
+                <img src={hyperboleIcon} alt="" className="h-5 w-5" /> Welcome to Hyperbole Digital 👋
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 Your dashboard is ready to explore.{chatEntitled ? ' One quick thing to finish setting up your assistant.' : ''}

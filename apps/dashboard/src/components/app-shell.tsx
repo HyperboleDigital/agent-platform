@@ -13,11 +13,10 @@ import { dark } from '@clerk/themes'
 import { api, checkHealth, type ServiceKey } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useEntitlements } from '@/hooks/use-entitlements'
-import { ThemeToggle } from '@/components/theme-toggle'
-import { useTheme } from 'next-themes'
 import { ServerDownScreen } from '@/components/server-down-screen'
 import { Button } from '@/components/ui/button'
 import { ContactButton } from '@/components/contact-button'
+import hyperboleWordmark from '@/img/hyperbole-wordmark.png'
 
 const TOP_NAV = [{ label: 'Clients', to: '/', icon: Users }]
 const SUPERADMIN_TOP_NAV = [
@@ -153,9 +152,8 @@ function NavBody() {
 function Sidebar() {
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-card md:flex">
-      <div className="flex h-14 items-center gap-2 border-b border-border px-5">
-        <Sparkles className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold">Hyperbole Digital</span>
+      <div className="flex h-14 items-center border-b border-border px-5">
+        <img src={hyperboleWordmark} alt="Hyperbole Digital" className="h-4 w-auto" />
       </div>
       <NavBody />
     </aside>
@@ -202,10 +200,7 @@ function MobileNav() {
             onClick={e => e.stopPropagation()}
           >
             <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold">Hyperbole Digital</span>
-              </div>
+              <img src={hyperboleWordmark} alt="Hyperbole Digital" className="h-4 w-auto" />
               <button
                 onClick={() => setOpen(false)}
                 aria-label="Close navigation"
@@ -273,7 +268,6 @@ function Breadcrumb() {
 }
 
 function Topbar() {
-  const { theme } = useTheme()
   const location = useLocation()
   const clientId = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
   return (
@@ -286,8 +280,8 @@ function Topbar() {
         {/* The contact CTA is a nice-to-have next to a cramped breadcrumb —
             it stays reachable on mobile from the client's own pages. */}
         {clientId && <span className="hidden sm:inline-flex"><ContactButton clientId={clientId} /></span>}
-        <ThemeToggle />
-        <UserButton appearance={{ baseTheme: theme === 'light' ? undefined : dark } as never} />
+        {/* No theme toggle — the dashboard is dark-mode only, see index.html's hardcoded class="dark". */}
+        <UserButton appearance={{ baseTheme: dark } as never} />
       </div>
     </header>
   )

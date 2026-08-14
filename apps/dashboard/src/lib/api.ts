@@ -485,6 +485,7 @@ export interface Prospect {
   placeId: string | null
   name: string
   category: string | null
+  groupName: string | null
   area: string | null
   phone: string | null
   email: string | null
@@ -496,6 +497,7 @@ export interface Prospect {
   status: ProspectStatus
   draftPlain: string | null
   draftLoom: string | null
+  draftValue: string | null
   hookSource: string | null
   notes: string | null
   createdAt: string
@@ -504,6 +506,25 @@ export interface Prospect {
 export interface DiscoveryResult {
   count: number
   candidates: ProspectCandidate[]
+  // Whether this came from the API's server-side cache instead of a real
+  // (billed) Places call — same (category, area) searched again within the
+  // cache window returns instantly and free. fetchedAt is when the
+  // underlying Places call actually ran, cache-hit or not.
+  fromCache: boolean
+  fetchedAt: string
+}
+
+// Server sentinel for "prospects with no group" — a query string can't carry
+// null. Must match UNGROUPED_KEY in the API's lib/prospecting.ts.
+export const UNGROUPED_KEY = '__ungrouped__'
+
+// Group names are operator-typed ("Med Spa"), so they need encoding.
+function prospectQuery(filter: { status?: ProspectStatus; group?: string }): string {
+  const params = new URLSearchParams()
+  if (filter.status) params.set('status', filter.status)
+  if (filter.group) params.set('group', filter.group)
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
 }
 
 export interface MockupStyle {
@@ -511,18 +532,104 @@ export interface MockupStyle {
   label: string
 }
 
+// What the API scraped from a prospect's live site (or Places data alone, for
+// no-website prospects) — colors/logoUrl come from a real DOM inspection when
+// the site could be rendered, name/services/phone from a lighter regex pass.
+// Editable in the dashboard's brand-review step before a generation spends it.
+// The one sentinel value GET /prospecting/design-references treats as
+// "unassigned pool" — see designReferences() above.
+export const UNASSIGNED_LIBRARY = 'unassigned'
+
+export interface ExtractedBrand {
+  businessName: string | null
+  headline: string | null
+  services: string[]
+  phone: string | null
+  colors: string[]
+  logoUrl: string | null
+  // Real photo URLs found on their current site — hero/service/crew shots —
+  // so a concept can reuse actual imagery instead of only CSS gradients.
+  photoUrls: string[]
+  // A real license/registration number found on the page, e.g. "CCC1331776".
+  license: string | null
+  // Real trust phrases found verbatim on the page (e.g. "BBB Accredited",
+  // "Licensed & Insured") — matched against a fixed phrase list server-side,
+  // never a paraphrase.
+  certifications: string[]
+  // Real partner/material-supplier logo URLs (e.g. a "products we use" strip).
+  partnerLogoUrls: string[]
+}
+
+// One click of the wizard: a multi-step, multi-provider generation whose
+// progress and spend the API writes to a row we poll, rather than holding a
+// multi-minute request open.
+export type RunStatus = 'running' | 'done' | 'error'
+export type StepStatus = 'pending' | 'running' | 'done' | 'skipped' | 'error'
+
+export interface RunStep {
+  key: string
+  label: string
+  status: StepStatus
+  pct: number
+  detail?: string
+}
+
+export interface CostItem {
+  step: string
+  provider: string
+  model: string
+  kind: 'tokens' | 'image'
+  qty: number
+  micros: number
+}
+
+export interface GenerationRun {
+  id: string
+  prospectId: string
+  status: RunStatus
+  steps: RunStep[]
+  currentStep: string | null
+  mockupId: string | null
+  // Millionths of a USD — integer, because provider prices run to fractions of
+  // a cent and cents would round most of a run away.
+  costMicros: number
+  costDetail: CostItem[]
+  options: Record<string, unknown>
+  error: string | null
+  createdAt: string
+  finishedAt: string | null
+}
+
+export function formatCost(micros: number): string {
+  if (!micros) return '$0.00'
+  const usd = micros / 1_000_000
+  return usd < 1 ? `$${usd.toFixed(3)}` : `$${usd.toFixed(2)}`
+}
+
+// Layout audit findings recorded against a concept. Advisory: the HTML is
+// never rewritten from them.
+export interface LayoutFinding {
+  kind: 'icon-heading' | 'nav-centring'
+  label: string
+  delta: number
+  viewport: number
+}
+
+// The output of the design-analysis pass (a small, separate, cheap-tier
+// Claude call — costs a little, unlike scrapeBrand/previewMockup which are
+// free): a corrected services list plus concrete style direction derived
+// from actually looking at the design references and the current site,
+// rather than trusting the blind regex scrape.
+export interface DesignAnalysis {
+  services: string[]
+  styleNotes: string
+}
+
 export interface ProspectMockup {
   id: string
   prospectId: string
   styleKey: string
-  brand: {
-    businessName: string | null
-    headline: string | null
-    services: string[]
-    phone: string | null
-    colors: string[]
-    logoUrl: string | null
-  }
+  brand: ExtractedBrand
   prompt: string
   directionNotes: string | null
   // 'html' concepts live in `html`; 'image' is the legacy single-PNG format,
@@ -530,6 +637,10 @@ export interface ProspectMockup {
   format: 'image' | 'html'
   html: string | null
   storagePath: string | null
+  // Set when the concept was generated layout-first: the full-page draft image
+  // the HTML was built from. Internal reference only — never shown to the prospect.
+  layoutImagePath: string | null
+  layoutFindings: LayoutFinding[] | null
   currentScreenshotPath: string | null
   referenceIds: string[] | null
   libraryId: string | null
@@ -822,6 +933,30 @@ export interface Report {
   sentTo: string | null
 }
 
+// The four Care-tier technical checks. 'unknown' is a real state, not an
+// error: it means the source (Lighthouse, or a site crawl) wasn't available,
+// and it must render differently from 'good' so an unmeasured check is never
+// mistaken for a passing one.
+export type BaselineStatus = 'good' | 'warn' | 'poor' | 'unknown'
+
+export interface BaselineCheck {
+  key: 'speed' | 'mobile' | 'meta' | 'indexing'
+  label: string
+  status: BaselineStatus
+  score: number | null
+  detail: string
+  findings: string[]
+}
+
+export interface SiteBaseline {
+  id: string
+  clientId: string
+  url: string
+  mobileScore: number | null
+  checks: BaselineCheck[]
+  createdAt: string
+}
+
 export interface SendReportResult {
   sent: boolean
   recipient: string | null
@@ -995,6 +1130,11 @@ export const api = {
       }),
     deleteFramerConnection: (id: string) => request<{ ok: boolean }>(`/clients/${id}/framer-connection`, { method: 'DELETE' }),
     framerFields: (id: string) => request<FramerCollectionField[]>(`/clients/${id}/framer-connection/fields`),
+    // Technical SEO baseline (Care tier). Not gated behind the SEO add-on —
+    // Care includes no services, so this is the technical read those clients
+    // are entitled to. See lib/site-baseline.ts on the API.
+    baseline: (id: string) => request<SiteBaseline | null>(`/clients/${id}/baseline`),
+    runBaseline: (id: string) => request<SiteBaseline>(`/clients/${id}/baseline/run`, { method: 'POST' }),
     reports: (id: string) => request<Report[]>(`/clients/${id}/reports`),
     generateReport: (id: string) => request<Report>(`/clients/${id}/reports/generate`, { method: 'POST', body: JSON.stringify({}) }),
     sendReport: (id: string, reportId: string, to: string) =>
@@ -1116,33 +1256,68 @@ export const api = {
   },
 
   prospecting: {
-    discover: (opts: { category: string; area: string; minRating?: number; minReviewCount?: number; noWebsiteOnly?: boolean }) =>
+    discover: (opts: { category: string; area: string; minRating?: number; minReviewCount?: number; noWebsiteOnly?: boolean; forceRefresh?: boolean }) =>
       request<DiscoveryResult>('/prospecting/discover', { method: 'POST', body: JSON.stringify(opts) }),
-    list: (status?: ProspectStatus) =>
-      request<Prospect[]>(`/prospecting${status ? `?status=${status}` : ''}`),
-    save: (candidate: ProspectCandidate, category: string, area: string) =>
-      request<Prospect>('/prospecting', { method: 'POST', body: JSON.stringify({ candidate, category, area }) }),
-    update: (id: string, patch: { status?: ProspectStatus; email?: string | null; notes?: string | null }) =>
+    list: (filter: { status?: ProspectStatus; group?: string } = {}) =>
+      request<Prospect[]>(`/prospecting${prospectQuery(filter)}`),
+    save: (candidate: ProspectCandidate, category: string, area: string, groupName?: string) =>
+      request<Prospect>('/prospecting', { method: 'POST', body: JSON.stringify({ candidate, category, area, groupName }) }),
+    // One round trip for a whole checkbox selection; already-saved businesses
+    // upsert harmlessly rather than duplicating.
+    saveMany: (candidates: ProspectCandidate[], category: string, area: string, groupName?: string) =>
+      request<{ saved: number; prospects: Prospect[] }>('/prospecting/bulk', {
+        method: 'POST', body: JSON.stringify({ candidates, category, area, groupName }),
+      }),
+    renameGroup: (from: string, to: string) =>
+      request<{ moved: number }>('/prospecting/groups/rename', { method: 'POST', body: JSON.stringify({ from, to }) }),
+    update: (id: string, patch: { status?: ProspectStatus; email?: string | null; notes?: string | null; groupName?: string | null }) =>
       request<Prospect>(`/prospecting/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     delete: (id: string) =>
       request<{ ok: true }>(`/prospecting/${id}`, { method: 'DELETE' }),
     generateDrafts: (id: string) =>
       request<Prospect>(`/prospecting/${id}/draft`, { method: 'POST' }),
+    // Fuller value-prop email (mockup + real service value props + book-a-
+    // call) — a distinct draft type, meant for once a mockup exists.
+    generateValueDraft: (id: string) =>
+      request<Prospect>(`/prospecting/${id}/value-draft`, { method: 'POST' }),
     audit: (id: string) =>
       request<SeoCrawl>(`/prospecting/${id}/audit`, { method: 'POST' }),
     // CSV export needs the auth header, so it can't be a plain <a href>; fetch
     // the text and let the caller trigger a Blob download.
-    exportCsv: async (status?: ProspectStatus): Promise<string> => {
-      const res = await rawFetch(`/prospecting/export.csv${status ? `?status=${status}` : ''}`, undefined, false)
+    exportCsv: async (filter: { status?: ProspectStatus; group?: string } = {}): Promise<string> => {
+      const res = await rawFetch(`/prospecting/export.csv${prospectQuery(filter)}`, undefined, false)
       if (!res.ok) throw new Error(`Export failed: ${res.status}`)
       return res.text()
     },
     mockupStyles: () => request<MockupStyle[]>('/prospecting/mockup-styles'),
     mockups: (id: string) => request<ProspectMockup[]>(`/prospecting/${id}/mockups`),
-    generateMockup: (id: string, opts: { styleKey?: string; directionNotes?: string; libraryId?: string | null } = {}) =>
+    // Scrape-only, no persistence, zero LLM cost — backs the brand-review step
+    // so the operator sees (and can correct) the extraction before generating.
+    scrapeBrand: (id: string) => request<ExtractedBrand>(`/prospecting/${id}/brand`, { method: 'POST' }),
+    // Costs one cheap-tier Claude call (unlike scrapeBrand above) — looks at
+    // the design references + current site and returns a corrected services
+    // list plus concrete style direction, instead of trusting the raw scrape.
+    analyzeDesign: (id: string, opts: { libraryId?: string | null; primaryReferenceId?: string | null; brandOverride?: Partial<ExtractedBrand> } = {}) =>
+      request<DesignAnalysis>(`/prospecting/${id}/analyze`, { method: 'POST', body: JSON.stringify(opts) }),
+    // layoutFirst draws a full-page design image for this business first and
+    // uses it as the layout spec for the HTML, instead of making Claude average
+    // the generic library references. Costs an extra image generation and
+    // roughly doubles wall time, so it's opt-in per generation.
+    // aiPhotos swaps the business's own scraped photos for clean AI-generated
+    // stock photography — worth it when their real imagery is low-quality,
+    // badly cropped, or has text burned into it. Costs two extra image
+    // generations, so it's opt-in alongside layoutFirst.
+    generateMockup: (id: string, opts: { styleKey?: string; directionNotes?: string; styleNotes?: string; libraryId?: string | null; primaryReferenceId?: string | null; brandOverride?: Partial<ExtractedBrand>; layoutFirst?: boolean; aiPhotos?: boolean } = {}) =>
       request<ProspectMockup>(`/prospecting/${id}/mockups`, { method: 'POST', body: JSON.stringify(opts) }),
-    previewMockup: (id: string, opts: { directionNotes?: string; libraryId?: string | null } = {}) =>
+    previewMockup: (id: string, opts: { directionNotes?: string; styleNotes?: string; libraryId?: string | null; primaryReferenceId?: string | null; brandOverride?: Partial<ExtractedBrand> } = {}) =>
       request<MockupPreview>(`/prospecting/${id}/mockups/preview`, { method: 'POST', body: JSON.stringify(opts) }),
+    // Real AI-generated PNG concept — same body shape as generateMockup/
+    // previewMockup above, parallel HTML/image entry points sharing the same
+    // brand/reference/style-notes controls.
+    generateImageMockup: (id: string, opts: { directionNotes?: string; styleNotes?: string; libraryId?: string | null; primaryReferenceId?: string | null; brandOverride?: Partial<ExtractedBrand> } = {}) =>
+      request<ProspectMockup>(`/prospecting/${id}/mockups/image`, { method: 'POST', body: JSON.stringify(opts) }),
+    previewImageMockup: (id: string, opts: { directionNotes?: string; styleNotes?: string; libraryId?: string | null; primaryReferenceId?: string | null; brandOverride?: Partial<ExtractedBrand> } = {}) =>
+      request<MockupPreview>(`/prospecting/${id}/mockups/image/preview`, { method: 'POST', body: JSON.stringify(opts) }),
     // The image needs the auth header, so it can't be a plain <img src>; fetch
     // the bytes and hand back an object URL the caller must revoke.
     mockupImageUrl: async (mockupId: string): Promise<string> => {
@@ -1150,6 +1325,30 @@ export const api = {
       if (!res.ok) throw new Error(`Failed to load image: ${res.status}`)
       return URL.createObjectURL(await res.blob())
     },
+    // The layout-first draft the concept was built from. Same auth-header
+    // reason as mockupImageUrl above for not being a plain <img src>.
+    mockupLayoutImageUrl: async (mockupId: string): Promise<string> => {
+      const res = await rawFetch(`/prospecting/mockups/${mockupId}/layout-image`, undefined, false)
+      if (!res.ok) throw new Error(`Failed to load layout draft: ${res.status}`)
+      return URL.createObjectURL(await res.blob())
+    },
+    // Starts the wizard and returns immediately with a run to poll — the job
+    // itself runs detached on the API, so closing the tab doesn't kill it.
+    startGeneration: (id: string, opts: { libraryId?: string | null; primaryReferenceId?: string | null; directionNotes?: string; brandOverride?: Partial<ExtractedBrand>; aiPhotos?: boolean; layoutFirst?: boolean } = {}) =>
+      request<GenerationRun>(`/prospecting/${id}/generate`, { method: 'POST', body: JSON.stringify(opts) }),
+    // Fails (400) if a live preview link points at this concept — the API
+    // refuses rather than leaving an already-shared URL rendering an empty
+    // page. Surface the message; it tells the operator to revoke first.
+    deleteMockup: (mockupId: string) =>
+      request<{ ok: true }>(`/prospecting/mockups/${mockupId}`, { method: 'DELETE' }),
+    getRun: (runId: string) => request<GenerationRun>(`/prospecting/runs/${runId}`),
+    latestRun: (id: string, kind: 'concept' | 'email' = 'concept') =>
+      request<GenerationRun | null>(`/prospecting/${id}/latest-run?kind=${kind}`),
+    // One click: links the chosen concept, audits their site, and writes the
+    // outreach email from both. Async like startGeneration — returns a run to
+    // poll, because the audit alone runs for minutes.
+    startEmail: (id: string, opts: { mockupId?: string | null; audit?: boolean } = {}) =>
+      request<GenerationRun>(`/prospecting/${id}/email`, { method: 'POST', body: JSON.stringify(opts) }),
     previews: (id: string) => request<ProspectPreview[]>(`/prospecting/${id}/previews`),
     createPreview: (id: string, opts: { mockupId?: string | null; crawlId?: string | null } = {}) =>
       request<ProspectPreview>(`/prospecting/${id}/previews`, { method: 'POST', body: JSON.stringify(opts) }),
@@ -1164,6 +1363,18 @@ export const api = {
     deleteDesignLibrary: (libraryId: string) =>
       request<{ ok: true }>(`/prospecting/design-libraries/${libraryId}`, { method: 'DELETE' }),
 
+    // libraryId: omit for "all references"; UNASSIGNED_LIBRARY for the
+    // unassigned pool; a real library id for that library only. The backend
+    // (GET /design-references) is the source of truth for this contract —
+    // sending anything else for "unassigned" either 500s (an arbitrary string
+    // doesn't parse as a library uuid) or silently falls through to "all",
+    // which is exactly the two ways this broke before: the library-management
+    // page's filter sent a sentinel the backend didn't recognize, and the
+    // per-prospect reference picker sent `undefined` for "no library",
+    // which reads as "no filter" rather than "the unassigned pool" — so an
+    // operator picking a primary reference while on "no library" could see
+    // thumbnails from every library, then have the pick silently dropped at
+    // generation time because it wasn't actually in the unassigned pool.
     designReferences: (opts: { includeInactive?: boolean; libraryId?: string } = {}) => {
       const params = new URLSearchParams()
       if (opts.includeInactive) params.set('includeInactive', 'true')

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { getPreviewByToken, recordView, isPreviewActive } from '../lib/prospect-previews'
 import { getProspect } from '../lib/prospecting'
-import { getMockup, getMockupImage, getScreenshotImage } from '../lib/prospect-mockups'
+import { getMockup, getMockupImage, getScreenshotImage, contentTypeForStoredImage } from '../lib/prospect-mockups'
 import { getAdhocCrawl } from '../lib/dataforseo'
 import { renderPreviewPage } from '../lib/prospect-preview-page'
 
@@ -79,7 +79,7 @@ previewRouter.get('/:token/image', async (req, res) => {
 
   try {
     const buffer = await getMockupImage(mockup.storagePath)
-    res.set('X-Robots-Tag', 'noindex, nofollow').type('png').send(buffer)
+    res.set('X-Robots-Tag', 'noindex, nofollow').type(contentTypeForStoredImage(mockup.storagePath)).send(buffer)
   } catch {
     res.status(404).type('text/plain').send('Not found')
   }

@@ -5,6 +5,7 @@ import { getMonthlyUsage } from './usage'
 import { getLatestCrawl, getCrawlHistory } from './dataforseo'
 import { getRuns } from './visibility'
 import { sendGuardedEmail, type GuardedEmailResult } from './notify'
+import { latestBaseline, previousBaseline } from './site-baseline'
 
 // Client-facing performance reports. buildReport aggregates ONLY data that
 // already exists (no new tracking) into a persisted snapshot, so a report
@@ -29,6 +30,14 @@ export interface ReportData {
   siteHealth: {
     score: number // 0..100 DataForSEO onpage_score
     topIssues: { title: string; severity: string; count: number }[]
+  } | null
+  // The Care-tier technical baseline (speed, mobile, titles/descriptions,
+  // indexing). Null when no baseline has ever been run for the client — the
+  // report still renders without it rather than failing.
+  baseline: {
+    mobileScore: number | null
+    previousMobileScore: number | null
+    checks: { key: string; label: string; status: string; detail: string; findings: string[] }[]
   } | null
   chat: {
     conversationsThisMonth: number
@@ -136,11 +145,29 @@ export async function buildReport(clientId: string, periodStart?: string, period
       }
     : null
 
+  // Technical baseline, with the prior snapshot alongside it so the email can
+  // report movement ("was 41, now 65") rather than a bare number the client
+  // has no way to judge.
+  const currentBaseline = await latestBaseline(clientId).catch(() => null)
+  const priorBaseline = currentBaseline
+    ? await previousBaseline(clientId, currentBaseline.createdAt)
+    : null
+  const baseline = currentBaseline
+    ? {
+        mobileScore: currentBaseline.mobileScore,
+        previousMobileScore: priorBaseline?.mobileScore ?? null,
+        checks: currentBaseline.checks.map(c => ({
+          key: c.key, label: c.label, status: c.status, detail: c.detail, findings: c.findings,
+        })),
+      }
+    : null
+
   const data: ReportData = {
     clientName: client.name,
     seo,
     visibility,
     siteHealth,
+    baseline,
     chat: {
       conversationsThisMonth: usage.used,
       monthlyCap: usage.cap,
@@ -180,6 +207,12 @@ function pct(n: number): string {
   return `${Math.round(n * 100)}%`
 }
 
+// Plain ASCII rather than emoji: this is a text/plain email body and the
+// recipient's client may render emoji inconsistently or not at all.
+const STATUS_MARK: Record<string, string> = {
+  good: '[OK]', warn: '[!]', poor: '[X]', unknown: '[-]',
+}
+
 export function renderReportEmail(report: Report): { subject: string; body: string } {
   const d = report.data
   const lines: string[] = [
@@ -199,6 +232,22 @@ export function renderReportEmail(report: Report): { subject: string; body: stri
       `  Site SEO score: ${d.seo.lastScore}/100 (${d.seo.delta >= 0 ? '+' : ''}${d.seo.delta} over the period)`,
       ``
     )
+  }
+  // The Care client's headline section: the four baseline checks in plain
+  // language. Placed before the crawl score because "your site takes 14
+  // seconds to load on a phone" is actionable, where "62/100" is not.
+  if (d.baseline) {
+    lines.push(`SITE HEALTH CHECK`)
+    if (d.baseline.mobileScore != null) {
+      const prev = d.baseline.previousMobileScore
+      const move = prev != null ? ` (was ${prev} last month)` : ''
+      lines.push(`  Mobile speed score: ${d.baseline.mobileScore}/100${move}`)
+    }
+    for (const c of d.baseline.checks) {
+      lines.push(`  ${STATUS_MARK[c.status] ?? '•'} ${c.label}: ${c.detail}`)
+      for (const f of c.findings.slice(0, 2)) lines.push(`      - ${f}`)
+    }
+    lines.push(``)
   }
   if (d.siteHealth) {
     lines.push(`TECHNICAL HEALTH`, `  On-page technical score: ${d.siteHealth.score}/100 (crawl issues only — not keywords or rankings)`)

@@ -139,15 +139,31 @@ export interface DiscoveryOptions {
   noWebsiteOnly?: boolean
 }
 
-export async function discoverBusinesses(opts: DiscoveryOptions): Promise<ProspectCandidate[]> {
-  const apiKey = process.env.PLACES_API_KEY
-  if (!apiKey) throw new Error('Places API not configured')
+// Places bills per search regardless of what the operator does with the
+// results, so an identical (category, area) re-search — re-opening the
+// Prospecting page, or just narrowing minRating/noWebsiteOnly after the fact —
+// should never place a second call. The raw, UNFILTERED page results are
+// cached per (category, area); minRating/minReviewCount/noWebsiteOnly are
+// applied fresh on every call whether the raw data came from cache or not, so
+// tightening a filter on an already-searched area is always free. In-memory
+// like fetchPlaceSummary's cache above — an API restart costs one more real
+// search, not incorrect data, so that tradeoff is fine here too.
+const DISCOVERY_CACHE_TTL_MS = 24 * 60 * 60 * 1000 // a day: long enough that same-session re-searches are free, short enough ratings don't go stale
+interface DiscoveryCacheEntry { at: number; raw: ProspectCandidate[] }
+const discoveryCache = new Map<string, DiscoveryCacheEntry>()
 
-  const category = opts.category.trim()
-  const area = opts.area.trim()
-  if (!category || !area) return []
+function discoveryCacheKey(category: string, area: string): string {
+  return `${category.trim().toLowerCase()}|${area.trim().toLowerCase()}`
+}
+
+export interface DiscoveryResult {
+  candidates: ProspectCandidate[]
+  fromCache: boolean
+  fetchedAt: string   // when the underlying Places call actually ran (cache-hit or not)
+}
+
+async function fetchRawCandidates(apiKey: string, category: string, area: string): Promise<ProspectCandidate[]> {
   const textQuery = `${category} in ${area}`
-
   const out: ProspectCandidate[] = []
   let pageToken: string | undefined
   for (let page = 0; page < MAX_DISCOVERY_PAGES; page++) {
@@ -180,11 +196,32 @@ export async function discoverBusinesses(opts: DiscoveryOptions): Promise<Prospe
     pageToken = json.nextPageToken
     if (!pageToken) break
   }
+  return out
+}
 
-  return out.filter(c => {
+export async function discoverBusinesses(opts: DiscoveryOptions & { forceRefresh?: boolean }): Promise<DiscoveryResult> {
+  const apiKey = process.env.PLACES_API_KEY
+  if (!apiKey) throw new Error('Places API not configured')
+
+  const category = opts.category.trim()
+  const area = opts.area.trim()
+  if (!category || !area) return { candidates: [], fromCache: false, fetchedAt: new Date().toISOString() }
+
+  const key = discoveryCacheKey(category, area)
+  const cached = discoveryCache.get(key)
+  const cacheUsable = !!cached && Date.now() - cached.at < DISCOVERY_CACHE_TTL_MS && !opts.forceRefresh
+
+  const entry: DiscoveryCacheEntry = cacheUsable
+    ? cached!
+    : { at: Date.now(), raw: await fetchRawCandidates(apiKey, category, area) }
+  if (!cacheUsable) discoveryCache.set(key, entry)
+
+  const candidates = entry.raw.filter(c => {
     if (opts.noWebsiteOnly && !c.noWebsite) return false
     if (opts.minRating != null && (c.rating ?? 0) < opts.minRating) return false
     if (opts.minReviewCount != null && c.reviewCount < opts.minReviewCount) return false
     return true
   })
+
+  return { candidates, fromCache: cacheUsable, fetchedAt: new Date(entry.at).toISOString() }
 }

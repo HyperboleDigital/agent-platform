@@ -54,7 +54,7 @@ const CATALOG: ServiceInfo[] = [
     name: 'SEO & AI Visibility',
     monthlyPriceCents: 49900,
     description:
-      'Keyword rankings from Google Search Console, technical site audits, and tracking of how your brand shows up in ChatGPT and other AI search.',
+      'Keyword rankings from Google Search Console, technical site audits, and tracking of how your brand shows up across the major AI assistants — ChatGPT, Claude, Gemini and the rest — when customers ask them for a business like yours.',
     status: 'available'
   },
   {

@@ -15,6 +15,7 @@
     "@agent-platform/shared": "workspace:*",
     "@anthropic-ai/sdk": "^0.24.3",
     "@clerk/express": "^2.1.40",
+    "@google/genai": "^2.16.0",
     "@supabase/supabase-js": "^2.43.4",
     "@types/ws": "^8.18.1",
     "cors": "^2.8.5",

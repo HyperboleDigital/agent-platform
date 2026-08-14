@@ -19,6 +19,8 @@ import { widgetConfigRouter } from './routes/widget-config'
 import { getIdentity } from './lib/authz'
 import { reconcileUserMembership } from './lib/clients'
 import { finalizePendingCrawls } from './lib/dataforseo'
+import { failOrphanedRuns } from './lib/prospect-generation-runs'
+import { runMonthlyReports, isReportWindow } from './lib/report-scheduler'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
@@ -137,6 +139,32 @@ app.listen(PORT, () => console.log(`API running on :${PORT}`))
 // crawls to completion (or trips their timeout), so an audit finishes whether or
 // not a dashboard tab is left open to poll it. It is job completion, not
 // business automation. `.unref()` keeps it from holding the process open.
+// A generation run lives in memory for the life of the process, so anything
+// still marked 'running' at boot died with the previous one. Marking those
+// failed at startup stops the dashboard polling a job that will never finish.
+void failOrphanedRuns().catch(err =>
+  console.error('[startup] failed to clear orphaned generation runs', err instanceof Error ? err.message : err))
+
+// Monthly health report (Care tier). This is the ONE scheduler allowed to send
+// client email — see lib/report-scheduler.ts's header for the four conditions
+// that make it safe, chiefly a unique (client_id, period_key) claim row that
+// makes a duplicate send impossible at the database level rather than in code.
+// Checked hourly but only acts in the first days of a month, and only ever for
+// the month that just ended, so there is no backfill burst after downtime.
+const REPORT_CHECK_INTERVAL_MS = 60 * 60 * 1000
+let reportRunning = false
+setInterval(async () => {
+  if (reportRunning || !isReportWindow()) return
+  reportRunning = true
+  try {
+    await runMonthlyReports()
+  } catch (err) {
+    console.error('[report-scheduler] error', err instanceof Error ? err.message : err)
+  } finally {
+    reportRunning = false
+  }
+}, REPORT_CHECK_INTERVAL_MS).unref()
+
 const FINALIZE_INTERVAL_MS = 20_000
 let finalizing = false
 setInterval(async () => {

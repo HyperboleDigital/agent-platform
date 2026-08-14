@@ -23,6 +23,7 @@ import { ConversationsChart } from '@/components/charts/conversations-chart'
 import { UsageBar } from '@/components/usage-bar'
 import { useConfirm } from '@/components/confirm-dialog'
 import { SiteHealthCard } from '@/components/site-health-card'
+import { SiteBaselineCard } from '@/components/site-baseline-card'
 import { ContactButton } from '@/components/contact-button'
 import { RequestsTable } from '@/components/requests-table'
 
@@ -62,6 +63,7 @@ export function ClientHome() {
     <div className="flex flex-col gap-6">
       <PlanStatusCard clientId={id} />
       <SiteHealthCard clientId={id} domain={client?.domain} />
+      <SiteBaselineCard clientId={id} domain={client?.domain} />
       <SeoVisibilitySummaryCard clientId={id} />
       <RequestsCard clientId={id} />
 
@@ -1077,58 +1079,64 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
           </CardContent>
         </Card>
       )}
-      <Card>
-        <CardContent className="flex items-start justify-between gap-4 pt-5">
-          <div className="flex items-start gap-3">
+      {/* Gated on isActive, not on sub being present — a canceled/incomplete_expired
+          subscription row still exists in Stripe and would otherwise render here as
+          if it were the client's current plan, which is exactly backwards: a canceled
+          sub is the ONE case that must never be shown as "current." Single card, one
+          state or the other, no redundant "canceled" + "no active subscription" pair. */}
+      {isActive ? (
+        <Card>
+          <CardContent className="flex items-start justify-between gap-4 pt-5">
+            <div className="flex items-start gap-3">
+              <CreditCard className="mt-0.5 h-4 w-4 text-muted-foreground" />
+              <div>
+                <div className="font-medium">Current plan</div>
+                <Badge variant={subStatusVariant(sub!.status)} className="mt-1.5">
+                  <StatusDot variant={subStatusVariant(sub!.status)} />
+                  {data?.plan?.name ?? 'Unknown plan'} — {sub!.status}
+                </Badge>
+                {sub!.currentPeriodEnd && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {sub!.status === 'active' ? 'Renews' : 'Ends'} {new Date(sub!.currentPeriodEnd).toLocaleDateString()}
+                  </p>
+                )}
+                {comped ? (
+                  <p className="mt-1.5 text-xs text-muted-foreground">Comped by admin — no card on file.</p>
+                ) : (
+                  <p className="mt-1.5 text-sm font-medium tabular-nums">
+                    ${(totalCents / 100).toFixed(0)}/mo total
+                    {addonCents > 0 && (
+                      <span className="ml-1 font-normal text-xs text-muted-foreground">
+                        (${((data?.plan?.monthlyPriceCents ?? 0) / 100).toFixed(0)} plan + ${(addonCents / 100).toFixed(0)} add-ons)
+                      </span>
+                    )}
+                  </p>
+                )}
+              </div>
+            </div>
+            {!comped && (
+              <Button variant="secondary" size="sm" onClick={openPortal} disabled={openingPortal}>
+                {openingPortal ? 'Opening…' : 'Manage billing'}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="border-dashed">
+          <CardContent className="flex items-start gap-3 pt-5">
             <CreditCard className="mt-0.5 h-4 w-4 text-muted-foreground" />
             <div>
-              <div className="font-medium">Current plan</div>
-              {sub ? (
-                <>
-                  <Badge variant={subStatusVariant(sub.status)} className="mt-1.5">
-                    <StatusDot variant={subStatusVariant(sub.status)} />
-                    {data?.plan?.name ?? 'Unknown plan'} — {sub.status}
-                  </Badge>
-                  {sub.currentPeriodEnd && (
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      {sub.status === 'active' ? 'Renews' : 'Ends'} {new Date(sub.currentPeriodEnd).toLocaleDateString()}
-                    </p>
-                  )}
-                  {comped ? (
-                    <p className="mt-1.5 text-xs text-muted-foreground">Comped by admin — no card on file.</p>
-                  ) : (
-                    <p className="mt-1.5 text-sm font-medium tabular-nums">
-                      ${(totalCents / 100).toFixed(0)}/mo total
-                      {addonCents > 0 && (
-                        <span className="ml-1 font-normal text-xs text-muted-foreground">
-                          (${((data?.plan?.monthlyPriceCents ?? 0) / 100).toFixed(0)} plan + ${(addonCents / 100).toFixed(0)} add-ons)
-                        </span>
-                      )}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <Badge variant="secondary" className="mt-1.5"><StatusDot variant="secondary" />No active subscription</Badge>
-              )}
+              <div className="font-medium">No active plan</div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Pick a tier above and use <span className="font-medium text-foreground">Copy payment link</span> to
+                send this client a checkout link — once they pay, their plan activates here automatically.
+              </p>
             </div>
-          </div>
-          {sub && !comped && (
-            <Button variant="secondary" size="sm" onClick={openPortal} disabled={openingPortal}>
-              {openingPortal ? 'Opening…' : 'Manage billing'}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {isActive && <UsageCard clientId={clientId} />}
-
-      {!isActive && (
-        <Card>
-          <CardContent className="pt-5 text-sm text-muted-foreground">
-            No active subscription. Pick a tier above and use <span className="font-medium text-foreground">Copy payment link</span> to send this client a checkout link — once they pay, their plan activates here automatically.
           </CardContent>
         </Card>
       )}
+
+      {isActive && <UsageCard clientId={clientId} />}
     </div>
   )
 }

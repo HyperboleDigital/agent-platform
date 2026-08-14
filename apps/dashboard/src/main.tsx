@@ -27,7 +27,6 @@ import { ProtectedLayout } from './ProtectedLayout'
 import { AuthBridge } from './AuthBridge'
 import { OrgActivator } from './OrgActivator'
 import { AppShell } from './components/app-shell'
-import { ThemeProvider } from './components/theme-provider'
 import { ConfirmProvider } from './components/confirm-dialog'
 import './index.css'
 
@@ -76,22 +75,25 @@ const router = createBrowserRouter([
   }
 ])
 
+// Dark mode only, permanently — there is no light theme and no toggle
+// anywhere in the app (see index.html's hardcoded class="dark" and
+// index.css's dark-first tokens). next-themes previously sat here to support
+// a toggle that has been removed; it's gone rather than left wired to a
+// choice nothing can make anymore.
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider>
-      <ClerkProvider
-        publishableKey={CLERK_PUBLISHABLE_KEY}
-        signInUrl="/sign-in"
-        signUpUrl="/sign-up"
-        appearance={{ baseTheme: dark } as never}
-      >
-        <AuthBridge />
-        <OrgActivator />
-        <ConfirmProvider>
-          <RouterProvider router={router} />
-        </ConfirmProvider>
-        <Toaster theme="dark" richColors position="top-right" />
-      </ClerkProvider>
-    </ThemeProvider>
+    <ClerkProvider
+      publishableKey={CLERK_PUBLISHABLE_KEY}
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      appearance={{ baseTheme: dark } as never}
+    >
+      <AuthBridge />
+      <OrgActivator />
+      <ConfirmProvider>
+        <RouterProvider router={router} />
+      </ConfirmProvider>
+      <Toaster theme="dark" richColors position="top-right" />
+    </ClerkProvider>
   </StrictMode>
 )

@@ -363,7 +363,8 @@ create table if not exists prospects (
   id            uuid primary key default gen_random_uuid(),
   place_id      text unique,
   name          text not null,
-  category      text,
+  category      text,          -- raw Places search term, a record of HOW it was found
+  group_name    text,          -- operator's editable organizing label ("Roofers")
   area          text,
   phone         text,
   email         text,
@@ -374,12 +375,14 @@ create table if not exists prospects (
   status        text not null default 'new',  -- new|saved|drafted|sent|replied|won|lost|do_not_contact
   draft_plain   text,
   draft_loom    text,
+  draft_value   text,  -- fuller value-prop email (mockup + audit + chat assistant + book-a-call)
   hook_source   text,
   notes         text,
   created_at    timestamptz not null default now()
 );
 create index if not exists prospects_status_idx on prospects (status, created_at);
 create index if not exists prospects_area_idx on prospects (area, category);
+create index if not exists prospects_group_idx on prospects (group_name, status, created_at desc);
 
 -- ── design_references ────────────────────────────────────────────────────────
 -- The operator's inspo library — uploaded images (Figma comps, Dribbble shots,
@@ -428,8 +431,13 @@ create index if not exists design_references_active_idx
 -- shared preview keeps showing what was actually sent.
 --
 -- format='html' (current) stores a full generated page in `html`. format='image'
--- is the legacy gpt-image-1 path — a single 1536x1024 PNG in `storage_path`,
--- which could only ever depict a fold. Old rows keep rendering as sent.
+-- is the standalone generated-image path — a single PNG in `storage_path`.
+-- `model` records which image model drew it. Rows from before 2026-08-10 used
+-- gpt-image-1 on a 1536x1024 landscape canvas and could only ever depict a
+-- fold; they keep rendering as sent.
+--
+-- An html row may also carry `layout_image_path`: the full-page image the
+-- concept was drawn from under the layout-first flow. Internal only.
 create table if not exists prospect_mockups (
   id              uuid primary key default gen_random_uuid(),
   prospect_id     uuid not null references prospects(id) on delete cascade,
@@ -439,6 +447,15 @@ create table if not exists prospect_mockups (
   direction_notes text,
   storage_path    text,                                 -- prospect-mockups bucket; image format only
   html            text,                                 -- the generated page; html format only
+  -- prospect-mockups bucket: the layout-first draft image this html concept was
+  -- built from, if any. Deliberately NOT storage_path — the routes that serve a
+  -- concept as an image key off storage_path, and this draft is an internal
+  -- reference the prospect must never be served.
+  layout_image_path text,
+  -- Layout audit findings (icon/heading alignment, nav centring), measured in a
+  -- real browser at several widths. Advisory: the HTML is never rewritten from
+  -- it, so a non-empty array means "look at this", not "this was changed".
+  layout_findings jsonb,
   format          text not null default 'image' check (format in ('image', 'html')),
   current_screenshot_path text,                         -- prospect-screenshots: their site today
   reference_ids   uuid[],                               -- design_references that steered this
@@ -448,6 +465,31 @@ create table if not exists prospect_mockups (
 );
 create index if not exists prospect_mockups_prospect_idx
   on prospect_mockups (prospect_id, created_at desc);
+
+-- A one-click concept generation run: the multi-step, multi-provider job
+-- (scrape -> analysis -> layout image -> stock photos -> HTML -> audit) that
+-- the wizard drives. Progress and cost are written here as the job proceeds
+-- and polled by the dashboard, following seo_crawls' background-job shape
+-- rather than holding a ~3 minute HTTP request open. See
+-- migrate_2026-08-10b_generation-runs.sql for the full rationale.
+create table if not exists prospect_generation_runs (
+  id            uuid primary key default gen_random_uuid(),
+  prospect_id   uuid not null references prospects(id) on delete cascade,
+  status        text not null default 'running' check (status in ('running', 'done', 'error')),
+  steps         jsonb not null default '[]'::jsonb,   -- [{ key, label, status, pct, detail }]
+  current_step  text,
+  mockup_id     uuid references prospect_mockups(id) on delete set null,
+  cost_micros   bigint not null default 0,            -- millionths of a USD; see migration
+  cost_detail   jsonb not null default '[]'::jsonb,
+  options       jsonb not null default '{}'::jsonb,
+  error         text,
+  created_at    timestamptz not null default now(),
+  finished_at   timestamptz
+);
+create index if not exists prospect_generation_runs_prospect_idx
+  on prospect_generation_runs (prospect_id, created_at desc);
+create index if not exists prospect_generation_runs_running_idx
+  on prospect_generation_runs (status, created_at desc) where status = 'running';
 
 -- preview_token (192 bits, base64url) is the ONLY credential — the prospect
 -- has no login, so treat this page as public. revoked_at kills a link without
@@ -656,6 +698,35 @@ create table if not exists notification_log (
   created_at timestamptz not null default now()
 );
 create index if not exists notification_log_channel_created_idx on notification_log (channel, created_at);
+
+-- ── Care tier: technical baseline + automated monthly report ─────────────────
+create table if not exists site_baselines (
+  id           uuid primary key default gen_random_uuid(),
+  client_id    uuid not null references clients(id) on delete cascade,
+  url          text not null,
+  mobile_score integer,
+  checks       jsonb not null default '[]'::jsonb,
+  created_at   timestamptz not null default now()
+);
+create index if not exists site_baselines_client_idx on site_baselines (client_id, created_at desc);
+
+-- The unique index below is a SAFETY mechanism, not bookkeeping. Report email
+-- is scheduler-driven, which this codebase otherwise forbids after an incident
+-- where 582 emails were auto-sent from an unbounded loop. The sender claims a
+-- period by inserting here FIRST and only sends if the insert won, so a double
+-- send for the same client and month is impossible at the database level.
+-- See apps/api/src/lib/report-scheduler.ts.
+create table if not exists report_deliveries (
+  id         uuid primary key default gen_random_uuid(),
+  client_id  uuid not null references clients(id) on delete cascade,
+  period_key text not null, -- 'YYYY-MM'
+  report_id  uuid references reports(id) on delete set null,
+  status     text not null default 'sent',
+  recipient  text,
+  detail     text,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists report_deliveries_once_idx on report_deliveries (client_id, period_key);
 
 -- ── Row-level security (defense-in-depth) ────────────────────────────────────
 -- The API exclusively uses the Supabase service_role key, which bypasses RLS
