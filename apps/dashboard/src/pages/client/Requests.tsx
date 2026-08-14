@@ -3,7 +3,7 @@ import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import { MessageSquarePlus, Plus, Paperclip } from 'lucide-react'
 import { api } from '@/lib/api'
-import type { RequestStatus } from '@/lib/api'
+import type { RequestStatus, ChangeRequest } from '@/lib/api'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -43,13 +43,49 @@ export default function Requests() {
     }
   }
 
+  // Optimistic: the badge moves on click instead of after two round-trips
+  // (the PATCH, then a refetch). optimisticData paints the new status
+  // immediately and rollbackOnError puts it back if the server rejects it, so
+  // the UI never lies about a change that didn't land.
   async function changeStatus(reqClientId: string, reqId: string, status: RequestStatus) {
     try {
-      await api.clients.updateRequestStatus(reqClientId, reqId, status)
-      mutate(key)
+      await mutate(
+        key,
+        async () => {
+          await api.clients.updateRequestStatus(reqClientId, reqId, status)
+          return api.clients.requests(clientId)
+        },
+        {
+          optimisticData: (current?: ChangeRequest[]) =>
+            (current ?? []).map(r => (r.id === reqId ? { ...r, status } : r)),
+          rollbackOnError: true,
+          revalidate: false,
+        }
+      )
       mutate(['request-detail', reqClientId, reqId])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update status')
+    }
+  }
+
+  async function remove(reqId: string, title: string) {
+    if (!confirm(`Delete "${title}"? This removes the request, its history, comments and any attached files for good.`)) return
+    try {
+      await mutate(
+        key,
+        async () => {
+          await api.clients.deleteRequest(clientId, reqId)
+          return api.clients.requests(clientId)
+        },
+        {
+          optimisticData: (current?: ChangeRequest[]) => (current ?? []).filter(r => r.id !== reqId),
+          rollbackOnError: true,
+          revalidate: false,
+        }
+      )
+      toast.success('Request deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete request')
     }
   }
 
@@ -114,6 +150,7 @@ export default function Requests() {
             expandedId={expandedId}
             onToggle={toggle}
             onChangeStatus={changeStatus}
+            onDelete={(_c, id, title) => remove(id, title)}
           />
         </div>
       )}
@@ -127,6 +164,7 @@ export default function Requests() {
             expandedId={expandedId}
             onToggle={toggle}
             onChangeStatus={changeStatus}
+            onDelete={(_c, id, title) => remove(id, title)}
           />
         </div>
       )}

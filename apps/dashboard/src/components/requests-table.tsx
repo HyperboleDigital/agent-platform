@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Paperclip, Send, XCircle, ChevronRight } from 'lucide-react'
+import { Paperclip, Send, XCircle, ChevronRight, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { ChangeRequest, RequestStatus, MentionableUser } from '@/lib/api'
 import { Card } from '@/components/ui/card'
@@ -307,12 +307,15 @@ export function RequestDetailPanel({ clientId, requestId }: { clientId: string; 
 // `showClient` adds a Client column (for the superadmin cross-client queue —
 // each row already carries its own clientId, so a single table can mix rows
 // from different clients without any other prop plumbing).
-export function RequestsTable({ requests, isSuperadmin, expandedId, onToggle, onChangeStatus, showClient = false }: {
+export function RequestsTable({ requests, isSuperadmin, expandedId, onToggle, onChangeStatus, onDelete, showClient = false }: {
   requests: RequestRow[]
   isSuperadmin: boolean
   expandedId: string | null
   onToggle: (id: string) => void
   onChangeStatus: (clientId: string, reqId: string, status: RequestStatus) => void
+  // Optional so callers that only triage (the cross-client Overview list) can
+  // reuse this table without having to implement deletion.
+  onDelete?: (clientId: string, reqId: string, title: string) => void
   showClient?: boolean
 }) {
   const colSpan = 3 + (showClient ? 1 : 0) + (isSuperadmin ? 1 : 0)
@@ -352,12 +355,24 @@ export function RequestsTable({ requests, isSuperadmin, expandedId, onToggle, on
                   <TableCell className="text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</TableCell>
                   {isSuperadmin && (
                     <TableCell>
-                      <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                         {STATUSES.filter(s => s !== r.status).map(s => (
                           <Button key={s} variant="outline" size="sm" onClick={() => onChangeStatus(r.clientId, r.id, s)}>
                             {statusLabel(s)}
                           </Button>
                         ))}
+                        {onDelete && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Delete request: ${r.title}`}
+                            title="Delete this request"
+                            className="ml-1 h-8 w-8 text-muted-foreground hover:text-destructive"
+                            onClick={() => onDelete(r.clientId, r.id, r.title)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   )}

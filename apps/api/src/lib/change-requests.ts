@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import { getClientById } from './clients'
 import { notify, sendGuardedEmail } from './notify'
 import { getDisplayNames, getUserEmail } from './users'
+import { listAttachments, ATTACHMENT_BUCKET } from './attachments'
 
 export type RequestStatus = 'open' | 'in_progress' | 'done' | 'declined' | 'cancelled'
 
@@ -163,7 +164,12 @@ export async function createRequest(clientId: string, title: string, description
   await recordEvent(request.id, null, 'open', createdBy)
 
   const client = await getClientById(clientId)
-  await notify(clientId, 'request.created', {
+  // Fire-and-forget: notify() makes up to four sequential network calls (Slack
+  // + Gmail, for both the client and the superadmin) and swallows every error
+  // internally, so awaiting it only delays the HTTP response — the caller can't
+  // act on the outcome either way. Blocking on it made the dashboard feel like
+  // the status change itself was slow.
+  void notify(clientId, 'request.created', {
     title: `New change request — ${client?.name ?? clientId}`,
     body: `${title}\n\n${description || '(no description)'}`
   })
@@ -207,7 +213,8 @@ export async function updateRequestStatus(clientId: string, requestId: string, s
 
   await recordEvent(request.id, existing.status, status, changedBy)
 
-  await notify(clientId, 'request.status_changed', {
+  // Not awaited — see the note in createRequest above.
+  void notify(clientId, 'request.status_changed', {
     title: `Request update — ${request.title}`,
     body: `Status changed to "${status}".`
   })
@@ -236,12 +243,43 @@ export async function cancelRequest(clientId: string, requestId: string, cancell
 
   await recordEvent(request.id, existing.status, 'cancelled', cancelledBy, reason)
 
-  await notify(clientId, 'request.status_changed', {
+  // Not awaited — see the note in createRequest above.
+  void notify(clientId, 'request.status_changed', {
     title: `Request cancelled — ${request.title}`,
     body: `Cancelled by the client. Reason: ${reason}`
   })
 
   return request
+}
+
+// Permanently removes a request. Events, comments and attachment ROWS all
+// cascade from the change_requests FK, but the attachment FILES do not — those
+// bytes live in the 'request-attachments' Storage bucket, which knows nothing
+// about the foreign key. Without this they'd be orphaned in the bucket forever,
+// counting against storage with nothing left pointing at them.
+//
+// Scoped by client_id as well as id so a request can't be deleted through the
+// wrong client's route with a valid id from elsewhere.
+export async function deleteRequest(clientId: string, requestId: string): Promise<void> {
+  const existing = await getRequest(clientId, requestId)
+  if (!existing) throw new Error('Request not found')
+
+  const attachments = await listAttachments(requestId)
+  if (attachments.length) {
+    // Best-effort: a failed Storage delete must not block removing the request
+    // itself, or a transient bucket error leaves an undeletable row behind.
+    const { error } = await supabase.storage
+      .from(ATTACHMENT_BUCKET)
+      .remove(attachments.map(a => a.storagePath))
+    if (error) console.error('[change-requests] failed to remove attachment files:', error.message)
+  }
+
+  const { error } = await supabase
+    .from('change_requests')
+    .delete()
+    .eq('client_id', clientId)
+    .eq('id', requestId)
+  if (error) throw new Error(`Failed to delete request: ${error.message}`)
 }
 
 export async function listEvents(requestId: string): Promise<RequestEvent[]> {

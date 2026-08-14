@@ -1,7 +1,10 @@
 import { randomUUID } from 'crypto'
 import { supabase } from './supabase'
 
-const BUCKET = 'request-attachments'
+// Exported so deleteRequest() in change-requests.ts can clean up the FILES when
+// a request is removed — the DB rows cascade, the Storage objects do not.
+export const ATTACHMENT_BUCKET = 'request-attachments'
+const BUCKET = ATTACHMENT_BUCKET
 const SIGNED_URL_TTL_SECONDS = 5 * 60
 
 export interface RequestAttachment {

@@ -19,7 +19,7 @@ import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportuniti
 import { googleAdsConfigured, fetchAdsPerformance, getAdsTrend, snapshotAds, getConnectedCustomerId } from '../lib/google-ads'
 import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
 import {
-  listRequests, createRequest, updateRequestStatus, cancelRequest, getRequestDetail, addComment
+  listRequests, createRequest, updateRequestStatus, cancelRequest, getRequestDetail, addComment, deleteRequest
 } from '../lib/change-requests'
 import { getMentionableUsers, getUserEmail } from '../lib/users'
 import { listAttachments, uploadAttachment, getAttachment, getSignedUrl } from '../lib/attachments'
@@ -1060,6 +1060,21 @@ clientsRouter.patch('/:id/requests/:reqId', async (req, res) => {
     res.json(await updateRequestStatus(req.params.id, req.params.reqId, status as never, identity.userId))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update status' })
+  }
+})
+
+// Permanent delete — superadmin only. Clients cancel their own requests
+// (POST .../cancel below), which keeps the record; this removes it entirely,
+// including attachment files. Not offered to clients on purpose: a paper
+// trail of what was asked for shouldn't be erasable by either side casually.
+clientsRouter.delete('/:id/requests/:reqId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await deleteRequest(req.params.id, req.params.reqId)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete request' })
   }
 })
 

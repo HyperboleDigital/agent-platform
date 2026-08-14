@@ -1083,6 +1083,10 @@ export const api = {
     requests: (id: string) => request<ChangeRequest[]>(`/clients/${id}/requests`),
     createRequest: (id: string, title: string, description: string) =>
       request<ChangeRequest>(`/clients/${id}/requests`, { method: 'POST', body: JSON.stringify({ title, description }) }),
+    // Superadmin only. Permanent — removes events, comments and attachment
+    // files. Clients cancel instead, which keeps the record.
+    deleteRequest: (id: string, reqId: string) =>
+      request<{ ok: true }>(`/clients/${id}/requests/${reqId}`, { method: 'DELETE' }),
     updateRequestStatus: (id: string, reqId: string, status: RequestStatus) =>
       request<ChangeRequest>(`/clients/${id}/requests/${reqId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     requestDetail: (id: string, reqId: string) => request<RequestDetail>(`/clients/${id}/requests/${reqId}`),
