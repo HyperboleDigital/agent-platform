@@ -26,6 +26,7 @@ import { SiteHealthCard } from '@/components/site-health-card'
 import { SiteBaselineCard } from '@/components/site-baseline-card'
 import { ContactButton } from '@/components/contact-button'
 import { RequestsTable } from '@/components/requests-table'
+import { EmailListField } from '@/components/email-list-field'
 
 // ── Section wrappers ─────────────────────────────────────────────────────────
 // Each maps a /clients/:id/<section> route to the section component below,
@@ -1218,6 +1219,17 @@ function OrgLogoField({ client, clientId }: { client: import('@agent-platform/sh
   )
 }
 
+// The backend still stores/sends these as one comma-separated string (see
+// EmailListField's comment) — these two helpers are the only place that
+// string is parsed/built, so every editor stays in sync.
+function splitEmails(value: string | undefined | null): string[] {
+  return value ? value.split(',').map(e => e.trim()).filter(Boolean) : []
+}
+function joinEmails(emails: string[]): string | undefined {
+  const joined = emails.map(e => e.trim()).filter(Boolean).join(', ')
+  return joined || undefined
+}
+
 function ConfigTab({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
   const cfg = client.agentConfig ?? {}
   const { data: me } = useSWR('me', api.me)
@@ -1226,7 +1238,7 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
   const [slug, setSlug] = useState(client.slug)
   const [domain, setDomain] = useState(client.domain ?? '')
   const [systemPromptExtra, setExtra] = useState(cfg.systemPromptExtra ?? '')
-  const [escalationEmail, setEscalationEmail] = useState(cfg.escalationEmail ?? '')
+  const [escalationEmails, setEscalationEmails] = useState(splitEmails(cfg.escalationEmail))
   const [saving, setSaving] = useState(false)
 
   const normalizedDomain = normalizeDomain(domain)
@@ -1241,7 +1253,7 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
       const updated = await api.clients.upsert({
         id: client.id,
         ...(me?.isSuperadmin ? { name, domain: normalizedDomain, slug } : {}),
-        agentConfig: { ...cfg, systemPromptExtra, escalationEmail }
+        agentConfig: { ...cfg, systemPromptExtra, escalationEmail: joinEmails(escalationEmails) }
       })
       mutate(['client', clientId])
       toast.success('Config saved', { icon: <CheckCircle2 className="h-4 w-4" /> })
@@ -1311,8 +1323,8 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
           </div>
         )}
         <div className="grid gap-1.5">
-          <Label>Escalation email (where "get a human" requests are sent)</Label>
-          <Input value={escalationEmail} onChange={e => setEscalationEmail(e.target.value)} placeholder="support@yourcompany.com" />
+          <Label>Escalation email(s) <span className="font-normal text-muted-foreground">(where "get a human" requests and captured leads are sent)</span></Label>
+          <EmailListField emails={escalationEmails} onChange={setEscalationEmails} placeholder="support@yourcompany.com" />
         </div>
         <Button onClick={save} disabled={saving || !!domainError} className="justify-self-start">
           {saving ? 'Saving…' : 'Save config'}
@@ -1326,7 +1338,7 @@ function NotificationSettingsCard({ clientId }: { clientId: string }) {
   const key = ['notification-settings', clientId]
   const { data: settings, isLoading } = useSWR(key, () => api.clients.notificationSettings(clientId))
   const [emailEnabled, setEmailEnabled] = useState(false)
-  const [emailTo, setEmailTo] = useState('')
+  const [emailTo, setEmailTo] = useState<string[]>([])
   const [slackEnabled, setSlackEnabled] = useState(false)
   const [slackWebhookUrl, setSlackWebhookUrl] = useState('')
   const [saving, setSaving] = useState(false)
@@ -1336,7 +1348,7 @@ function NotificationSettingsCard({ clientId }: { clientId: string }) {
   // in-progress edits on background revalidation.
   if (settings && !loaded) {
     setEmailEnabled(settings.email_enabled)
-    setEmailTo(settings.email_to ?? '')
+    setEmailTo(splitEmails(settings.email_to))
     setSlackEnabled(settings.slack_enabled)
     setSlackWebhookUrl(settings.slack_webhook_url ?? '')
     setLoaded(true)
@@ -1346,7 +1358,7 @@ function NotificationSettingsCard({ clientId }: { clientId: string }) {
     setSaving(true)
     try {
       await api.clients.updateNotificationSettings(clientId, {
-        emailEnabled, emailTo, slackEnabled, slackWebhookUrl
+        emailEnabled, emailTo: joinEmails(emailTo) ?? '', slackEnabled, slackWebhookUrl
       })
       mutate(key)
       toast.success('Notification settings saved', { icon: <CheckCircle2 className="h-4 w-4" /> })
@@ -1374,7 +1386,7 @@ function NotificationSettingsCard({ clientId }: { clientId: string }) {
             Email
           </label>
           {emailEnabled && (
-            <Input value={emailTo} onChange={e => setEmailTo(e.target.value)} placeholder="you@yourcompany.com" />
+            <EmailListField emails={emailTo} onChange={setEmailTo} placeholder="you@yourcompany.com" />
           )}
         </div>
         <div className="grid gap-1.5">
