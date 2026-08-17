@@ -790,6 +790,7 @@
         </div>
         ${divisionPhoneFieldHTML('cf-division')}
         <button class="cf-submit" id="cf-submit">Send message</button>
+        <div class="ap-ef-error" id="cf-error"></div>
       </div>
       <div id="ap-success" style="display:none">
         <div class="ap-check"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>
@@ -1186,6 +1187,10 @@
   }
 
   async function submitContact() {
+    const errEl = document.getElementById('cf-error');
+    const setError = (msg) => { errEl.textContent = msg; };
+    setError('');
+
     const name = document.getElementById('cf-name').value.trim();
     const email = document.getElementById('cf-email').value.trim();
     const message = document.getElementById('cf-message').value.trim();
@@ -1194,14 +1199,15 @@
     const company = companyEl ? companyEl.value.trim() : '';
     const phone = phoneEl ? phoneEl.value.trim() : '';
     const division = readCheckedDivisions(document.getElementById('ap-contact'));
-    if (!email || !message) { alert('Please add your email and message.'); return; }
-    if (CONTACT_FIELDS.company && !company) { alert('Please add your company name.'); return; }
-    if (CONTACT_FIELDS.phone && !phone) { alert('Please add your phone number.'); return; }
-    if (CONTACT_FIELDS.divisions.length && !division) { alert(divisionRequiredMessage()); return; }
+    if (!email || !message) { setError('Please add your email and message.'); return; }
+    if (!EMAIL_RE.test(email)) { setError('Please enter a valid email address.'); return; }
+    if (CONTACT_FIELDS.company && !company) { setError('Please add your company name.'); return; }
+    if (CONTACT_FIELDS.phone && !phone) { setError('Please add your phone number.'); return; }
+    if (CONTACT_FIELDS.divisions.length && !division) { setError(divisionRequiredMessage()); return; }
     cfSubmit.textContent = 'Sending...'; cfSubmit.disabled = true;
     try {
       // Explicit "I want a human" — goes to the escalation endpoint, not the agent.
-      await fetch(`${API_URL}/contact`, {
+      const res = await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientId: CLIENT_ID, name: name || undefined, email, message,
@@ -1209,16 +1215,24 @@
           company: company || undefined, phone: phone || undefined, division: division || undefined
         })
       });
-    } catch {}
-    setView('success');
-    cfSubmit.textContent = 'Send message'; cfSubmit.disabled = false;
+      if (!res.ok) throw new Error();
+      setView('success');
+    } catch {
+      setError('Couldn’t send just now — please try again.');
+    } finally {
+      cfSubmit.textContent = 'Send message'; cfSubmit.disabled = false;
+    }
   }
 
   root.addEventListener('click', e => e.stopPropagation());
   bubble.addEventListener('click', openChat);
   closeBtn.addEventListener('click', closeChat);
   // The header contact button opens the full contact form view.
-  contactTrigger.addEventListener('click', () => setView('contact'));
+  contactTrigger.addEventListener('click', () => {
+    const errEl = document.getElementById('cf-error');
+    if (errEl) errEl.textContent = '';
+    setView('contact');
+  });
   cfBack.addEventListener('click', () => setView('chat'));
   backToChat.addEventListener('click', () => {
     setView('chat');
