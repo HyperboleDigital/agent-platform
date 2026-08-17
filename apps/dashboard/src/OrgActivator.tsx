@@ -14,12 +14,19 @@ import { api } from '@/lib/api'
 // backend scopes them correctly. Superadmins are unaffected — their access is
 // by allowlist, independent of which org (if any) is active.
 export function OrgActivator() {
-  const { isLoaded: authLoaded, orgId } = useAuth()
+  const { isLoaded: authLoaded, isSignedIn, orgId } = useAuth()
   const { isLoaded: listLoaded, setActive, userMemberships } = useOrganizationList({
     userMemberships: true
   })
 
   useEffect(() => {
+    // Mounted globally (main.tsx, inside <ClerkProvider> but above
+    // <ProtectedLayout>), so without this it was running on the sign-in page
+    // itself — calling setActive()/reconcile()/a global SWR revalidate while
+    // Clerk's own <SignIn> was mid-flow, which could reset that component's
+    // internal step state and restart it (re-sending a verification code,
+    // re-prompting for a password). This ONLY ever needs to run post-auth.
+    if (!isSignedIn) return
     if (!authLoaded || !listLoaded || !setActive) return
     if (orgId) return // already scoped to an org
 
@@ -47,7 +54,7 @@ export function OrgActivator() {
         if (joined) window.location.reload()
       } catch { /* leave them on the "no account" screen */ }
     })()
-  }, [authLoaded, listLoaded, setActive, orgId, userMemberships?.data])
+  }, [isSignedIn, authLoaded, listLoaded, setActive, orgId, userMemberships?.data])
 
   return null
 }
