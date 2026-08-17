@@ -71,7 +71,11 @@ export function LockedSection({ clientId, serviceKey }: { clientId: string; serv
             <p className="text-sm text-muted-foreground">{service?.description}</p>
           </div>
 
-          {service && !comingSoon && (
+          {/* Superadmin only: the price informs "Add to plan" below, which is a
+              real billing action. Clients don't see it — pricing a service they
+              don't have yet is the conversation the contact CTA starts, not a
+              number to weigh alone on a locked screen. */}
+          {service && !comingSoon && me?.isSuperadmin && (
             <p className="text-sm">
               <span className="text-lg font-semibold tabular-nums">{formatCents(service.monthlyPriceCents)}</span>
               <span className="text-muted-foreground"> / month</span>
