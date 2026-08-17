@@ -7,6 +7,12 @@ import { Button } from '@/components/ui/button'
 // link; <SignUp> consumes it and adds the new account to the inviting org.
 // This route must stay OUTSIDE ProtectedLayout — its RedirectToSignIn drops
 // the query string, which would throw the ticket away.
+//
+// Uses routing="hash" for the same reason as SignInPage — see the comment
+// there. An invited client hits the identical remount-mid-flow bug otherwise.
+// The ticket is unaffected: hash routing only ever writes the fragment, so the
+// query string this component reads below survives exactly as the invite email
+// left it.
 export default function SignUpPage() {
   const [params] = useSearchParams()
   const ticket = params.get('__clerk_ticket')
@@ -42,7 +48,7 @@ export default function SignUpPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" />
+      <SignUp routing="hash" signInUrl="/sign-in" fallbackRedirectUrl="/" />
     </div>
   )
 }

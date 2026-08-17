@@ -13,20 +13,30 @@ import { api } from '@/lib/api'
 // active, activate their (single) org so their session carries org_id and the
 // backend scopes them correctly. Superadmins are unaffected — their access is
 // by allowlist, independent of which org (if any) is active.
+//
+// Mounted globally in main.tsx (inside <ClerkProvider>, above
+// <ProtectedLayout>), so this component is on screen during the sign-in flow
+// itself, not just after. useOrganizationList subscribes to and polls
+// Clerk's client-side session state — calling it at all while Clerk's own
+// <SignIn> still has an in-progress attempt (email entered, waiting on a
+// code) risks interfering with that attempt's internal state. So the actual
+// subscription lives in a child component that isn't even mounted, and
+// therefore never calls useOrganizationList, until sign-in is complete —
+// gating an effect's BODY on isSignedIn isn't enough, since the hook itself
+// still runs on every render regardless of what's inside the effect.
 export function OrgActivator() {
-  const { isLoaded: authLoaded, isSignedIn, orgId } = useAuth()
+  const { isSignedIn } = useAuth()
+  if (!isSignedIn) return null
+  return <ActivateOrg />
+}
+
+function ActivateOrg() {
+  const { isLoaded: authLoaded, orgId } = useAuth()
   const { isLoaded: listLoaded, setActive, userMemberships } = useOrganizationList({
     userMemberships: true
   })
 
   useEffect(() => {
-    // Mounted globally (main.tsx, inside <ClerkProvider> but above
-    // <ProtectedLayout>), so without this it was running on the sign-in page
-    // itself — calling setActive()/reconcile()/a global SWR revalidate while
-    // Clerk's own <SignIn> was mid-flow, which could reset that component's
-    // internal step state and restart it (re-sending a verification code,
-    // re-prompting for a password). This ONLY ever needs to run post-auth.
-    if (!isSignedIn) return
     if (!authLoaded || !listLoaded || !setActive) return
     if (orgId) return // already scoped to an org
 
@@ -54,7 +64,7 @@ export function OrgActivator() {
         if (joined) window.location.reload()
       } catch { /* leave them on the "no account" screen */ }
     })()
-  }, [isSignedIn, authLoaded, listLoaded, setActive, orgId, userMemberships?.data])
+  }, [authLoaded, listLoaded, setActive, orgId, userMemberships?.data])
 
   return null
 }
