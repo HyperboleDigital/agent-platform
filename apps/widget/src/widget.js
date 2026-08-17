@@ -1114,7 +1114,12 @@
   }
 
   function renderChips() {
-    if (messages.length !== 1 || isTyping) { chipsEl.innerHTML = ''; chipsEl.style.display = 'none'; return; }
+    // Shown on the very first message, and again whenever we've just handed
+    // the conversation back with an explicit "anything else?" (e.g. after the
+    // contact form) — same conversation-starter role either time.
+    const last = messages[messages.length - 1];
+    const shouldShow = messages.length === 1 || !!last?.showChips;
+    if (!shouldShow || isTyping) { chipsEl.innerHTML = ''; chipsEl.style.display = 'none'; return; }
     chipsEl.style.display = 'grid';
     chipsEl.innerHTML = CHIPS
       .map(c => `<button class="ap-chip" data-msg="${esc(c.message)}">${esc(c.label)}</button>`)
@@ -1236,7 +1241,7 @@
   cfBack.addEventListener('click', () => setView('chat'));
   backToChat.addEventListener('click', () => {
     setView('chat');
-    messages.push({ role: 'assistant', content: "Thanks! Anything else I can help you with?", ts: Date.now() });
+    messages.push({ role: 'assistant', content: "Thanks! Anything else I can help you with?", ts: Date.now(), showChips: true });
     renderMessages();
     setTimeout(() => input.focus(), 100);
   });
