@@ -65,7 +65,8 @@ widgetConfigRouter.get('/:clientId', async (req, res) => {
           divisionLabel: cfg.contactFields.divisionLabel,
           divisions: Array.isArray(cfg.contactFields.divisions)
             ? cfg.contactFields.divisions.map(d => String(d).trim()).filter(Boolean)
-            : undefined
+            : undefined,
+          divisionMultiSelect: !!cfg.contactFields.divisionMultiSelect
         }
       : undefined
   })

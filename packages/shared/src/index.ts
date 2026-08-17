@@ -198,10 +198,14 @@ export interface WidgetConfig {
 export interface WidgetContactFields {
   company?: boolean       // ask for Company Name
   phone?: boolean         // ask for Phone
-  // A single-select "which division/category" question, e.g. Spec-ID's
-  // Flooring/Tiling/Ceiling/... divisions. Unset or empty = not shown.
+  // A "which division/category" question, e.g. Spec-ID's Flooring/Tiling/
+  // Ceiling/... divisions. Unset or empty divisions = not shown.
   divisionLabel?: string  // defaults to "Identify Your Primary Business" in the widget
   divisions?: string[]
+  // false/unset = single-select (radio buttons, one value). true = checkboxes,
+  // multiple values allowed — stored/notified as a comma-separated string
+  // since `leads.division` is a single text column.
+  divisionMultiSelect?: boolean
 }
 
 // Is `origin` (a browser Origin header, e.g. "https://www.spec-id.com") allowed

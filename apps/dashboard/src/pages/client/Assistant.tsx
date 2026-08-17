@@ -442,12 +442,16 @@ function ContactFieldsCard({ draft, onChange }: {
         </div>
 
         <div className="flex flex-col gap-2">
-          <Label>Division / category question <span className="text-muted-foreground">(single-select — leave the list empty to hide it)</span></Label>
+          <Label>Division / category question <span className="text-muted-foreground">(leave the list empty to hide it)</span></Label>
           <Input
             value={cf.divisionLabel ?? ''}
             onChange={e => patch({ divisionLabel: e.target.value })}
             placeholder="Identify Your Primary Business"
           />
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!cf.divisionMultiSelect} onChange={e => patch({ divisionMultiSelect: e.target.checked })} className="h-4 w-4 accent-primary" />
+            Allow multiple selections <span className="text-muted-foreground">(checkboxes instead of a single choice)</span>
+          </label>
           {divisions.map((d, i) => (
             <div key={i} className="flex items-center gap-2">
               <Input
