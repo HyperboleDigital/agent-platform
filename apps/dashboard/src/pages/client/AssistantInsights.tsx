@@ -215,6 +215,7 @@ function BehaviourSettings({ client }: { client: Client }) {
 }
 
 export function AssistantInsights({ clientId, client }: { clientId: string; client?: Client }) {
+  const { data: me } = useSWR('me', api.me)
   const [range, setRange] = useState<RangeState>({ kind: 'preset', days: 30 })
   const q = useMemo(() => toQuery(range), [range])
   const key = rangeKey(range)
@@ -382,7 +383,11 @@ export function AssistantInsights({ clientId, client }: { clientId: string; clie
         )}
       </Card>
 
-      {client && <BehaviourSettings client={client} />}
+      {/* Tuning how cautious the assistant is (and what counts as after-hours)
+          is our job, not the client's — they get the Insights above, not the
+          knobs. The API strips these fields from a non-superadmin write, since
+          hiding the card is presentation, not access control. */}
+      {client && me?.isSuperadmin && <BehaviourSettings client={client} />}
     </div>
   )
 }

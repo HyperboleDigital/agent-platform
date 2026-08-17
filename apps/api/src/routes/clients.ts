@@ -104,10 +104,28 @@ clientsRouter.post('/', async (req, res) => {
       delete req.body.tierKey
       // Widget appearance/behaviour is configured by Hyperbole, not the client
       // — the Widget setup tab is superadmin-only in the dashboard, and this is
-      // what actually enforces it. agentConfig is deliberately NOT stripped:
-      // clients legitimately write it (escalation email at onboarding, Slack
-      // webhook, assistant settings on the Insights tab they can see).
+      // what actually enforces it. agentConfig is deliberately NOT stripped
+      // wholesale: clients legitimately write it (escalation email at
+      // onboarding, Slack webhook from Connectors).
       delete req.body.widgetConfig
+
+      // ...but the assistant-behaviour knobs inside it are ours to tune, not
+      // theirs — that card is superadmin-only in the dashboard, and this is
+      // what enforces it.
+      //
+      // These have to be carried over from the stored config rather than
+      // deleted: upsertClient replaces agent_config wholesale, so dropping
+      // them from the payload would WIPE the saved values the next time a
+      // client writes their escalation email, silently resetting the
+      // assistant to defaults.
+      if (req.body.agentConfig) {
+        const stored = (await getClientById(req.body.id))?.agentConfig
+        req.body.agentConfig = {
+          ...req.body.agentConfig,
+          confidenceThreshold: stored?.confidenceThreshold,
+          businessHours: stored?.businessHours
+        }
+      }
     }
   } else if (!identity.isSuperadmin) {
     return res.status(403).json({ error: 'Only an admin can create a new client' })
