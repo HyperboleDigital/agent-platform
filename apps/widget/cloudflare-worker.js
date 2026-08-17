@@ -37,12 +37,16 @@ export default {
 
       let widgetRes;
       try {
-        widgetRes = await fetch(source);
+        // cacheTtl: 0 — this Worker owns caching explicitly via caches.default
+        // above; Cloudflare's own automatic subrequest caching for fetch()
+        // must never silently override that with a differently-scoped cache
+        // entry (e.g. one keyed on GitHub/Fastly's own cache headers).
+        widgetRes = await fetch(source, { cf: { cacheTtl: 0 } });
       } catch (err) {
         // Origin unreachable — nothing to serve. A cache miss here means we
         // have no last-known-good copy to fall back to either (Cache API
         // doesn't keep stale entries past their TTL), so this is a real outage.
-        return new Response('widget.js temporarily unavailable', { status: 502 });
+        return errorResponse('widget.js temporarily unavailable', 502);
       }
 
       if (!widgetRes.ok) {
@@ -50,7 +54,7 @@ export default {
         // turned GitHub's 429 error page into "Uncaught SyntaxError" on every
         // client's site. Fail loudly (502) instead of failing silently-wrong.
         console.error(`[widget] source fetch failed: ${widgetRes.status} ${source}`);
-        return new Response(`widget.js source unavailable (upstream ${widgetRes.status})`, { status: 502 });
+        return errorResponse(`widget.js source unavailable (upstream ${widgetRes.status})`, 502);
       }
 
       const js = await widgetRes.text();
@@ -78,4 +82,20 @@ function withCors(response) {
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', '*');
   return new Response(response.body, { status: response.status, headers });
+}
+
+// Explicit text/plain + nosniff so a browser NEVER mime-sniffs an error body
+// as executable script, whatever happens upstream — belt-and-suspenders on
+// top of the .ok check above, since a <script src> tag's failure mode should
+// be "silently does nothing," not a console error on every client's site.
+function errorResponse(message, status) {
+  return new Response(message, {
+    status,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store'
+    }
+  });
 }
