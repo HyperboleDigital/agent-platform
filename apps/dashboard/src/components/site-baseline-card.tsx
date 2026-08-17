@@ -49,6 +49,8 @@ function CheckRow({ check }: { check: BaselineCheck }) {
 export function SiteBaselineCard({ clientId, domain }: { clientId: string; domain?: string }) {
   const key = clientId ? ['baseline', clientId] : null
   const { data: baseline, isLoading } = useSWR(key, () => api.clients.baseline(clientId))
+  const { data: me } = useSWR('me', api.me)
+  const isAdmin = !!me?.isSuperadmin
   const [running, setRunning] = useState(false)
 
   async function run() {
@@ -74,10 +76,17 @@ export function SiteBaselineCard({ clientId, domain }: { clientId: string; domai
         <CardTitle className="flex items-center gap-2 text-base">
           <Gauge className="h-4 w-4" />Site health check
         </CardTitle>
-        <Button variant="outline" size="sm" onClick={run} disabled={running}>
-          <RefreshCw className={`h-3.5 w-3.5 ${running ? 'animate-spin' : ''}`} />
-          {running ? 'Checking…' : 'Run check'}
-        </Button>
+        {/* Superadmin only — this spends PageSpeed API quota, and running it is
+            our job, not something a client should be able to fire at will. The
+            API route enforces the same thing; hiding the button is presentation,
+            not access control. Clients get it on the weekly schedule instead
+            (lib/site-monitor.ts). */}
+        {isAdmin && (
+          <Button variant="outline" size="sm" onClick={run} disabled={running}>
+            <RefreshCw className={`h-3.5 w-3.5 ${running ? 'animate-spin' : ''}`} />
+            {running ? 'Checking…' : 'Run check'}
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="pt-0">
         {isLoading ? (
@@ -87,7 +96,10 @@ export function SiteBaselineCard({ clientId, domain }: { clientId: string; domai
         ) : !baseline ? (
           <p className="text-sm text-muted-foreground">
             No check has run yet. It looks at page speed, mobile friendliness, page titles and
-            descriptions, and whether search engines can index the site — takes about a minute.
+            descriptions, and whether search engines can index the site.
+            {/* Without a button of their own, a client needs to know this
+                arrives on its own rather than being something they're missing. */}
+            {isAdmin ? ' Takes about a minute.' : " We'll run one shortly."}
           </p>
         ) : (
           <>

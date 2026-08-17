@@ -21,6 +21,7 @@ import { reconcileUserMembership } from './lib/clients'
 import { finalizePendingCrawls } from './lib/dataforseo'
 import { failOrphanedRuns } from './lib/prospect-generation-runs'
 import { runMonthlyReports, isReportWindow } from './lib/report-scheduler'
+import { runScheduledSiteChecks } from './lib/site-monitor'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
@@ -164,6 +165,24 @@ setInterval(async () => {
     reportRunning = false
   }
 }, REPORT_CHECK_INTERVAL_MS).unref()
+
+// Unattended uptime/SSL (daily) and PageSpeed (weekly) checks — see
+// lib/site-monitor.ts for the cadences and why they differ. Ticks hourly, but
+// each client is skipped unless its stored result has actually aged out, so
+// this is cheap and a redeploy can't cause a burst of checks.
+const SITE_CHECK_INTERVAL_MS = 60 * 60 * 1000
+let siteChecking = false
+setInterval(async () => {
+  if (siteChecking) return
+  siteChecking = true
+  try {
+    await runScheduledSiteChecks()
+  } catch (err) {
+    console.error('[site-monitor] error', err instanceof Error ? err.message : err)
+  } finally {
+    siteChecking = false
+  }
+}, SITE_CHECK_INTERVAL_MS).unref()
 
 const FINALIZE_INTERVAL_MS = 20_000
 let finalizing = false

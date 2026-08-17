@@ -207,12 +207,17 @@ clientsRouter.get('/:id/site-health', async (req, res) => {
   res.json(await getLatestSiteHealth(req.params.id))
 })
 
-// Triggers a fresh on-demand check. No paid API involved (just our own
-// fetch + TLS handshake), so any client on the account — not just
-// superadmin — can trigger it. Debounced to at most once/minute per client
-// so repeated page loads don't hammer the client's own site.
+// Triggers a fresh on-demand check. Superadmin only: running checks against a
+// client's site is our job, not a button they should be able to hold down, and
+// the dashboard has only ever shown this control to superadmins — this closes
+// the gap where the API still accepted it from any client user. Clients get
+// this daily on the schedule instead (lib/site-monitor.ts).
+//
+// Still debounced to at most once/minute per client so repeated clicks don't
+// hammer the client's own site.
 clientsRouter.post('/:id/site-health/check', async (req, res) => {
   const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
   const client = await getClientById(req.params.id)
   if (!client) return res.status(404).json({ error: 'Client not found' })
@@ -1395,8 +1400,12 @@ clientsRouter.get('/:id/baseline', async (req, res) => {
   res.json(await latestBaseline(req.params.id))
 })
 
+// Superadmin only — this spends PageSpeed API quota on every call, so it is
+// not something a client should be able to trigger repeatedly. They get it
+// weekly on the schedule instead (lib/site-monitor.ts).
 clientsRouter.post('/:id/baseline/run', async (req, res) => {
   const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
   if (!pagespeedConfigured()) return res.status(400).json({ error: 'PAGESPEED_API_KEY is not configured on this deployment' })
   try {
