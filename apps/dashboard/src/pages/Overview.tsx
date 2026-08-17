@@ -255,7 +255,7 @@ export default function Overview() {
               {rollups.map(r => (
                 <TableRow key={r.clientId}>
                   <TableCell>
-                    <Link to={`/clients/${r.clientId}`} className="font-medium text-primary hover:underline">
+                    <Link to={`/clients/${r.slug}`} className="font-medium text-primary hover:underline">
                       {r.name}
                     </Link>
                   </TableCell>

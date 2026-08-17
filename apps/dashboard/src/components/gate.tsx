@@ -26,9 +26,9 @@ export function Gate({ service, children }: { service: ServiceKey; children: Rea
 // Redirects rather than showing a "no access" wall: to a client this section
 // doesn't conceptually exist, so an error about it would only raise questions.
 export function AdminOnly({ children }: { children: ReactNode }) {
-  const { clientId } = useClientCtx()
+  const { client } = useClientCtx()
   const { data: me, isLoading } = useSWR('me', api.me)
-  if (isLoading && !me) return <Skeleton className="h-64 w-full" />
-  if (!me?.isSuperadmin) return <Navigate to={`/clients/${clientId}`} replace />
+  if ((isLoading && !me) || !client) return <Skeleton className="h-64 w-full" />
+  if (!me?.isSuperadmin) return <Navigate to={`/clients/${client.slug}`} replace />
   return <>{children}</>
 }

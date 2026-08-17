@@ -90,6 +90,7 @@ async function getMonthlyUsageByClient(): Promise<Map<string, number>> {
 
 export interface ClientRollup {
   clientId: string
+  slug: string
   name: string
   active: boolean
   planName: string | null
@@ -122,6 +123,7 @@ export async function getClientRollups(): Promise<ClientRollup[]> {
     const mrrCents = billingActive ? (plan?.monthlyPriceCents ?? 0) + (addonRevenueByClient.get(c.id) ?? 0) : 0
     return {
       clientId: c.id,
+      slug: c.slug,
       name: c.name,
       active: c.active,
       planName: plan?.name ?? null,

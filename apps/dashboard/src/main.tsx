@@ -50,7 +50,7 @@ const router = createBrowserRouter([
           { path: '/audit-tool', element: <AuditTool /> },
           { path: '/prospecting', element: <Prospecting /> },
           {
-            path: '/clients/:id',
+            path: '/clients/:slug',
             element: <ClientLayout />,
             children: [
               { index: true, element: <ClientHome /> },

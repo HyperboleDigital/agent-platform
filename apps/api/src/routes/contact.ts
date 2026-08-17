@@ -16,7 +16,13 @@ const contactSchema = z.object({
   message: z.string().min(1).max(4000),
   // Why they reached out (e.g. "Visitor requested a demo"), so the team's
   // notification reflects the real intent instead of a generic escalation.
-  reason: z.string().max(200).optional()
+  reason: z.string().max(200).optional(),
+  // Only sent by clients whose widgetConfig.contactFields opts into asking
+  // for these — optional here so every other client's form keeps working
+  // unchanged.
+  company: z.string().max(200).optional(),
+  phone: z.string().max(50).optional(),
+  division: z.string().max(200).optional()
 })
 
 // Widget contact form. This is an explicit "I want a human" signal — it does
@@ -24,7 +30,7 @@ const contactSchema = z.object({
 contactRouter.post('/', async (req, res) => {
   const parsed = contactSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
-  const { clientId, email, name, message, reason } = parsed.data
+  const { clientId, email, name, message, reason, company, phone, division } = parsed.data
 
   // Throttle per client so a public clientId can't be used to flood the
   // client's Gmail/Slack with escalation spam.
@@ -42,13 +48,16 @@ contactRouter.post('/', async (req, res) => {
   }
 
   try {
-    await logLead({ clientId, name, email, intent: reason ?? 'contact_form', summary: message })
+    await logLead({ clientId, name, email, intent: reason ?? 'contact_form', summary: message, company, phone, division })
     await notifyEscalation(client, {
       from: email,
       name,
       message,
       reason: reason ?? 'Visitor requested a human via the contact form',
-      channel: 'contact_form'
+      channel: 'contact_form',
+      company,
+      phone,
+      division
     })
     res.json({ ok: true })
   } catch (err) {

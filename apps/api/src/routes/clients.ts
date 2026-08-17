@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import type { Request } from 'express'
 import multer from 'multer'
-import { getAllClients, upsertClient, getClientById, inviteClientUser, deleteClient } from '../lib/clients'
+import { getAllClients, upsertClient, getClientById, getClientBySlug, inviteClientUser, deleteClient } from '../lib/clients'
+import { uploadOrgLogo, deleteOrgLogo, ALLOWED_LOGO_TYPES as ALLOWED_ORG_LOGO_TYPES, MAX_LOGO_BYTES as MAX_ORG_LOGO_BYTES } from '../lib/org-logo'
 import { addDocument, listDocuments, deleteDocument, updateDocumentDescription } from '../tools/knowledge-base'
 import { extractText, isSupportedFile, SUPPORTED_EXTENSIONS } from '../lib/file-extract'
 import { uploadLogo, deleteLogo, ALLOWED_LOGO_TYPES, MAX_LOGO_BYTES } from '../lib/widget-logo'
@@ -77,6 +78,17 @@ clientsRouter.get('/:id', async (req, res) => {
   res.json(client)
 })
 
+// Resolves the dashboard's /clients/:slug URL to the underlying client —
+// everything downstream (all other `/clients/:id/*` calls) still uses the
+// UUID, this is only the slug -> id lookup at page load.
+clientsRouter.get('/by-slug/:slug', async (req, res) => {
+  const identity = identityOf(req)
+  const client = await getClientBySlug(req.params.slug)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  if (!(await canAccessClient(identity, client.id))) return res.status(403).json({ error: 'Forbidden' })
+  res.json(client)
+})
+
 // Creating/renaming a client (tenant) is a superadmin action — org members
 // don't get to mint new tenants or repoint clerkOrgId themselves.
 clientsRouter.post('/', async (req, res) => {
@@ -87,6 +99,7 @@ clientsRouter.post('/', async (req, res) => {
     if (!identity.isSuperadmin) {
       delete req.body.clerkOrgId // org members can't reassign tenant ownership
       delete req.body.name       // renaming a client is a superadmin action
+      delete req.body.slug       // and so is repointing their dashboard URL
       delete req.body.vertical   // pricing-sheet tier assignment is a superadmin (billing) action
       delete req.body.tierKey
       // Widget appearance/behaviour is configured by Hyperbole, not the client
@@ -343,6 +356,55 @@ clientsRouter.delete('/:id/widget-logo', async (req, res) => {
 
     const updated = await upsertClient({ id: req.params.id, widgetConfig: next })
     if (previous) await deleteLogo(previous)
+
+    res.json(updated)
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to remove logo' })
+  }
+})
+
+// Internal-dashboard-only org logo (app shell breadcrumb), NOT the public
+// widget logo above — separate bucket, separate field, authenticated route.
+clientsRouter.post('/:id/org-logo', upload.single('file'), async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+
+  const file = req.file
+  if (!file) return res.status(400).json({ error: 'file required (multipart field "file")' })
+  if (!ALLOWED_ORG_LOGO_TYPES.includes(file.mimetype)) {
+    return res.status(400).json({ error: `Unsupported image type: ${file.mimetype}. Use PNG, JPEG, WebP, SVG, or GIF.` })
+  }
+  if (file.buffer.length > MAX_ORG_LOGO_BYTES) {
+    return res.status(400).json({ error: `Logo is too large (${Math.round(file.buffer.length / 1024)}KB). Max ${MAX_ORG_LOGO_BYTES / 1024}KB.` })
+  }
+
+  try {
+    const client = await getClientById(req.params.id)
+    if (!client) return res.status(404).json({ error: 'Client not found' })
+
+    const previous = client.logoPath
+    const storagePath = await uploadOrgLogo(req.params.id, file.mimetype, file.buffer)
+
+    const updated = await upsertClient({ id: req.params.id, logoPath: storagePath, logoContentType: file.mimetype })
+    if (previous) await deleteOrgLogo(previous)
+
+    res.json(updated)
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to upload logo' })
+  }
+})
+
+clientsRouter.delete('/:id/org-logo', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+
+  try {
+    const client = await getClientById(req.params.id)
+    if (!client) return res.status(404).json({ error: 'Client not found' })
+
+    const previous = client.logoPath
+    const updated = await upsertClient({ id: req.params.id, logoPath: null, logoContentType: null })
+    if (previous) await deleteOrgLogo(previous)
 
     res.json(updated)
   } catch (err) {

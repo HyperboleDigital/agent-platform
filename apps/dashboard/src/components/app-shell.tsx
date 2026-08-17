@@ -13,6 +13,7 @@ import { dark } from '@clerk/themes'
 import { api, checkHealth, type ServiceKey } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useEntitlements } from '@/hooks/use-entitlements'
+import { useClientBySlug } from '@/hooks/use-client-by-slug'
 import { ServerDownScreen } from '@/components/server-down-screen'
 import { Button } from '@/components/ui/button'
 import { ContactButton } from '@/components/contact-button'
@@ -78,13 +79,14 @@ function NavLink({ to, active, icon: Icon, label, locked }: {
   )
 }
 
-// Client section nav, shown when inside /clients/:id/* — with lock icons on
+// Client section nav, shown when inside /clients/:slug/* — with lock icons on
 // sections the client isn't entitled to.
-function ClientNav({ clientId }: { clientId: string }) {
+function ClientNav({ slug }: { slug: string }) {
   const location = useLocation()
-  const { entitlements } = useEntitlements(clientId)
+  const { data: client } = useClientBySlug(slug)
+  const { entitlements } = useEntitlements(client?.id)
   const { data: me } = useSWR('me', api.me)
-  const base = `/clients/${clientId}`
+  const base = `/clients/${slug}`
 
   return (
     <>
@@ -113,14 +115,15 @@ function NavBody() {
   const { data: me } = useSWR('me', api.me)
 
   // Which client's sections to show (if any) — parsed from the URL so the shell
-  // (a layout above the routed match) can react to it.
-  const clientId = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
+  // (a layout above the routed match) can react to it. This is the SLUG
+  // segment now, not the client's id — see ClientNav/useClientBySlug.
+  const slug = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
   const topNav = me?.isSuperadmin ? [...SUPERADMIN_TOP_NAV, ...TOP_NAV] : TOP_NAV
 
   return (
     <>
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
-        {clientId ? (
+        {slug ? (
           <>
             {/* Superadmins keep a way back to the platform-level views. */}
             {me?.isSuperadmin && (
@@ -131,7 +134,7 @@ function NavBody() {
                 <div className="my-2 border-t border-border" />
               </>
             )}
-            <ClientNav clientId={clientId} />
+            <ClientNav slug={slug} />
           </>
         ) : (
           topNav.map(item => (
@@ -222,17 +225,21 @@ function MobileNav() {
 // header space just sits empty.
 function Breadcrumb() {
   const location = useLocation()
-  const clientId = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
-  const { data: client } = useSWR(clientId ? ['client', clientId] : null, () => api.clients.get(clientId!))
+  const slug = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
+  const { data: client } = useClientBySlug(slug)
 
-  if (clientId) {
+  if (slug) {
     const section = CLIENT_SECTIONS.find(item => {
-      const to = item.to ? `/clients/${clientId}/${item.to}` : `/clients/${clientId}`
+      const to = item.to ? `/clients/${slug}/${item.to}` : `/clients/${slug}`
       return location.pathname === to
     })
     return (
       <div className="flex min-w-0 items-center gap-2 text-sm">
-        <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+        {client?.logoUrl ? (
+          <img src={client.logoUrl} alt="" className="h-4 w-4 shrink-0 rounded-sm object-contain" />
+        ) : (
+          <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
         <span className="truncate font-medium">{client?.name ?? 'Loading…'}</span>
         {/* The section name is the first thing to go when space is tight —
             the sidebar/drawer already shows where you are. */}
@@ -269,7 +276,8 @@ function Breadcrumb() {
 
 function Topbar() {
   const location = useLocation()
-  const clientId = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
+  const slug = location.pathname.match(/^\/clients\/([^/]+)/)?.[1]
+  const { data: client } = useClientBySlug(slug)
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4 md:px-5">
       <div className="flex min-w-0 items-center gap-2">
@@ -279,7 +287,7 @@ function Topbar() {
       <div className="flex shrink-0 items-center gap-2">
         {/* The contact CTA is a nice-to-have next to a cramped breadcrumb —
             it stays reachable on mobile from the client's own pages. */}
-        {clientId && <span className="hidden sm:inline-flex"><ContactButton clientId={clientId} /></span>}
+        {client?.id && <span className="hidden sm:inline-flex"><ContactButton clientId={client.id} /></span>}
         {/* No theme toggle — the dashboard is dark-mode only, see index.html's hardcoded class="dark". */}
         <UserButton appearance={{ baseTheme: dark } as never} />
       </div>

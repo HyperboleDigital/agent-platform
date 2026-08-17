@@ -360,6 +360,7 @@ export interface OverviewSummary {
 
 export interface ClientRollup {
   clientId: string
+  slug: string
   name: string
   active: boolean
   planName: string | null
@@ -986,6 +987,7 @@ export const api = {
   clients: {
     list: () => request<Client[]>('/clients'),
     get: (id: string) => request<Client>(`/clients/${id}`),
+    getBySlug: (slug: string) => request<Client>(`/clients/by-slug/${encodeURIComponent(slug)}`),
     upsert: (data: Partial<Client>) =>
       request<Client>('/clients', { method: 'POST', body: JSON.stringify(data) }),
     invite: (id: string, email: string) =>
@@ -1010,6 +1012,22 @@ export const api = {
     },
     removeWidgetLogo: (id: string) =>
       request<Client>(`/clients/${id}/widget-logo`, { method: 'DELETE' }),
+    uploadOrgLogo: async (id: string, file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch(`${BASE}/clients/${id}/org-logo`, {
+        method: 'POST',
+        headers: await authHeaders(),
+        body: form
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `Upload failed: ${res.status}`)
+      }
+      return res.json() as Promise<Client>
+    },
+    removeOrgLogo: (id: string) =>
+      request<Client>(`/clients/${id}/org-logo`, { method: 'DELETE' }),
     stats: (id: string) => request<DashboardStats>(`/clients/${id}/stats`),
     statsTimeseries: (id: string, days = 14) => request<DailyCount[]>(`/clients/${id}/stats/timeseries?days=${days}`),
     statsUsage: (id: string) => request<MonthlyUsage>(`/clients/${id}/stats/usage`),

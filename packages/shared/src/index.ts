@@ -83,6 +83,17 @@ export interface Client {
   widgetConfig: WidgetConfig   // public chat-widget appearance — no secrets
   vertical: Vertical | null    // which pricing-sheet ladder this client is on
   tierKey: string | null       // key into lib/tiers.ts's TIER catalog
+  // Clean dashboard URL identifier (e.g. "spec-id"), separate from Clerk's own
+  // auto-generated org slug. Auto-assigned at creation, editable by a
+  // superadmin. Used only for building /clients/:slug URLs — every internal
+  // API call still keys off `id`.
+  slug: string
+  // Internal-dashboard-only org logo (breadcrumb, app-shell chrome) — NOT the
+  // public widget logo in widgetConfig. logoUrl is a short-lived signed URL,
+  // computed server-side on read; never persisted or cached by the client.
+  logoPath?: string | null
+  logoContentType?: string | null
+  logoUrl?: string | null
 }
 
 // SEO/portal soft config — audit target pages, brand terms for AI-visibility
@@ -177,6 +188,20 @@ export interface WidgetConfig {
   // EMPTY OR UNSET MEANS "ANY DOMAIN" — that is the backward-compatible
   // default, so an existing install keeps working until an operator opts in.
   allowedDomains?: string[]
+  // Extra fields on the contact/lead-capture forms (header "Get in touch" and
+  // the inline capture_lead/escalate form), beyond the built-in Name/Email/
+  // Message. Unset means the built-in form only — this keeps every existing
+  // client's widget unchanged until an operator opts a client in.
+  contactFields?: WidgetContactFields
+}
+
+export interface WidgetContactFields {
+  company?: boolean       // ask for Company Name
+  phone?: boolean         // ask for Phone
+  // A single-select "which division/category" question, e.g. Spec-ID's
+  // Flooring/Tiling/Ceiling/... divisions. Unset or empty = not shown.
+  divisionLabel?: string  // defaults to "Identify Your Primary Business" in the widget
+  divisions?: string[]
 }
 
 // Is `origin` (a browser Origin header, e.g. "https://www.spec-id.com") allowed
@@ -236,6 +261,9 @@ export interface Lead {
   channel: Channel
   status: LeadStatus
   createdAt: string
+  company?: string
+  phone?: string
+  division?: string
 }
 
 export interface Escalation {

@@ -2,6 +2,7 @@ import { clerkClient } from '@clerk/express'
 import { supabase } from './supabase'
 import { normalizeDomain, isPublicHost, type Client } from '@agent-platform/shared'
 import { getNotificationSettings, updateNotificationSettings } from './notify'
+import { getOrgLogoUrl } from './org-logo'
 
 interface ClientRow {
   id: string
@@ -16,9 +17,12 @@ interface ClientRow {
   widget_config: Client['widgetConfig']
   vertical: Client['vertical']
   tier_key: string | null
+  slug: string
+  logo_path: string | null
+  logo_content_type: string | null
 }
 
-function fromRow(row: ClientRow): Client {
+async function fromRow(row: ClientRow): Promise<Client> {
   return {
     id: row.id,
     name: row.name,
@@ -31,7 +35,11 @@ function fromRow(row: ClientRow): Client {
     portalConfig: row.portal_config ?? {},
     widgetConfig: row.widget_config ?? {},
     vertical: row.vertical ?? null,
-    tierKey: row.tier_key ?? null
+    tierKey: row.tier_key ?? null,
+    slug: row.slug,
+    logoPath: row.logo_path,
+    logoContentType: row.logo_content_type,
+    logoUrl: row.logo_path ? await getOrgLogoUrl(row.logo_path) : null
   }
 }
 
@@ -48,7 +56,32 @@ function toRow(client: Partial<Client>): Partial<ClientRow> {
   if (client.widgetConfig !== undefined) row.widget_config = client.widgetConfig
   if (client.vertical !== undefined) row.vertical = client.vertical
   if (client.tierKey !== undefined) row.tier_key = client.tierKey
+  if (client.slug !== undefined) row.slug = client.slug
+  if (client.logoPath !== undefined) row.logo_path = client.logoPath
+  if (client.logoContentType !== undefined) row.logo_content_type = client.logoContentType
   return row
+}
+
+// Clean, URL-safe identifier derived from a client name, e.g. "Spec-ID" ->
+// "spec-id". Deliberately independent of Clerk's own auto-generated org slug
+// (which includes a long random suffix and reads poorly in a URL).
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'client'
+}
+
+// Appends -2, -3, ... until the slug is free. Called only at creation time (or
+// when a superadmin explicitly sets one), so the loop runs at most a handful
+// of times even under heavy name collisions.
+async function uniqueSlug(base: string, excludeId?: string): Promise<string> {
+  let candidate = base
+  let n = 2
+  for (;;) {
+    let query = supabase.from('clients').select('id').eq('slug', candidate)
+    if (excludeId) query = query.neq('id', excludeId)
+    const { data } = await query.maybeSingle()
+    if (!data) return candidate
+    candidate = `${base}-${n++}`
+  }
 }
 
 export async function getClientByOrgId(clerkOrgId: string): Promise<Client | null> {
@@ -71,9 +104,21 @@ export async function getClientById(id: string): Promise<Client | null> {
   return fromRow(data as ClientRow)
 }
 
+// Dashboard routing resolves /clients/:slug to a UUID via this lookup, then
+// works with `id` everywhere downstream — see apps/dashboard's ClientLayout.
+export async function getClientBySlug(slug: string): Promise<Client | null> {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .eq('slug', slug)
+    .single()
+  if (error) return null
+  return fromRow(data as ClientRow)
+}
+
 export async function getAllClients(): Promise<Client[]> {
   const { data } = await supabase.from('clients').select('*').order('created_at', { ascending: false })
-  return ((data ?? []) as ClientRow[]).map(fromRow)
+  return Promise.all(((data ?? []) as ClientRow[]).map(fromRow))
 }
 
 // Partial update if `id` is provided (Supabase .upsert() replaces the whole row
@@ -94,6 +139,12 @@ export async function upsertClient(client: Partial<Client>): Promise<Client> {
     row.domain = normalized
   }
 
+  // A superadmin editing the slug explicitly still needs it de-duplicated —
+  // re-run it through the same uniqueness check as auto-generation below.
+  if (row.slug !== undefined) {
+    row.slug = await uniqueSlug(slugify(row.slug ?? ''), client.id)
+  }
+
   if (client.id) {
     const { data, error } = await supabase
       .from('clients')
@@ -103,6 +154,12 @@ export async function upsertClient(client: Partial<Client>): Promise<Client> {
       .single()
     if (!error) return fromRow(data as ClientRow)
     if (error.code !== 'PGRST116') throw error // PGRST116 = no matching row, fall through to insert
+  }
+
+  // New client, no slug given — derive one from the name so it never has to
+  // be set by hand for the common case.
+  if (row.slug === undefined) {
+    row.slug = await uniqueSlug(slugify(row.name ?? ''))
   }
 
   const { data, error } = await supabase.from('clients').insert(row).select().single()

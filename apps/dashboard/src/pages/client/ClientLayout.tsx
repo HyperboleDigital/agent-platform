@@ -27,10 +27,16 @@ export function useClientCtx(): ClientCtx {
 // to activate, and individual paid features stay gated by tier entitlement, but
 // we never wall a real client out of their own portal.
 export default function ClientLayout() {
-  const { id = '' } = useParams()
+  const { slug = '' } = useParams()
+  // Resolve slug -> id once here, then fetch (and cache) the client under the
+  // SAME `['client', id]` SWR key every other section already uses to
+  // `mutate()` after a save. Keeping that key stable means none of those call
+  // sites had to change when the URL moved from UUID to slug.
+  const { data: lookup } = useSWR(slug ? ['client-slug-lookup', slug] : null, () => api.clients.getBySlug(slug))
+  const id = lookup?.id ?? ''
   const { data: client } = useSWR(id ? ['client', id] : null, () => api.clients.get(id))
   const { data: me } = useSWR('me', api.me)
-  const { entitlements } = useEntitlements(id)
+  const { entitlements } = useEntitlements(id || undefined)
 
   // Show the onboarding/notifications modal to the client (never superadmin)
   // when either: they've never been onboarded (first login), OR their Chat

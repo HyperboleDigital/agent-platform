@@ -9,6 +9,10 @@ interface SlackAlertParams {
   // Contact-form submission (someone asking to be contacted) vs. the bot
   // getting stuck mid-chat. Same alert, very different urgency to a human.
   isLead?: boolean
+  // Only present for clients whose widgetConfig.contactFields opted into these.
+  company?: string
+  phone?: string
+  division?: string
 }
 
 // Slack truncates hard in notifications and sidebars, so the quoted message is
@@ -47,6 +51,15 @@ export async function sendSlackAlert(webhookUrl: string | undefined, params: Sla
       ]
     }
   ]
+
+  const extraFields = [
+    params.company ? { type: 'mrkdwn', text: `*Company*\n${escapeMrkdwn(params.company)}` } : null,
+    params.phone ? { type: 'mrkdwn', text: `*Phone*\n${escapeMrkdwn(params.phone)}` } : null,
+    params.division ? { type: 'mrkdwn', text: `*Division*\n${escapeMrkdwn(params.division)}` } : null
+  ].filter((f): f is { type: 'mrkdwn'; text: string } => f !== null)
+  if (extraFields.length) {
+    blocks.push({ type: 'section', fields: extraFields })
+  }
 
   if (quoted) {
     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*What they said*\n>${quoted.replace(/\n/g, '\n>')}` } })

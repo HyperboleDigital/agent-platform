@@ -113,11 +113,56 @@
     { label: 'Contact us', message: 'I want to contact support' }
   ];
 
+  // ─── Optional contact-form fields (Company / Phone / a single-select
+  // division-or-category question) — off by default, opted into per client
+  // via widgetConfig.contactFields (see packages/shared WidgetContactFields).
+  const rawContactFields = remote.contactFields && typeof remote.contactFields === 'object' ? remote.contactFields : {};
+  const CONTACT_DIVISIONS = Array.isArray(rawContactFields.divisions)
+    ? rawContactFields.divisions.map(d => String(d).trim()).filter(Boolean)
+    : [];
+  const CONTACT_FIELDS = {
+    company: !!rawContactFields.company,
+    phone: !!rawContactFields.phone,
+    divisionLabel: (rawContactFields.divisionLabel && String(rawContactFields.divisionLabel).trim()) || 'Identify Your Primary Business',
+    divisions: CONTACT_DIVISIONS
+  };
+
   // Operator-authored strings interpolated into innerHTML below.
   function esc(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Markup for the optional Company/Phone/Division fields, shared by the
+  // static "Get in touch" form and the inline capture_lead/escalate form.
+  // Placed to match the source form layout: Name, Company, Email, Message,
+  // Division, Phone — so companyFieldHTML slots in after Name/before Email,
+  // and divisionPhoneFieldHTML slots in after Message.
+  // `radioName` must be unique per form instance so two forms on screen at
+  // once (unlikely, but the inline form re-renders per message) don't cross-
+  // wire their radio groups.
+  function companyFieldHTML() {
+    if (!CONTACT_FIELDS.company) return '';
+    return '<div class="cf-field"><label class="cf-label">Company Name</label>' +
+      '<input class="ap-cf-company" type="text" placeholder="Name of your company" autocomplete="organization" /></div>';
+  }
+  function divisionPhoneFieldHTML(radioName) {
+    let html = '';
+    if (CONTACT_FIELDS.divisions.length) {
+      html += '<div class="cf-field"><label class="cf-label">' + esc(CONTACT_FIELDS.divisionLabel) + '</label>' +
+        '<div class="cf-radio-group">' +
+        CONTACT_FIELDS.divisions.map(d =>
+          '<label class="cf-radio"><input type="radio" class="ap-cf-division" name="' + esc(radioName) + '" value="' + esc(d) + '" />' +
+          '<span>' + esc(d) + '</span></label>'
+        ).join('') +
+        '</div></div>';
+    }
+    if (CONTACT_FIELDS.phone) {
+      html += '<div class="cf-field"><label class="cf-label">Phone</label>' +
+        '<input class="ap-cf-phone" type="tel" placeholder="Business phone number" autocomplete="tel" /></div>';
+    }
+    return html;
   }
 
   // ─── Theme colors (override via data-color / data-color-2) ───────────────
@@ -569,6 +614,19 @@
     .cf-submit:active { transform: scale(0.98); }
     .cf-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* ─── Division / category picker (single-select, checkbox-styled) ──────── */
+    .cf-radio-group { display: flex !important; flex-direction: column !important; gap: 10px !important; }
+    .cf-radio {
+      display: flex !important; align-items: center !important; gap: 10px !important;
+      cursor: pointer !important; font-size: 14px !important; color: var(--text) !important;
+      line-height: 1.3 !important;
+    }
+    .cf-radio input {
+      width: 18px !important; height: 18px !important; min-height: 0 !important;
+      flex-shrink: 0 !important; margin: 0 !important; padding: 0 !important;
+      accent-color: var(--p) !important; cursor: pointer !important;
+    }
+
     /* ─── Success ────────────────────────────────────────────────────────── */
     #ap-success {
       flex: 1; display: flex; flex-direction: column;
@@ -693,6 +751,7 @@
           <label class="cf-label" for="cf-name">Name</label>
           <input id="cf-name" type="text" placeholder="Jane Smith" />
         </div>
+        ${companyFieldHTML()}
         <div class="cf-field">
           <label class="cf-label" for="cf-email">Email</label>
           <input id="cf-email" type="email" placeholder="jane@company.com" />
@@ -701,6 +760,7 @@
           <label class="cf-label" for="cf-message">Message</label>
           <textarea id="cf-message" placeholder="What can we help with?"></textarea>
         </div>
+        ${divisionPhoneFieldHTML('cf-division')}
         <button class="cf-submit" id="cf-submit">Send message</button>
       </div>
       <div id="ap-success" style="display:none">
@@ -886,11 +946,16 @@
     }
     // Reuses the contact form's cf-* classes so the inline form is pixel-identical
     // to the one the header contact button opens.
+    // Unique per message bubble so re-rendering multiple form bubbles never
+    // cross-wires their division radio groups.
+    const radioName = 'ap-ef-division-' + (m.ts || 0);
     div.innerHTML =
       '<div class="cf-header"><div class="cf-title"></div><div class="cf-sub"></div></div>' +
       '<div class="cf-field"><label class="cf-label">Name</label><input class="ap-ef-name" type="text" placeholder="Jane Smith" autocomplete="name" /></div>' +
+      companyFieldHTML() +
       '<div class="cf-field"><label class="cf-label">Email</label><input class="ap-ef-input" type="email" placeholder="jane@company.com" autocomplete="email" /></div>' +
       '<div class="cf-field"><label class="cf-label">Message <span class="ap-ef-opt">(optional)</span></label><textarea class="ap-ef-msg" placeholder="Anything we should know?"></textarea></div>' +
+      divisionPhoneFieldHTML(radioName) +
       '<button class="cf-submit" type="button"></button>' +
       '<div class="ap-ef-error"></div>';
     div.querySelector('.cf-title').textContent = copy.title;
@@ -898,13 +963,32 @@
     const nameEl = div.querySelector('.ap-ef-name');
     const emailEl = div.querySelector('.ap-ef-input');
     const msgEl = div.querySelector('.ap-ef-msg');
+    const companyEl = div.querySelector('.ap-cf-company');
+    const phoneEl = div.querySelector('.ap-cf-phone');
+    const divisionEls = div.querySelectorAll('.ap-cf-division');
     const btn = div.querySelector('.cf-submit');
     const err = div.querySelector('.ap-ef-error');
     btn.textContent = copy.btn;
     nameEl.value = m.name || ''; emailEl.value = m.value || ''; msgEl.value = m.msg || '';
+    if (companyEl) companyEl.value = m.company || '';
+    if (phoneEl) phoneEl.value = m.phone || '';
+    if (m.division) divisionEls.forEach(r => { r.checked = r.value === m.division; });
     if (m.error) err.textContent = m.error;
-    if (m.submitting) { btn.textContent = 'Sending…'; btn.disabled = true; nameEl.disabled = emailEl.disabled = msgEl.disabled = true; }
-    const submit = () => submitEmailForm(m, { name: nameEl.value.trim(), email: emailEl.value.trim(), msg: msgEl.value.trim() });
+    if (m.submitting) {
+      btn.textContent = 'Sending…'; btn.disabled = true;
+      nameEl.disabled = emailEl.disabled = msgEl.disabled = true;
+      if (companyEl) companyEl.disabled = true;
+      if (phoneEl) phoneEl.disabled = true;
+      divisionEls.forEach(r => { r.disabled = true; });
+    }
+    const submit = () => submitEmailForm(m, {
+      name: nameEl.value.trim(),
+      email: emailEl.value.trim(),
+      msg: msgEl.value.trim(),
+      company: companyEl ? companyEl.value.trim() : '',
+      phone: phoneEl ? phoneEl.value.trim() : '',
+      division: (Array.from(divisionEls).find(r => r.checked) || {}).value || ''
+    });
     btn.addEventListener('click', submit);
     emailEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
     if (!m._focusedOnce) { m._focusedOnce = true; setTimeout(() => (m.name ? emailEl : nameEl).focus(), 50); }
@@ -913,7 +997,11 @@
   async function submitEmailForm(m, fields) {
     if (m.submitting || m.submitted) return;
     m.name = fields.name; m.value = fields.email; m.msg = fields.msg;
+    m.company = fields.company; m.phone = fields.phone; m.division = fields.division;
     if (!EMAIL_RE.test(fields.email)) { m.error = 'Please enter a valid email address.'; renderMessages(); return; }
+    if (CONTACT_FIELDS.company && !fields.company) { m.error = 'Please add your company name.'; renderMessages(); return; }
+    if (CONTACT_FIELDS.phone && !fields.phone) { m.error = 'Please add your phone number.'; renderMessages(); return; }
+    if (CONTACT_FIELDS.divisions.length && !fields.division) { m.error = `Please select a ${CONTACT_FIELDS.divisionLabel.toLowerCase().replace(/:$/, '')}.`; renderMessages(); return; }
     m.error = ''; m.submitting = true; renderMessages();
     try {
       // Reuses the /contact lead endpoint (logs the lead + notifies a human).
@@ -926,7 +1014,10 @@
           name: fields.name || undefined,
           email: fields.email,
           message: fields.msg || '(No additional message provided.)',
-          reason: copyFor(m).reason
+          reason: copyFor(m).reason,
+          company: fields.company || undefined,
+          phone: fields.phone || undefined,
+          division: fields.division || undefined
         })
       });
       if (!res.ok) throw new Error();
@@ -1070,13 +1161,26 @@
     const name = document.getElementById('cf-name').value.trim();
     const email = document.getElementById('cf-email').value.trim();
     const message = document.getElementById('cf-message').value.trim();
+    const companyEl = document.querySelector('#ap-contact .ap-cf-company');
+    const phoneEl = document.querySelector('#ap-contact .ap-cf-phone');
+    const divisionEl = document.querySelector('#ap-contact .ap-cf-division:checked');
+    const company = companyEl ? companyEl.value.trim() : '';
+    const phone = phoneEl ? phoneEl.value.trim() : '';
+    const division = divisionEl ? divisionEl.value : '';
     if (!email || !message) { alert('Please add your email and message.'); return; }
+    if (CONTACT_FIELDS.company && !company) { alert('Please add your company name.'); return; }
+    if (CONTACT_FIELDS.phone && !phone) { alert('Please add your phone number.'); return; }
+    if (CONTACT_FIELDS.divisions.length && !division) { alert(`Please select a ${CONTACT_FIELDS.divisionLabel.toLowerCase().replace(/:$/, '')}.`); return; }
     cfSubmit.textContent = 'Sending...'; cfSubmit.disabled = true;
     try {
       // Explicit "I want a human" — goes to the escalation endpoint, not the agent.
       await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: CLIENT_ID, name: name || undefined, email, message, reason: 'Visitor reached out via the contact form' })
+        body: JSON.stringify({
+          clientId: CLIENT_ID, name: name || undefined, email, message,
+          reason: 'Visitor reached out via the contact form',
+          company: company || undefined, phone: phone || undefined, division: division || undefined
+        })
       });
     } catch {}
     setView('success');

@@ -57,6 +57,16 @@ widgetConfigRouter.get('/:clientId', async (req, res) => {
     prompts: Array.isArray(cfg.prompts) ? cfg.prompts : undefined,
     chips: Array.isArray(cfg.chips)
       ? cfg.chips.slice(0, 4).map(c => ({ label: c?.label ?? '', message: c?.message ?? '' }))
+      : undefined,
+    contactFields: cfg.contactFields
+      ? {
+          company: !!cfg.contactFields.company,
+          phone: !!cfg.contactFields.phone,
+          divisionLabel: cfg.contactFields.divisionLabel,
+          divisions: Array.isArray(cfg.contactFields.divisions)
+            ? cfg.contactFields.divisions.map(d => String(d).trim()).filter(Boolean)
+            : undefined
+        }
       : undefined
   })
 })

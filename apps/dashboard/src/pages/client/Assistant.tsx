@@ -3,7 +3,7 @@ import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw, ShieldCheck } from 'lucide-react'
 import type { KnowledgeDoc, KnowledgeFile } from '@/lib/api'
-import type { Client, WidgetConfig } from '@agent-platform/shared'
+import type { Client, WidgetConfig, WidgetContactFields } from '@agent-platform/shared'
 import { api } from '@/lib/api'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -404,6 +404,77 @@ function LogoField({ client, draft, onUrlChange }: {
   )
 }
 
+// Extra fields on the widget's contact/lead-capture forms (Company Name,
+// Phone, and a single-select division/category question), beyond the
+// built-in Name/Email/Message. Off by default so opting one client in never
+// changes another's form — see WidgetContactFields in packages/shared.
+function ContactFieldsCard({ draft, onChange }: {
+  draft: WidgetConfig
+  onChange: (cf: WidgetContactFields) => void
+}) {
+  const cf = draft.contactFields ?? {}
+  const divisions = cf.divisions ?? []
+
+  function patch(next: Partial<WidgetContactFields>) {
+    onChange({ ...cf, ...next })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Contact form fields</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4 pt-0">
+        <p className="text-sm text-muted-foreground">
+          Extra questions on the "Get in touch" form and the inline lead-capture form, on top of the
+          built-in Name / Email / Message. Off by default — only this client's widget is affected.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!cf.company} onChange={e => patch({ company: e.target.checked })} className="h-4 w-4 accent-primary" />
+            Ask for Company Name
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!cf.phone} onChange={e => patch({ phone: e.target.checked })} className="h-4 w-4 accent-primary" />
+            Ask for Phone
+          </label>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label>Division / category question <span className="text-muted-foreground">(single-select — leave the list empty to hide it)</span></Label>
+          <Input
+            value={cf.divisionLabel ?? ''}
+            onChange={e => patch({ divisionLabel: e.target.value })}
+            placeholder="Identify Your Primary Business"
+          />
+          {divisions.map((d, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                value={d}
+                onChange={e => {
+                  const next = [...divisions]; next[i] = e.target.value; patch({ divisions: next })
+                }}
+                placeholder="Flooring Division"
+              />
+              <button
+                onClick={() => patch({ divisions: divisions.filter((_, j) => j !== i) })}
+                aria-label={`Remove option ${i + 1}`}
+                className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <Button variant="outline" size="sm" className="w-fit" onClick={() => patch({ divisions: [...divisions, ''] })}>
+            <Plus className="h-3.5 w-3.5" /> Add option
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function WidgetTab({ client }: { client: Client }) {
   const cfg = client.widgetConfig ?? {}
   const [draft, setDraft] = useState<WidgetConfig>(cfg)
@@ -460,7 +531,11 @@ function WidgetTab({ client }: { client: Client }) {
         logoContentType: client.widgetConfig?.logoContentType,
         prompts: (draft.prompts ?? []).map(p => p.trim()).filter(Boolean),
         chips: (draft.chips ?? []).filter(c => c.label.trim() && c.message.trim()).slice(0, 4),
-        allowedDomains: (draft.allowedDomains ?? []).map(d => d.trim()).filter(Boolean)
+        allowedDomains: (draft.allowedDomains ?? []).map(d => d.trim()).filter(Boolean),
+        contactFields: draft.contactFields && {
+          ...draft.contactFields,
+          divisions: (draft.contactFields.divisions ?? []).map(d => d.trim()).filter(Boolean)
+        }
       }
       await api.clients.upsert({ id: client.id, widgetConfig: clean })
       mutate(['client', client.id])
@@ -707,6 +782,8 @@ function WidgetTab({ client }: { client: Client }) {
           </div>
         </CardContent>
       </Card>
+
+      <ContactFieldsCard draft={draft} onChange={cf => set('contactFields', cf)} />
 
       {/* Sticky: every card on this tab is saved by this one button, and the
           tab is long enough that a footer button scrolls out of sight — which

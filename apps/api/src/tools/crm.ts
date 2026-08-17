@@ -11,6 +11,9 @@ interface LeadRow {
   channel: string
   status: LeadStatus
   created_at: string
+  company: string | null
+  phone: string | null
+  division: string | null
 }
 
 function fromRow(row: LeadRow): Lead {
@@ -23,7 +26,10 @@ function fromRow(row: LeadRow): Lead {
     summary: row.summary,
     channel: row.channel as Channel,
     status: row.status,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    company: row.company ?? undefined,
+    phone: row.phone ?? undefined,
+    division: row.division ?? undefined
   }
 }
 
@@ -36,6 +42,9 @@ export async function logLead(
     email: lead.email,
     intent: lead.intent,
     summary: lead.summary,
+    company: lead.company,
+    phone: lead.phone,
+    division: lead.division,
     // Links the lead to the chat session that produced it, so the chat_sessions
     // view can mark that conversation's outcome as 'lead'. Null for contact-form
     // submissions (no session id) — those still record the lead, just unlinked.

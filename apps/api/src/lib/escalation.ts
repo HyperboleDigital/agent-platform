@@ -15,6 +15,10 @@ export interface EscalationInput {
   message: string       // what the visitor said / wants
   reason: string        // why it's being escalated
   channel: 'chat' | 'contact_form'
+  // Only present for clients whose widgetConfig.contactFields opted into these.
+  company?: string
+  phone?: string
+  division?: string
 }
 
 // Chat escalations pass the widget's session id as `from` (sess_<rand>) —
@@ -72,7 +76,10 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
       body: input.message,
       reason: input.reason,
       visitorEmail,
-      isLead
+      isLead,
+      company: input.company,
+      phone: input.phone,
+      division: input.division
     })
   } catch (err) {
     console.error('[escalation] slack failed', err)
@@ -99,6 +106,9 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
 
     const rows: EmailRow[] = [{ label: 'From', value: input.name || visitorEmail || 'Anonymous visitor' }]
     if (visitorEmail) rows.push({ label: 'Email', value: visitorEmail, href: `mailto:${visitorEmail}` })
+    if (input.company) rows.push({ label: 'Company', value: input.company })
+    if (input.phone) rows.push({ label: 'Phone', value: input.phone, href: `tel:${input.phone}` })
+    if (input.division) rows.push({ label: 'Division', value: input.division })
     rows.push({ label: 'Reason', value: input.reason })
     rows.push({ label: 'Source', value: isLead ? 'Website contact form' : 'Website chat' })
     rows.push({ label: 'Received', value: new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) })

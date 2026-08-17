@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
 import {
   Users, Plug, CreditCard, Mail, MessageSquare, MessageSquarePlus,
-  CheckCircle2, XCircle, Undo2, Trash2, Layers, Clock, AlertTriangle, Link2, Bot, Lock
+  CheckCircle2, XCircle, Undo2, Trash2, Layers, Clock, AlertTriangle, Link2, Bot, Lock, Upload, Building2
 } from 'lucide-react'
 import { normalizeDomain, isPublicHost, type LeadStatus, type Vertical } from '@agent-platform/shared'
 import { api } from '@/lib/api'
@@ -561,11 +561,15 @@ function LeadsTab({ clientId }: { clientId: string }) {
   return (
     <Card className="overflow-hidden p-0">
       {leads?.length ? (
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead>Email</TableHead>
               <TableHead>Name</TableHead>
+              <TableHead>Company</TableHead>
+              <TableHead>Phone</TableHead>
+              <TableHead>Division</TableHead>
               <TableHead>Intent</TableHead>
               <TableHead>When</TableHead>
               <TableHead>Status</TableHead>
@@ -577,6 +581,9 @@ function LeadsTab({ clientId }: { clientId: string }) {
               <TableRow key={l.id} className={l.status === 'followed_up' ? 'opacity-60' : undefined}>
                 <TableCell className="font-medium">{l.email}</TableCell>
                 <TableCell className="text-muted-foreground">{l.name || '—'}</TableCell>
+                <TableCell className="text-muted-foreground">{l.company || '—'}</TableCell>
+                <TableCell className="text-muted-foreground">{l.phone || '—'}</TableCell>
+                <TableCell className="text-muted-foreground">{l.division || '—'}</TableCell>
                 <TableCell className="text-muted-foreground">{l.intent || '—'}</TableCell>
                 <TableCell className="text-muted-foreground">{new Date(l.createdAt).toLocaleDateString()}</TableCell>
                 <TableCell>
@@ -607,6 +614,7 @@ function LeadsTab({ clientId }: { clientId: string }) {
             ))}
           </TableBody>
         </Table>
+        </div>
       ) : (
         <EmptyState icon={Users} title="No leads yet" description="Leads captured by your assistant show up here." />
       )}
@@ -906,7 +914,7 @@ function TierCard({ clientId, client }: { clientId: string; client: import('@age
                         offer it. The bullet itself stays: they ARE getting it. */}
                     {f.built && f.section !== undefined && !(f.section === 'content' && !me?.isSuperadmin) && (
                       <Link
-                        to={`/clients/${clientId}${f.section ? `/${f.section}` : ''}`}
+                        to={`/clients/${client.slug}${f.section ? `/${f.section}` : ''}`}
                         className="ml-2 text-xs text-primary hover:underline"
                       >
                         View
@@ -1146,10 +1154,76 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
   )
 }
 
+// Internal-dashboard-only branding — shown in the app shell breadcrumb next
+// to the client name (Building2 icon when unset). NOT the public chat-widget
+// logo (that's under Widget setup → Appearance); this one is never served to
+// a website visitor.
+function OrgLogoField({ client, clientId }: { client: import('@agent-platform/shared').Client; clientId: string }) {
+  const [busy, setBusy] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  async function upload(file: File | undefined) {
+    if (!file) return
+    setBusy(true)
+    try {
+      await api.clients.uploadOrgLogo(client.id, file)
+      mutate(['client', clientId])
+      toast.success('Logo uploaded')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    setBusy(true)
+    try {
+      await api.clients.removeOrgLogo(client.id)
+      mutate(['client', clientId])
+      toast.success('Logo removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove logo')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Label>Organization logo <span className="font-normal text-muted-foreground">(shown next to the client name in this dashboard — not the public widget logo)</span></Label>
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
+          {client.logoUrl
+            ? <img src={client.logoUrl} alt="" className="h-full w-full object-contain" />
+            : <Building2 className="h-4 w-4 text-muted-foreground" />}
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+          className="hidden"
+          onChange={e => { upload(e.target.files?.[0]); e.target.value = '' }}
+        />
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
+          <Upload className="h-3.5 w-3.5" />{busy ? 'Working…' : client.logoPath ? 'Replace' : 'Upload logo'}
+        </Button>
+        {client.logoPath && (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={remove}>
+            <Trash2 className="h-3.5 w-3.5" /> Remove
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ConfigTab({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
   const cfg = client.agentConfig ?? {}
   const { data: me } = useSWR('me', api.me)
+  const navigate = useNavigate()
   const [name, setName] = useState(client.name)
+  const [slug, setSlug] = useState(client.slug)
   const [domain, setDomain] = useState(client.domain ?? '')
   const [systemPromptExtra, setExtra] = useState(cfg.systemPromptExtra ?? '')
   const [escalationEmail, setEscalationEmail] = useState(cfg.escalationEmail ?? '')
@@ -1164,13 +1238,21 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
     if (domainError) return
     setSaving(true)
     try {
-      await api.clients.upsert({
+      const updated = await api.clients.upsert({
         id: client.id,
-        ...(me?.isSuperadmin ? { name, domain: normalizedDomain } : {}),
+        ...(me?.isSuperadmin ? { name, domain: normalizedDomain, slug } : {}),
         agentConfig: { ...cfg, systemPromptExtra, escalationEmail }
       })
       mutate(['client', clientId])
       toast.success('Config saved', { icon: <CheckCircle2 className="h-4 w-4" /> })
+      // The current URL is keyed by the old slug — a superadmin who just
+      // renamed it would otherwise be left on a now-stale link (still works,
+      // since it's served from history, but every fresh copy/share of the URL
+      // from here on should use the new one).
+      if (me?.isSuperadmin && updated.slug !== client.slug) {
+        setSlug(updated.slug)
+        navigate(`/clients/${updated.slug}/config`, { replace: true })
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save', { icon: <XCircle className="h-4 w-4" /> })
     } finally {
@@ -1181,10 +1263,24 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
   return (
     <Card>
       <CardContent className="grid gap-4 pt-5">
+        {me?.isSuperadmin && <OrgLogoField client={client} clientId={clientId} />}
         {me?.isSuperadmin && (
           <div className="grid gap-1.5">
             <Label>Client name</Label>
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Client name" />
+          </div>
+        )}
+        {me?.isSuperadmin && (
+          <div className="grid gap-1.5">
+            <Label>Dashboard URL</Label>
+            <Input
+              value={slug}
+              onChange={e => setSlug(e.target.value)}
+              placeholder="spec-id"
+            />
+            <p className="text-xs text-muted-foreground">
+              /clients/<span className="font-medium text-foreground">{slug || '…'}</span> — lowercased and de-duplicated automatically on save if it collides with another client.
+            </p>
           </div>
         )}
         {me?.isSuperadmin && (

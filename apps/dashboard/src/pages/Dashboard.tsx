@@ -50,7 +50,7 @@ function NewClientModal({ open, onClose }: { open: boolean; onClose: () => void 
       onClose()
       setName('')
       setIndustry('')
-      navigate(`/clients/${client.id}`)
+      navigate(`/clients/${client.slug}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create client')
     } finally {
@@ -90,7 +90,7 @@ export default function Dashboard() {
   // A non-superadmin user belongs to exactly one client — their portal is the
   // client's own sections, not a one-row list. Send them straight there.
   if (me && !me.isSuperadmin && clients && clients.length === 1) {
-    return <Navigate to={`/clients/${clients[0].id}`} replace />
+    return <Navigate to={`/clients/${clients[0].slug}`} replace />
   }
 
   // Signed in, but not one of our team and not linked to any client — i.e. no
@@ -168,7 +168,7 @@ export default function Dashboard() {
               {clients.map(c => (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Link to={`/clients/${c.id}`} className="font-medium text-primary hover:underline">
+                    <Link to={`/clients/${c.slug}`} className="font-medium text-primary hover:underline">
                       {c.name}
                     </Link>
                   </TableCell>
