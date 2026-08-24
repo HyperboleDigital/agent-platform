@@ -1,5 +1,50 @@
 # TODO
 
+## Fulfillment automation (handoff #2) — in progress 2026-08-19
+
+**⚠️ RUN THIS MIGRATION** in the Supabase SQL editor before the jobs system
+works: `supabase/migrate_2026-08-19_scheduled-jobs.sql` (scheduled_jobs table).
+Until it runs, the dispatcher and reconcile sweep log errors on every tick
+(harmless, but noisy) and the Jobs view 500s.
+
+Done so far (§0 + §1 of the handoff):
+- Nav entitlement rule, enforced in ONE place (ClientNav): clients only ever
+  see service sections they're entitled to — no locked/teaser items. Leads is
+  now gated on `chat` (leads only exist via the chat agent's CRM tool — it was
+  leaking to non-chat clients). Superadmins see everything, lock glyph = "this
+  client doesn't have this".
+- SEO tier display name → "SEO + GEO" (key stays `seo`). Price unchanged at
+  $1,200 — do NOT raise until the §3 GEO work ships.
+- scheduled_jobs infra: one dispatcher (60s tick, CAS-claim on next_run_at so
+  concurrent instances can't double-run), handlers registered by job_type in
+  lib/scheduled-jobs.ts, hourly + startup reconcile sweep, inline reconcile on
+  every tier transition, add-on change, comp grant/revoke.
+- Handlers wired to real deliverables: uptime_check, crawl, rank_check,
+  visibility_poll, gsc_sync, ads_sync, health_report (delegates to the
+  claim-guarded report-scheduler — duplicate-send-safe), gbp_post (verifies a
+  post was LOGGED this week — it's a human task; the job monitors the
+  obligation). Not yet implemented (fail loudly by design): local_pack_check,
+  chat_metrics_rollup, unanswered_digest.
+- Superadmin Jobs view at /jobs: per-client job status, failed runs visible,
+  run-now, reconcile button, and the entitled-but-not-scheduled warning.
+- Deviation from the handoff table, deliberate: chat_metrics_rollup +
+  unanswered_digest key on the `chat` ENTITLEMENT, not the Growth tier, so a
+  chatbot-at-Care client (comp) gets them too — their report needs the chat
+  block. Care also keeps a monthly visibility_poll (the "0 of N citations"
+  line in report block 2 needs data).
+- The handoff says "worker on Railway" — the platform deploys on RENDER, and
+  the dispatcher runs in-process in the API (same pattern as the existing
+  report/site-monitor intervals). At current scale a separate worker is
+  overhead; revisit only if job runtime starts starving request handling.
+- Legacy overlap, intentional for now: the old hourly report interval AND the
+  health_report job both call deliverMonthlyReport. The DB claim row makes
+  double-send impossible. Retire the legacy interval once the jobs system has
+  a month of clean runs.
+
+Next per the handoff order: Care report blocks + review queue (§2.2), GEO
+tracking gaps (§3.1), SEO+GEO report (§2.3), content pipeline (§5).
+
+
 Working list of what's next / unfinished. Owen reviews and edits this
 directly — treat entries here as authoritative over anything a session
 summary elsewhere implies.
@@ -23,6 +68,153 @@ live in the plan docs; this is just the pointer:
   spike done (Framer 3.0 Server/Canvas/Plugin APIs + MCP look viable); the
   hands-on spike (build real pages on a throwaway Framer project) is still
   pending — needs a throwaway Framer project + credentials from Owen.
+
+## Shipped 2026-08-18 (pricing restructure) — NEEDS SETUP TO GO LIVE
+
+The six Local/B2B tiers collapsed into one ladder (Care $495 / SEO $1,200 /
+Growth $2,500), Local Presence became a $250/mo add-on, and every client's
+deal is now tier template + custom line items (`client_line_items`,
+`lib/line-items.ts`), rendered on a superadmin **Info sheet** view
+(`/clients/:slug/info-sheet`). Chatbots persist at Care via a comp grant on
+downgrade (`lib/tier-transitions.ts`) with a quiet "live but unmanaged" notice.
+`clients.hosting` ('us' | 'client') models who owns the platform — client-hosted
+sites lose the hosting bullet + Site Health card, and their default retainer is
+the chatbot, not Care. MRR now sums tier + add-ons + monthly non-included line
+items (one place: `lib/line-items.ts`, used by both Overview and the sheet).
+
+**DONE:** both migrations are applied to the live DB (verified 2026-08-18 —
+`clients.hosting` present, every `tier_key` resolves in the new catalog,
+`client_line_items` queryable). No client was on an old tier in a way that
+needed a manual Stripe move — Owen confirmed no real clients on those plans.
+
+Live-verified the same day: on a throwaway billing client, a $300/mo line item
+moved both client MRR and platform MRR by exactly $300, while an `included`
+$150/mo item and a $5,000 one-time item moved neither; the info sheet's monthly
+total and the MRR figure agreed exactly. On the comped test client (Spec-ID),
+line items correctly contributed $0. Throwaway rows deleted, no orphans.
+
+**Stripe wiring: DONE in TEST mode (2026-08-18), NOT in live mode.**
+
+Rather than create three redundant products, the tiers **adopted** the existing
+prices whose amounts already matched, and the products were renamed to fit the
+new ladder:
+
+| Tier | Price ID | Adopted from | Product renamed |
+|---|---|---|---|
+| Care $495 | `price_1TwsIRJvRTpaT0Wry7AmJQEH` | old local-care | — (already "Care") |
+| SEO $1,200 | `price_1TwsNiJvRTpaT0WraMbNDyKu` | old local-seo | "Local SEO" → "SEO" |
+| Growth $2,500 | `price_1TwsTLJvRTpaT0Wrg8a9dBpH` | old b2b-momentum | "Momentum" → "Growth" |
+| Local Presence $250 | `price_1U5u81JvRTpaT0WrehTuxHXU` | newly created | new "Local Presence" product |
+
+All four are set in `apps/api/.env`. Side benefit of adopting rather than
+recreating: Sweet Additions' existing $495 subscription is now on the
+**canonical** Care price, so nothing needed migrating and the deal-vs-Stripe
+mismatch check compares equal. The old `LOCAL_GROWTH` ($2,400) and `B2B_GROWTH`
+($4,500) prices were deliberately NOT adopted — wrong amounts for the new sheet.
+
+Verified live: all three tiers round-trip through `tierForPriceId`, all six
+legacy price IDs still resolve to their consolidated tier, Local Presence is
+`available`, and payment links now generate for all three tiers (they were
+refusing before). Any cached payment link from the retired catalog was cleared
+off the adopted prices, so the next "Copy payment link" mints a fresh one.
+
+- Leave the legacy `STRIPE_PRICE_TIER_LOCAL_*` / `_B2B_*` vars set — the
+  deprecated reverse-lookup depends on them for any old subscription.
+
+### Going live with pricing (runbook)
+
+`pnpm --filter api setup-stripe-pricing` creates/adopts all four products +
+prices and prints the env lines. It is **create-only** — it never renames,
+archives, or re-prices an existing Stripe object, and it's idempotent (objects
+are tagged `metadata.tier_key` / `metadata.service_key`, which is how a rerun
+finds them). Verified against test mode: adopts all four, creates nothing.
+
+For live mode, pass the live key on the command line so it never lands in a
+committed file:
+
+```
+STRIPE_SECRET_KEY=sk_live_... pnpm --filter api setup-stripe-pricing
+```
+
+Then set the four printed vars in the **Render dashboard** → Environment
+(Render env vars are UI-managed, not committed — see HANDOFF.md).
+
+Pass `--with-webhook` (needs `API_PUBLIC_URL`) to also create the hosted
+webhook endpoint and print its signing secret. Stripe reveals that secret
+**only at creation** — copy it straight into Render; if the endpoint already
+exists the script says so and leaves it alone (roll the secret in the
+dashboard to get a new one).
+
+**⚠️ Switching Render from the test key to a live key is a billing-account
+migration, not just an env change.** Two things that bite:
+
+1. **There is no hosted webhook endpoint at all — verified 2026-08-18, the
+   account has ZERO webhook endpoints in test mode.** Render's
+   `STRIPE_WEBHOOK_SECRET` is almost certainly a leftover from
+   `stripe listen` (the CLI's local-forwarding secret), which corresponds to
+   no hosted endpoint. **Production has therefore never synced a Stripe
+   event**: paying a payment link would charge the card, but
+   `checkout.session.completed` never arrives, so `attributeCheckoutToClient`
+   never runs, the subscription is never attributed, and `tier_key` never
+   syncs — the dashboard would show nothing happened. No harm done so far
+   (no real client has ever paid), but this must be fixed before taking a
+   single real payment. `--with-webhook` above creates it.
+2. **Existing test-mode subscriptions become phantoms.** ✅ Handled
+   2026-08-18: Sweet Additions' test-mode sub was marked comped
+   (`stripe_customer_id='comped'`, `stripe_subscription_id` cleared — it
+   referenced a test object that doesn't exist under the live key). They keep
+   dashboard access and their Care plan label (`stripe_price_id` deliberately
+   kept so the plan still renders via the legacy price map); platform MRR went
+   $495 → $0, which is the truthful number since live Stripe collects nothing
+   from them. **When they actually start paying, send the live Care payment
+   link** — the webhook will attribute it and flip them off comped. Prior
+   values if this ever needs reversing: customer `cus_Uyfc4JEjRDccpL`, sub
+   `sub_1TyiHGJvRTpaT0Wrh64xsDlf`.
+
+### PRODUCTION IS ON LIVE STRIPE as of 2026-08-18
+
+Render's `STRIPE_SECRET_KEY` is now `sk_live_`, with the three tier price IDs,
+`STRIPE_PRICE_LOCAL`, and a real hosted webhook endpoint + its signing secret.
+
+**`STRIPE_PRICE_SEO` / `STRIPE_PRICE_CONTENT` need NOTHING done — leave them.**
+(This reverses an earlier instruction in this session to create live prices for
+them. That was wrong; see below.)
+
+**seo / content / chat are now `tier_only`** (changed 2026-08-18). Their $499 /
+$799 / $0 fields are retired amounts from the pre-tier à-la-carte model and are
+**not on the current pricing sheet** — SEO is a $1,200/mo tier and content comes
+with Growth at $2,500. While they sat at `status: 'available'`, restoring the
+marketplace put a 60%-off, off-sheet SEO price one click from being sold, and
+the locked-section screen quoted a superadmin "$499 / month · Add to plan" for
+something the sheet prices at $1,200. `priceId` is deliberately KEPT on all
+three so any legacy subscription item still resolves via `serviceForPriceId` —
+they just can't be sold at those prices. Chat additionally stopped rendering as
+"Coming soon" to clients, which it had been doing for a shipped, live product
+whenever `STRIPE_PRICE_CHAT` was unset; its real commercial line is the
+one-time Chatbot Setup fee, which is a per-deal line item, not a service price.
+
+Net effect: **Local Presence $250/mo is the only à-la-carte add-on**, matching
+the sheet exactly. `LockedSection` and the marketplace card both gate on
+`status === 'available'` (plus a real flat price, which also keeps Paid Ads out
+of a one-click "Add" it can't support). `setup-stripe-pricing` skips
+`tier_only` services so it can never mint off-sheet prices — it targets the
+three tiers plus Local Presence, nothing else.
+
+Verify in production: send a test webhook from the Stripe dashboard (expect
+200), and click "Copy payment link" for each tier in the production dashboard.
+
+Other notes:
+
+- Custom deals: assign tier → add line items → "Create custom Stripe
+  subscription" (invoice-billed, `send_invoice`); one-time items via "Invoice
+  one-time items" (idempotent per item). Payment links still cover vanilla
+  single-tier deals.
+- The chat-at-Care downgrade path has NOT been exercised live (no client is on
+  a chat-including tier). Test it deliberately on Spec-ID — assign Growth, drop
+  to Care, confirm the comp grant appears and the "live but unmanaged" notice
+  renders — before a real client ever downgrades.
+- The GEO bullet stays `built: false` — visibility still tracks OpenAI +
+  Anthropic only; packaging changed, coverage didn't.
 
 ## Offer-sheet gaps (from the 2026-07-21 PDF audit)
 

@@ -62,19 +62,21 @@ export interface DailyCount {
   resolved: number
 }
 
-// Day-by-day message counts for the trend chart. Zero-fills days with no
-// activity so the chart has no gaps.
-export async function getDailyMessageCounts(clientId: string, days = 14): Promise<DailyCount[]> {
+// Day-by-day CONVERSATION counts for the trend chart (chat_sessions, bucketed
+// by started_at — the chart is titled "Conversations", and the conversation is
+// the unit the plan sells; see the two-units note in lib/usage.ts). Zero-fills
+// days with no activity so the chart has no gaps.
+export async function getDailyConversationCounts(clientId: string, days = 14): Promise<DailyCount[]> {
   const now = new Date()
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1)))
 
   const { data, error } = await supabase
-    .from('message_logs')
-    .select('created_at, resolved')
+    .from('chat_sessions')
+    .select('started_at, outcome')
     .eq('client_id', clientId)
-    .gte('created_at', start.toISOString())
-    .order('created_at', { ascending: true })
-  if (error) console.error('[logs] getDailyMessageCounts error', error.message)
+    .gte('started_at', start.toISOString())
+    .order('started_at', { ascending: true })
+  if (error) console.error('[logs] getDailyConversationCounts error', error.message)
 
   const buckets = new Map<string, DailyCount>()
   for (let i = 0; i < days; i++) {
@@ -83,11 +85,11 @@ export async function getDailyMessageCounts(clientId: string, days = 14): Promis
     buckets.set(key, { date: key, count: 0, resolved: 0 })
   }
   for (const row of data ?? []) {
-    const key = (row.created_at as string).slice(0, 10)
+    const key = (row.started_at as string).slice(0, 10)
     const bucket = buckets.get(key)
     if (!bucket) continue
     bucket.count++
-    if (row.resolved) bucket.resolved++
+    if (row.outcome === 'resolved') bucket.resolved++
   }
   return Array.from(buckets.values())
 }
@@ -101,9 +103,16 @@ export async function getStats(clientId: string): Promise<DashboardStats> {
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const count = { count: 'exact' as const, head: true }
 
+  // Week tiles are labeled "Messages …" and stay message-denominated; the
+  // lifetime tiles are labeled (and sold) in CONVERSATIONS, so they count
+  // chat_sessions — counting message rows here showed "5 conversations" for a
+  // client whose 2 conversations happened to contain 5 messages. Questions
+  // answered = distinct conversations containing a resolved FAQ answer, and
+  // hours saved multiplies a per-conversation assumption, so both need the
+  // session unit too.
   const [
     messagesWeek, resolvedWeek, leadsWeek, escalations,
-    totalConversations, totalLeads, questionsAnswered, totalResolved
+    totalConversations, totalLeads, faqSessions, totalResolved
   ] = await Promise.all([
     supabase.from('message_logs').select('*', count)
       .eq('client_id', clientId).gte('created_at', weekAgo),
@@ -113,15 +122,16 @@ export async function getStats(clientId: string): Promise<DashboardStats> {
       .eq('client_id', clientId).gte('created_at', weekAgo),
     supabase.from('escalations').select('*', count)
       .eq('client_id', clientId).eq('status', 'open'),
-    supabase.from('message_logs').select('*', count)
+    supabase.from('chat_sessions').select('*', count)
       .eq('client_id', clientId),
     supabase.from('leads').select('*', count)
       .eq('client_id', clientId),
-    supabase.from('message_logs').select('*', count)
+    supabase.from('message_logs').select('session_id')
       .eq('client_id', clientId).eq('resolved', true).eq('intent', 'faq'),
-    supabase.from('message_logs').select('*', count)
-      .eq('client_id', clientId).eq('resolved', true)
+    supabase.from('chat_sessions').select('*', count)
+      .eq('client_id', clientId).eq('outcome', 'resolved')
   ])
+  const questionsAnsweredCount = new Set((faqSessions.data ?? []).map(r => r.session_id)).size
 
   const weekTotal = messagesWeek.count ?? 0
   return {
@@ -132,7 +142,7 @@ export async function getStats(clientId: string): Promise<DashboardStats> {
 
     totalConversations: totalConversations.count ?? 0,
     totalLeadsCaptured: totalLeads.count ?? 0,
-    questionsAnswered: questionsAnswered.count ?? 0,
+    questionsAnswered: questionsAnsweredCount,
     estimatedHoursSaved: Math.round(((totalResolved.count ?? 0) * ASSUMED_MINUTES_SAVED_PER_RESOLVED_CONVO) / 60 * 10) / 10
   }
 }

@@ -229,16 +229,60 @@ export interface TierFeature {
   text: string
   built: boolean
   section?: string
+  hostedOnly?: boolean // only shown when we host the client's site
+  chatOnly?: boolean   // only shown when the client actually has a chat assistant
 }
 
 export interface TierInfo {
   key: string
-  vertical: 'local' | 'b2b'
   name: string
   monthlyPriceCents: number
   includes: ServiceKey[]
   quotas: { pagesPerMonth: number; contentPiecesPerMonth: number }
   features: TierFeature[]
+}
+
+export type LineItemCadence = 'monthly' | 'one_time'
+
+export interface ClientLineItem {
+  id: string
+  clientId: string
+  label: string
+  description: string | null
+  amountCents: number
+  cadence: LineItemCadence
+  included: boolean
+  stripePriceId: string | null
+  sortOrder: number
+  createdAt: string
+}
+
+export interface LineItemInput {
+  label: string
+  description?: string | null
+  amountCents: number
+  cadence: LineItemCadence
+  included?: boolean
+  sortOrder?: number
+}
+
+export interface InfoSheetAddon {
+  key: ServiceKey
+  name: string
+  description: string
+  monthlyPriceCents: number
+  comped: boolean
+}
+
+export interface InfoSheet {
+  clientName: string
+  clientSlug: string
+  hosting: 'us' | 'client'
+  tier: Pick<TierInfo, 'key' | 'name' | 'monthlyPriceCents' | 'features'> | null
+  addons: InfoSheetAddon[]
+  lineItems: ClientLineItem[]
+  monthlyTotalCents: number
+  oneTimeTotalCents: number
 }
 
 export interface SubscriptionInfo {
@@ -981,6 +1025,32 @@ function analyticsQs(q: AnalyticsQuery): string {
   return s ? `?${s}` : ''
 }
 
+export interface JobRow {
+  id: string
+  jobType: string
+  label: string
+  cadence: string
+  enabled: boolean
+  lastRunAt: string | null
+  lastStatus: string | null
+  lastError: string | null
+  nextRunAt: string | null
+  implemented: boolean
+}
+
+export interface ClientJobs {
+  clientId: string
+  clientName: string
+  tierName: string | null
+  jobs: JobRow[]
+  missing: string[]
+}
+
+export interface JobRunResult {
+  status: 'ok' | 'partial' | 'failed'
+  detail?: string
+}
+
 export const api = {
   me: () => request<Identity>('/me'),
   reconcile: () => request<{ orgId: string | null }>('/reconcile', { method: 'POST' }),
@@ -1270,10 +1340,26 @@ export const api = {
       request<{ ok: boolean; entitlements: Entitlements }>(`/billing/${clientId}/services/comp`, {
         method: 'POST',
         body: JSON.stringify({ serviceKey, revoke })
-      })
+      }),
+    // Per-deal custom line items + the info sheet (all superadmin-only).
+    lineItems: (clientId: string) => request<ClientLineItem[]>(`/billing/${clientId}/line-items`),
+    createLineItem: (clientId: string, input: LineItemInput) =>
+      request<ClientLineItem>(`/billing/${clientId}/line-items`, { method: 'POST', body: JSON.stringify(input) }),
+    updateLineItem: (clientId: string, itemId: string, input: Partial<LineItemInput>) =>
+      request<ClientLineItem>(`/billing/${clientId}/line-items/${itemId}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    deleteLineItem: (clientId: string, itemId: string) =>
+      request<{ ok: boolean }>(`/billing/${clientId}/line-items/${itemId}`, { method: 'DELETE' }),
+    infoSheet: (clientId: string) => request<InfoSheet>(`/billing/${clientId}/info-sheet`),
+    createCustomDeal: (clientId: string) =>
+      request<{ ok: boolean }>(`/billing/${clientId}/custom-deal`, { method: 'POST' }),
+    invoiceOneTime: (clientId: string) =>
+      request<{ ok: boolean; billed: number; skipped: number }>(`/billing/${clientId}/one-time-invoice`, { method: 'POST' })
   },
   overview: {
     summary: () => request<OverviewSummary>('/overview/summary'),
+    jobs: () => request<ClientJobs[]>('/overview/jobs'),
+    runJob: (jobId: string) => request<JobRunResult>(`/overview/jobs/${jobId}/run`, { method: 'POST' }),
+    reconcileJobs: () => request<ClientJobs[]>('/overview/jobs/reconcile', { method: 'POST' }),
     clients: () => request<ClientRollup[]>('/overview/clients'),
     requests: () => request<ChangeRequestWithClient[]>('/overview/requests'),
     audits: () => request<SeoCrawl[]>('/overview/audits'),

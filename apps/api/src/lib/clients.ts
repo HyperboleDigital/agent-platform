@@ -17,6 +17,7 @@ interface ClientRow {
   widget_config: Client['widgetConfig']
   vertical: Client['vertical']
   tier_key: string | null
+  hosting: Client['hosting'] | null
   slug: string
   logo_path: string | null
   logo_content_type: string | null
@@ -36,6 +37,7 @@ async function fromRow(row: ClientRow): Promise<Client> {
     widgetConfig: row.widget_config ?? {},
     vertical: row.vertical ?? null,
     tierKey: row.tier_key ?? null,
+    hosting: row.hosting ?? 'us',
     slug: row.slug,
     logoPath: row.logo_path,
     logoContentType: row.logo_content_type,
@@ -56,6 +58,7 @@ function toRow(client: Partial<Client>): Partial<ClientRow> {
   if (client.widgetConfig !== undefined) row.widget_config = client.widgetConfig
   if (client.vertical !== undefined) row.vertical = client.vertical
   if (client.tierKey !== undefined) row.tier_key = client.tierKey
+  if (client.hosting !== undefined) row.hosting = client.hosting
   if (client.slug !== undefined) row.slug = client.slug
   if (client.logoPath !== undefined) row.logo_path = client.logoPath
   if (client.logoContentType !== undefined) row.logo_content_type = client.logoContentType

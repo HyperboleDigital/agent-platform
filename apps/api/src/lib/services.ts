@@ -10,8 +10,11 @@
 //     A coming_soon service still appears in the marketplace so clients can see
 //     what's on the roadmap, but has no (or a placeholder) price ID.
 //   'tier_only'   — not separately purchasable at any price; granted only by
-//     being on a pricing-sheet tier that includes it (see lib/tiers.ts). Has no
-//     Stripe price, so both the checkout and add-on paths refuse it.
+//     being on a pricing-sheet tier that includes it (see lib/tiers.ts). The
+//     checkout and add-on paths both refuse it, and the marketplace hides it.
+//     A tier_only service may still carry a `priceId`: legacy subscriptions
+//     from the retired à-la-carte era need it to keep resolving through
+//     serviceForPriceId. It just can't be SOLD at that price anymore.
 
 export type ServiceKey = 'seo' | 'content' | 'reviews' | 'social' | 'local' | 'chat' | 'ads'
 
@@ -38,24 +41,34 @@ export interface ServiceInfo {
 const CATALOG: ServiceInfo[] = [
   {
     key: 'chat',
-    // Included in the Growth tiers; otherwise an add-on whose standalone price
-    // is still TBD (STRIPE_PRICE_CHAT unset → coming_soon, i.e. "ask us"). Set
-    // the env price + flip status to 'available' to sell it standalone.
+    // Included in Growth. Never sold standalone as a monthly add-on — the
+    // chatbot's own commercial line is the ONE-TIME Chatbot Setup fee ($2,500,
+    // frequently waived on annual), which is a per-deal line item, not a
+    // recurring service price. Previously rendered as 'coming_soon' whenever
+    // STRIPE_PRICE_CHAT was unset, which told clients a shipped, live product
+    // was still on the roadmap.
     priceId: process.env.STRIPE_PRICE_CHAT ?? '',
     name: 'AI Chat Assistant',
     monthlyPriceCents: 0,
     description:
-      'A 24/7 AI assistant on your website that answers customer questions, captures leads, and books calls. Included on Growth plans; available as an add-on.',
-    status: process.env.STRIPE_PRICE_CHAT ? 'available' : 'coming_soon'
+      'A 24/7 AI assistant on your website that answers customer questions, captures leads, and books calls. Included on the Growth plan.',
+    status: 'tier_only'
   },
   {
+    // seo/content carry $499/$799 prices from the retired pre-tier à-la-carte
+    // model. Those amounts are NOT on the 2026-08-18 pricing sheet — SEO is a
+    // $1,200/mo TIER and content comes with Growth at $2,500. Leaving them
+    // 'available' put a 60%-off, off-sheet price one click away in the
+    // marketplace and on the locked-section screen. They're tier-granted only
+    // now; priceId is kept purely so any legacy subscription item still
+    // resolves via serviceForPriceId.
     key: 'seo',
     priceId: process.env.STRIPE_PRICE_SEO ?? '',
     name: 'SEO & AI Visibility',
     monthlyPriceCents: 49900,
     description:
       'Keyword rankings from Google Search Console, technical site audits, and tracking of how your brand shows up across the major AI assistants — ChatGPT, Claude, Gemini and the rest — when customers ask them for a business like yours.',
-    status: 'available'
+    status: 'tier_only'
   },
   {
     key: 'content',
@@ -64,16 +77,19 @@ const CATALOG: ServiceInfo[] = [
     monthlyPriceCents: 79900,
     description:
       'AI-drafted, keyword-targeted blog posts grounded in your business, reviewed by you and published straight to your site.',
-    status: 'available'
+    status: 'tier_only'
   },
   {
+    // A real purchasable add-on since the 2026-08-18 pricing restructure (was
+    // tier_only under the old six-tier catalog — no tier grants it anymore).
+    // Offered only to clients where local search matters.
     key: 'local',
-    priceId: '', // tier-granted only — never sold standalone
+    priceId: process.env.STRIPE_PRICE_LOCAL ?? '',
     name: 'Local Presence',
-    monthlyPriceCents: 0,
+    monthlyPriceCents: 25000,
     description:
-      'Google Business Profile activity and directory citations with NAP consistency tracking across 40+ listings.',
-    status: 'tier_only'
+      'Google Business Profile posts, directory citations with NAP consistency across 40+ listings, and map-pack rank tracking.',
+    status: process.env.STRIPE_PRICE_LOCAL ? 'available' : 'coming_soon'
   },
   {
     key: 'ads',

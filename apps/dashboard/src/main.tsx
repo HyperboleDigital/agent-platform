@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import Overview from './pages/Overview'
 import AuditTool from './pages/AuditTool'
 import Prospecting from './pages/Prospecting'
+import Jobs from './pages/Jobs'
 import ClientLayout from './pages/client/ClientLayout'
 import {
   ClientHome, LeadsSection, BillingSection, ConfigSection
@@ -21,6 +22,7 @@ import PaidAds from './pages/client/PaidAds'
 import Requests from './pages/client/Requests'
 import Reports from './pages/client/Reports'
 import Team from './pages/client/Team'
+import InfoSheet from './pages/client/InfoSheet'
 import SignInPage from './pages/SignInPage'
 import SignUpPage from './pages/SignUpPage'
 import { ProtectedLayout } from './ProtectedLayout'
@@ -49,6 +51,7 @@ const router = createBrowserRouter([
           { path: '/overview', element: <Overview /> },
           { path: '/audit-tool', element: <AuditTool /> },
           { path: '/prospecting', element: <Prospecting /> },
+          { path: '/jobs', element: <AdminOnly><Jobs /></AdminOnly> },
           {
             path: '/clients/:slug',
             element: <ClientLayout />,
@@ -66,6 +69,9 @@ const router = createBrowserRouter([
               { path: 'reports', element: <Reports /> },
               { path: 'team', element: <Team /> },
               { path: 'billing', element: <BillingSection /> },
+              // The per-deal commercial summary (tier + add-ons + custom line
+              // items) — the artifact that goes to the client, superadmin-only.
+              { path: 'info-sheet', element: <AdminOnly><InfoSheet /></AdminOnly> },
               { path: 'config', element: <ConfigSection /> }
             ]
           }

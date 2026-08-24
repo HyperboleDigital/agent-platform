@@ -6,9 +6,9 @@ import {
   Users, Plug, CreditCard, Mail, MessageSquare, MessageSquarePlus,
   CheckCircle2, XCircle, Undo2, Trash2, Layers, Clock, AlertTriangle, Link2, Bot, Lock, Upload, Building2
 } from 'lucide-react'
-import { normalizeDomain, isPublicHost, type LeadStatus, type Vertical } from '@agent-platform/shared'
+import { normalizeDomain, isPublicHost, type LeadStatus, type HostingOwner } from '@agent-platform/shared'
 import { api } from '@/lib/api'
-import type { ConnectorStatus, RequestStatus, TierInfo } from '@/lib/api'
+import type { ConnectorStatus, RequestStatus, TierInfo, TierFeature, ServiceKey, ClientLineItem, LineItemCadence } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { StatTile } from '@/components/stat-tile'
@@ -62,8 +62,11 @@ export function ClientHome() {
   // chat assistant doing.
   return (
     <div className="flex flex-col gap-6">
-      <PlanStatusCard clientId={id} />
-      <SiteHealthCard clientId={id} domain={client?.domain} />
+      <PlanStatusCard clientId={id} hosting={client?.hosting} />
+      {/* No Site Health on client-hosted sites — we can't act on uptime for a
+          site we don't host, and a red badge we can't fix is worse than
+          showing nothing. */}
+      {client?.hosting !== 'client' && <SiteHealthCard clientId={id} domain={client?.domain} />}
       <SiteBaselineCard clientId={id} domain={client?.domain} />
       <SeoVisibilitySummaryCard clientId={id} />
       <RequestsCard clientId={id} />
@@ -107,12 +110,36 @@ export function ClientHome() {
         ) : (
           <div className="flex flex-col gap-3">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-              <StatTile label="Messages this week" value={stats.messagesThisWeek} />
-              <StatTile label="Open escalations" value={stats.openEscalations} />
-              <StatTile label="Resolved rate" value={pct} />
-              <StatTile label="Conversations (lifetime)" value={stats.totalConversations} />
-              <StatTile label="Questions answered" value={stats.questionsAnswered} />
-              <StatTile label="Est. hours saved" value={`${stats.estimatedHoursSaved}h`} />
+              <StatTile
+                label="Messages this week"
+                value={stats.messagesThisWeek}
+                info="Individual visitor messages the assistant answered in the last 7 days. One conversation usually contains several messages, so this runs higher than the conversation count."
+              />
+              <StatTile
+                label="Open escalations"
+                value={stats.openEscalations}
+                info="Conversations handed off to a human that haven't been closed yet."
+              />
+              <StatTile
+                label="Resolved rate"
+                value={pct}
+                info="Share of this week's messages the assistant answered fully on its own, with no human handoff."
+              />
+              <StatTile
+                label="Conversations (lifetime)"
+                value={stats.totalConversations}
+                info="Total chat sessions since the assistant launched. One conversation is one visitor's session, however many messages it takes."
+              />
+              <StatTile
+                label="Questions answered"
+                value={stats.questionsAnswered}
+                info="Conversations where the assistant fully answered a visitor's question from your knowledge base."
+              />
+              <StatTile
+                label="Est. hours saved"
+                value={`${stats.estimatedHoursSaved}h`}
+                info="A rough estimate: about 6 minutes of staff time for each conversation the assistant resolved on its own. An approximation, not a measurement."
+              />
             </div>
             <ConversationsCard clientId={id} />
           </div>
@@ -172,7 +199,15 @@ function SeoVisibilitySummaryCard({ clientId }: { clientId: string }) {
 // normally only ever see the "Active" state here — this is the proof-of-life,
 // not the enforcement. Superadmin sees it too, including the inactive state,
 // since they can view a client's Home regardless of billing status.
-function PlanStatusCard({ clientId }: { clientId: string }) {
+// Tier bullets that don't apply to this client are hidden outright, not shown
+// as unavailable: hosting promises when the client hosts their own site
+// (clients.hosting = 'client'), and the assistant-stays-live bullet when
+// there's no assistant to keep live.
+function applicableFeatures(features: TierFeature[] | undefined, hosting: string | undefined, chatEntitled: boolean): TierFeature[] {
+  return (features ?? []).filter(f => (!f.hostedOnly || hosting !== 'client') && (!f.chatOnly || chatEntitled))
+}
+
+function PlanStatusCard({ clientId, hosting }: { clientId: string; hosting?: string }) {
   const { entitlements, isLoading } = useEntitlements(clientId)
   const { data: tiers } = useSWR('billing-tiers', api.billing.tiers)
   const { data: billing } = useSWR(['billing', clientId], () => api.billing.get(clientId))
@@ -189,7 +224,8 @@ function PlanStatusCard({ clientId }: { clientId: string }) {
   const tier = entitlements.active ? tiers?.find(t => t.key === entitlements.planKey) ?? null : null
   const priceLabel = tier ? `$${(tier.monthlyPriceCents / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}/mo` : null
   const renewsAt = billing?.subscription?.currentPeriodEnd
-  const included = tier?.features.filter(f => f.built).slice(0, 4) ?? []
+  const chatEntitled = entitlements.services.chat?.entitled ?? false
+  const included = applicableFeatures(tier?.features, hosting, chatEntitled).filter(f => f.built).slice(0, 4)
 
   return (
     <Card>
@@ -300,6 +336,7 @@ export function BillingSection() {
   return (
     <div className="flex flex-col gap-3">
       {client ? <TierCard clientId={clientId} client={client} /> : <Skeleton className="h-24 w-full" />}
+      {client && <LineItemsCard clientId={clientId} client={client} />}
       <BillingTab clientId={clientId} client={client} />
     </div>
   )
@@ -310,7 +347,9 @@ export function BillingSection() {
 // pick, no Stripe internals, no payment links.
 function ClientPlanView({ client }: { client: import('@agent-platform/shared').Client }) {
   const { data: tiers } = useSWR('tiers', () => api.billing.tiers())
+  const { entitlements } = useEntitlements(client.id)
   const assigned = tiers?.find(t => t.key === client.tierKey) ?? null
+  const chatEntitled = entitlements?.services.chat?.entitled ?? false
 
   if (!tiers) return <Skeleton className="h-24 w-full" />
 
@@ -345,7 +384,7 @@ function ClientPlanView({ client }: { client: import('@agent-platform/shared').C
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Included in your plan</p>
           <ul className="mt-2 flex flex-col gap-1.5">
-            {assigned.features.map(f => (
+            {applicableFeatures(assigned.features, client.hosting, chatEntitled).map(f => (
               <li key={f.text} className="flex items-start gap-2 text-sm">
                 <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
                 <span>{f.text}</span>
@@ -519,12 +558,16 @@ function InviteCard({ clientId, client }: { clientId: string; client: import('@a
   )
 }
 
+// 7 days, matching the Chat Assistant → Insights page's shortest range and the
+// "… this week" tiles directly above it. Home and Insights must agree on the
+// same day: a 14-day window here next to a 7-day one there invited exactly the
+// "why does Aug 20 say 3 in one place and 2 in the other?" question.
 function ConversationsCard({ clientId }: { clientId: string }) {
-  const { data, isLoading } = useSWR(['timeseries', clientId], () => api.clients.statsTimeseries(clientId, 14))
+  const { data, isLoading } = useSWR(['timeseries', clientId], () => api.clients.statsTimeseries(clientId, 7))
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Conversations — last 14 days</CardTitle>
+        <CardTitle>Conversations — last 7 days</CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
         {isLoading || !data ? <Skeleton className="h-56 w-full" /> : <ConversationsChart data={data} />}
@@ -832,24 +875,21 @@ function UsageCard({ clientId }: { clientId: string }) {
   )
 }
 
-// The finalized pricing-sheet tier (Local/B2B, Care/mid/top) — see
-// lib/tiers.ts on the API side. Separate from the legacy Starter/Pro Stripe
-// plan below: this is a plain field assignment (clients.vertical/tier_key),
-// not a checkout, since Owen hasn't wired real Stripe products for the sheet
-// yet. Shows the client exactly what their tier promises, distinguishing
-// bullets the dashboard actually delivers today from ones still on the
-// roadmap — so nobody reads "call tracking" in the feature list and assumes
-// it's live.
+// The pricing-sheet tier (one ladder: Care / SEO / Growth) — see lib/tiers.ts
+// on the API side. The tier is a STARTING TEMPLATE for a deal: per-client
+// customization happens through the custom line items below it. Shows the
+// client exactly what their tier promises, distinguishing bullets the
+// dashboard actually delivers today from ones still on the roadmap.
 function TierCard({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
   const { data: tiers } = useSWR('tiers', () => api.billing.tiers())
   const { data: me } = useSWR('me', api.me)
-  const [vertical, setVertical] = useState<Vertical | ''>(client.vertical ?? '')
+  const { entitlements } = useEntitlements(clientId)
   const [tierKey, setTierKey] = useState(client.tierKey ?? '')
   const [saving, setSaving] = useState(false)
   const [linking, setLinking] = useState(false)
 
   const assigned = tiers?.find(t => t.key === client.tierKey) ?? null
-  const optionsForVertical = tiers?.filter(t => t.vertical === vertical) ?? []
+  const chatEntitled = entitlements?.services.chat?.entitled ?? false
 
   async function copyPaymentLink() {
     if (!tierKey) return
@@ -868,7 +908,7 @@ function TierCard({ clientId, client }: { clientId: string; client: import('@age
   async function save() {
     setSaving(true)
     try {
-      await api.clients.upsert({ id: client.id, vertical: vertical || null, tierKey: tierKey || null })
+      await api.clients.upsert({ id: client.id, tierKey: tierKey || null })
       mutate(['client', clientId])
       toast.success('Tier updated', { icon: <CheckCircle2 className="h-4 w-4" /> })
     } catch (err) {
@@ -893,7 +933,6 @@ function TierCard({ clientId, client }: { clientId: string; client: import('@age
           <div>
             <div className="flex items-baseline gap-2">
               <span className="font-medium">{assigned.name}</span>
-              <span className="text-xs text-muted-foreground">({assigned.vertical === 'local' ? 'Local Services' : 'B2B'})</span>
               <span className="text-sm tabular-nums">${(assigned.monthlyPriceCents / 100).toFixed(0)}/mo</span>
             </div>
             {/*
@@ -905,7 +944,7 @@ function TierCard({ clientId, client }: { clientId: string; client: import('@age
             */}
             <p className="mt-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Included in your plan</p>
             <ul className="mt-2 flex flex-col gap-1.5">
-              {assigned.features.map(f => (
+              {applicableFeatures(assigned.features, client.hosting, chatEntitled).map(f => (
                 <li key={f.text} className="flex items-start gap-2 text-sm">
                   <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
                   <span>
@@ -940,27 +979,14 @@ function TierCard({ clientId, client }: { clientId: string; client: import('@age
         {me?.isSuperadmin && (
           <div className="flex flex-wrap items-end gap-2 border-t border-border pt-4">
             <div className="grid gap-1.5">
-              <Label>Vertical</Label>
-              <select
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                value={vertical}
-                onChange={e => { setVertical(e.target.value as Vertical | ''); setTierKey('') }}
-              >
-                <option value="">— none —</option>
-                <option value="local">Local Services</option>
-                <option value="b2b">B2B</option>
-              </select>
-            </div>
-            <div className="grid gap-1.5">
               <Label>Tier</Label>
               <select
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                 value={tierKey}
                 onChange={e => setTierKey(e.target.value)}
-                disabled={!vertical}
               >
                 <option value="">— none —</option>
-                {optionsForVertical.map((t: TierInfo) => (
+                {(tiers ?? []).map((t: TierInfo) => (
                   <option key={t.key} value={t.key}>{t.name} — ${(t.monthlyPriceCents / 100).toFixed(0)}/mo</option>
                 ))}
               </select>
@@ -973,8 +999,294 @@ function TierCard({ clientId, client }: { clientId: string; client: import('@age
         )}
         {me?.isSuperadmin && (
           <p className="text-xs text-muted-foreground">
+            Default post-launch path: <strong className="text-foreground">we host → Care</strong> (first month included in the build fee);{' '}
+            <strong className="text-foreground">they host → chatbot retainer</strong> (on client-owned platforms most of Care is redundant).
+            This client: {client.hosting === 'client' ? 'client-hosted' : 'hosted by us'} — set under Config.
+          </p>
+        )}
+        {me?.isSuperadmin && (
+          <p className="text-xs text-muted-foreground">
             <strong className="text-foreground">Save tier</strong> sets the label only. <strong className="text-foreground">Copy payment link</strong> gives you a Stripe checkout link for the selected tier — send it to the client, and when they pay, their plan and entitlements switch to match automatically.
           </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Add-on service marketplace on the billing tab (restored 2026-08-18 — à la
+// carte add-ons are a deliberate offering again now that Local Presence is
+// purchasable). Renders ONLY status 'available' services: the reason this card
+// was removed in July was that it showed coming_soon services with a working
+// Comp button. For comped base plans (no card on file) Stripe add-ons can't be
+// charged, so we show the superadmin comp toggle instead.
+function ServicesCard({ clientId, comped }: { clientId: string; comped: boolean }) {
+  const { data: services } = useSWR('services', api.billing.services)
+  const { data: me } = useSWR('me', api.me)
+  const { entitlements, mutate: mutateEntitlements } = useEntitlements(clientId)
+  const [busy, setBusy] = useState<ServiceKey | null>(null)
+
+  // Only services that are genuinely purchasable at a flat monthly price. The
+  // status check keeps out coming_soon and tier_only (SEO/Content/Chat come
+  // with the tier, at tier prices — never à la carte). The price check keeps
+  // out Paid Ads, which is 'available' but whose fee is "greater of a floor or
+  // % of spend" — that can't be bought with a one-click Add, and its billing
+  // is still deferred anyway (see TODO.md).
+  const available = (services ?? []).filter(s => s.status === 'available' && s.monthlyPriceCents > 0)
+  if (!services) return <Skeleton className="h-24 w-full" />
+  if (available.length === 0) return null
+
+  async function toggleAddon(key: ServiceKey, entitled: boolean) {
+    setBusy(key)
+    try {
+      await api.billing.addon(clientId, key, entitled ? 'remove' : 'add')
+      await mutateEntitlements()
+      toast.success(entitled ? 'Service removed' : 'Service added')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update service')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function toggleComp(key: ServiceKey, entitled: boolean) {
+    setBusy(key)
+    try {
+      await api.billing.compService(clientId, key, entitled)
+      await mutateEntitlements()
+      toast.success(entitled ? 'Service grant revoked' : 'Service comped')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update grant')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Add-on services</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-2 pt-0">
+        {available.map(svc => {
+          const ent = entitlements?.services[svc.key]
+          const entitled = ent?.entitled ?? false
+          const isBusy = busy === svc.key
+          return (
+            <div key={svc.key} className="flex items-start justify-between gap-4 rounded-md border border-border p-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{svc.name}</span>
+                  {entitled && (
+                    <Badge variant="success">
+                      <StatusDot variant="success" />
+                      {ent?.source === 'comp' ? 'Comped' : ent?.source === 'tier' ? 'In plan' : 'Active'}
+                    </Badge>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{svc.description}</p>
+                {svc.monthlyPriceCents > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    ${(svc.monthlyPriceCents / 100).toFixed(0)}/mo
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                {/* Comped base plans can't run Stripe add-ons; superadmin comps the service instead. */}
+                {!comped && ent?.source !== 'tier' && (
+                  <Button
+                    variant={entitled ? 'outline' : 'default'}
+                    size="sm"
+                    disabled={isBusy}
+                    onClick={() => toggleAddon(svc.key, entitled)}
+                  >
+                    {isBusy ? '…' : entitled ? 'Remove' : 'Add'}
+                  </Button>
+                )}
+                {me?.isSuperadmin && (comped || ent?.source === 'comp') && (
+                  <Button
+                    variant={entitled ? 'outline' : 'secondary'}
+                    size="sm"
+                    disabled={isBusy}
+                    onClick={() => toggleComp(svc.key, entitled)}
+                  >
+                    {isBusy ? '…' : entitled ? 'Revoke comp' : 'Comp'}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Per-deal custom line items — the customization layer on top of the tier
+// template (superadmin only; BillingSection already gates this whole branch).
+// Billing/presentation only: adding a line item never grants feature access —
+// that stays the Comp path in the services card above.
+function LineItemsCard({ clientId, client }: { clientId: string; client: import('@agent-platform/shared').Client }) {
+  const key = ['line-items', clientId]
+  const { data: items } = useSWR(key, () => api.billing.lineItems(clientId))
+  const confirm = useConfirm()
+  const [label, setLabel] = useState('')
+  const [amount, setAmount] = useState('')
+  const [cadence, setCadence] = useState<LineItemCadence>('monthly')
+  const [included, setIncluded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [dealBusy, setDealBusy] = useState<'sub' | 'invoice' | null>(null)
+
+  const amountCents = Math.round((Number(amount) || 0) * 100)
+
+  async function add() {
+    if (!label.trim() || amountCents <= 0) return
+    setBusy(true)
+    try {
+      await api.billing.createLineItem(clientId, { label: label.trim(), amountCents, cadence, included, sortOrder: items?.length ?? 0 })
+      mutate(key)
+      setLabel(''); setAmount(''); setIncluded(false)
+      toast.success('Line item added')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add line item')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function toggleIncluded(item: ClientLineItem) {
+    try {
+      await api.billing.updateLineItem(clientId, item.id, { included: !item.included })
+      mutate(key)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update line item')
+    }
+  }
+
+  async function remove(item: ClientLineItem) {
+    if (!(await confirm(`Remove "${item.label}" from this client's deal?`))) return
+    try {
+      await api.billing.deleteLineItem(clientId, item.id)
+      mutate(key)
+      toast.success('Line item removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove line item')
+    }
+  }
+
+  async function createDeal() {
+    if (!(await confirm('Create a Stripe subscription for this deal (tier + monthly line items, billed by invoice)? Use this only for customized deals — vanilla tiers should use the payment link.'))) return
+    setDealBusy('sub')
+    try {
+      await api.billing.createCustomDeal(clientId)
+      mutate(['billing', clientId])
+      toast.success('Custom deal subscription created — Stripe will invoice the client')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create subscription')
+    } finally {
+      setDealBusy(null)
+    }
+  }
+
+  async function invoiceOneTime() {
+    if (!(await confirm('Invoice all unbilled one-time items now? Items already billed are skipped.'))) return
+    setDealBusy('invoice')
+    try {
+      const res = await api.billing.invoiceOneTime(clientId)
+      toast.success(`Invoiced ${res.billed} item${res.billed === 1 ? '' : 's'}${res.skipped ? ` (${res.skipped} already billed)` : ''}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create invoice')
+    } finally {
+      setDealBusy(null)
+    }
+  }
+
+  const monthlyExtra = (items ?? []).filter(i => i.cadence === 'monthly' && !i.included).reduce((s, i) => s + i.amountCents, 0)
+  const oneTimeTotal = (items ?? []).filter(i => i.cadence === 'one_time' && !i.included).reduce((s, i) => s + i.amountCents, 0)
+  const hasOneTime = (items ?? []).some(i => i.cadence === 'one_time' && !i.included)
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Custom line items <span className="text-xs font-normal text-muted-foreground">(this client&apos;s deal)</span></CardTitle>
+        <Link to={`/clients/${client.slug}/info-sheet`} className="text-sm text-primary hover:underline">View info sheet</Link>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 pt-0">
+        <p className="text-xs text-muted-foreground">
+          The tier above is the starting template; anything added, re-priced, or comped for this specific deal goes here.
+          Line items are billing only — to grant access to a feature, use Comp on the service itself.
+        </p>
+        {items === undefined ? (
+          <Skeleton className="h-16 w-full" />
+        ) : items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No custom line items — this client is on the vanilla tier.</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {items.map(item => (
+              <div key={item.id} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                <div className="min-w-0">
+                  <span className={`text-sm font-medium ${item.included ? 'text-muted-foreground' : ''}`}>{item.label}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{item.cadence === 'monthly' ? 'monthly' : 'one-time'}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className={`text-sm tabular-nums ${item.included ? 'line-through text-muted-foreground' : ''}`}>
+                    ${(item.amountCents / 100).toLocaleString()}
+                  </span>
+                  {item.included && <Badge variant="secondary">Included</Badge>}
+                  <Button variant="ghost" size="sm" title={item.included ? 'Charge for this item' : 'Mark as included ($0, kept on the sheet)'} onClick={() => toggleIncluded(item)}>
+                    {item.included ? <Undo2 className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  </Button>
+                  <Button variant="ghost" size="sm" title="Remove" onClick={() => remove(item)}>
+                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <p className="text-xs tabular-nums text-muted-foreground">
+              +${(monthlyExtra / 100).toLocaleString()}/mo on top of the tier
+              {oneTimeTotal > 0 && <> · ${(oneTimeTotal / 100).toLocaleString()} one-time</>}
+            </p>
+          </div>
+        )}
+        <div className="flex flex-wrap items-end gap-2 border-t border-border pt-3">
+          <div className="grid flex-1 gap-1.5" style={{ minWidth: '10rem' }}>
+            <Label>Label</Label>
+            <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Website build" />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>Amount ($)</Label>
+            <Input value={amount} onChange={e => setAmount(e.target.value)} placeholder="250" className="w-24" inputMode="decimal" />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>Cadence</Label>
+            <select
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              value={cadence}
+              onChange={e => setCadence(e.target.value as LineItemCadence)}
+            >
+              <option value="monthly">Monthly</option>
+              <option value="one_time">One-time</option>
+            </select>
+          </div>
+          <label className="flex h-9 items-center gap-1.5 text-sm">
+            <input type="checkbox" checked={included} onChange={e => setIncluded(e.target.checked)} />
+            Included ($0)
+          </label>
+          <Button size="sm" onClick={add} disabled={busy || !label.trim() || amountCents <= 0}>
+            {busy ? 'Adding…' : 'Add'}
+          </Button>
+        </div>
+        {(items?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={createDeal} disabled={dealBusy !== null}>
+              {dealBusy === 'sub' ? 'Creating…' : 'Create custom Stripe subscription'}
+            </Button>
+            {hasOneTime && (
+              <Button size="sm" variant="outline" onClick={invoiceOneTime} disabled={dealBusy !== null}>
+                {dealBusy === 'invoice' ? 'Invoicing…' : 'Invoice one-time items'}
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>
@@ -993,6 +1305,10 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
   const { data: allSubs, mutate: mutateSubs } = useSWR(
     me?.isSuperadmin ? ['client-subs', clientId] : null,
     () => api.billing.subscriptions(clientId)
+  )
+  const { data: lineItems } = useSWR(
+    me?.isSuperadmin ? ['line-items', clientId] : null,
+    () => api.billing.lineItems(clientId)
   )
   const staleSubs = (allSubs ?? []).filter(s => !s.isTracked)
   const [openingPortal, setOpeningPortal] = useState(false)
@@ -1041,11 +1357,19 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
   const totalCents = comped ? 0 : (data?.plan?.monthlyPriceCents ?? 0) + addonCents
 
   // The pricing-sheet tier (above) is a plain label, not a Stripe object — see
-  // TierCard's comment for why. Flag it for superadmin when it disagrees with
-  // what Stripe is actually charging, so a stale/wrong label gets caught here
-  // instead of surfacing as "the numbers don't match" confusion downstream.
+  // TierCard's comment for why. Flag it for superadmin when the DEAL (tier +
+  // add-ons + monthly line items) disagrees with what Stripe is actually
+  // charging, so a stale/wrong label gets caught here instead of surfacing as
+  // "the numbers don't match" confusion downstream. Stripe's side comes from
+  // the tracked sub's summed items (a custom deal carries inline prices the
+  // catalog doesn't know about), falling back to the catalog-derived total.
   const assignedTier = tiers?.find(t => t.key === client?.tierKey) ?? null
-  const tierMismatch = me?.isSuperadmin && isActive && !comped && assignedTier && assignedTier.monthlyPriceCents !== totalCents
+  const lineItemMonthlyCents = (lineItems ?? [])
+    .filter(i => i.cadence === 'monthly' && !i.included)
+    .reduce((s, i) => s + i.amountCents, 0)
+  const expectedCents = (assignedTier?.monthlyPriceCents ?? 0) + addonCents + lineItemMonthlyCents
+  const stripeCents = allSubs?.find(s => s.isTracked)?.amountCents ?? totalCents
+  const tierMismatch = me?.isSuperadmin && isActive && !comped && assignedTier && expectedCents !== stripeCents
 
   return (
     <div className="grid gap-3">
@@ -1084,10 +1408,10 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
           <CardContent className="flex items-start gap-3 pt-5 text-sm">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div>
-              <span className="font-medium">Pricing-sheet tier doesn&apos;t match what Stripe is billing.</span>{' '}
+              <span className="font-medium">The deal doesn&apos;t match what Stripe is billing.</span>{' '}
               <span className="text-muted-foreground">
-                Tier says {assignedTier.name} (${(assignedTier.monthlyPriceCents / 100).toFixed(0)}/mo), Stripe is charging ${(totalCents / 100).toFixed(0)}/mo.
-                Send the client the tier&apos;s payment link (above) to move them onto it, or fix whichever is wrong.
+                Tier + add-ons + line items say ${(expectedCents / 100).toFixed(0)}/mo, Stripe is charging ${((stripeCents ?? 0) / 100).toFixed(0)}/mo.
+                Send the client the tier&apos;s payment link, recreate the custom subscription, or fix whichever side is wrong.
               </span>
             </div>
           </CardContent>
@@ -1150,6 +1474,7 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
         </Card>
       )}
 
+      {isActive && <ServicesCard clientId={clientId} comped={comped} />}
       {isActive && <UsageCard clientId={clientId} />}
     </div>
   )
@@ -1237,6 +1562,7 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
   const [name, setName] = useState(client.name)
   const [slug, setSlug] = useState(client.slug)
   const [domain, setDomain] = useState(client.domain ?? '')
+  const [hosting, setHosting] = useState<HostingOwner>(client.hosting ?? 'us')
   const [systemPromptExtra, setExtra] = useState(cfg.systemPromptExtra ?? '')
   const [escalationEmails, setEscalationEmails] = useState(splitEmails(cfg.escalationEmail))
   const [saving, setSaving] = useState(false)
@@ -1252,7 +1578,7 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
     try {
       const updated = await api.clients.upsert({
         id: client.id,
-        ...(me?.isSuperadmin ? { name, domain: normalizedDomain, slug } : {}),
+        ...(me?.isSuperadmin ? { name, domain: normalizedDomain, slug, hosting } : {}),
         agentConfig: { ...cfg, systemPromptExtra, escalationEmail: joinEmails(escalationEmails) }
       })
       mutate(['client', clientId])
@@ -1312,6 +1638,23 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
                 The client&apos;s live public website — this is the <span className="font-medium text-foreground">one</span> domain used everywhere across the platform: <span className="font-medium text-foreground">Site Health</span> checks, the <span className="font-medium text-foreground">SEO Audit</span> crawl target, and the Search Console default. Get this wrong and every one of those breaks with a confusing error instead of an obvious one.
               </p>
             )}
+          </div>
+        )}
+        {me?.isSuperadmin && (
+          <div className="grid gap-1.5">
+            <Label>Who hosts the website</Label>
+            <select
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              value={hosting}
+              onChange={e => setHosting(e.target.value as HostingOwner)}
+            >
+              <option value="us">We host (our build — default)</option>
+              <option value="client">Client owns the platform (e.g. their Squarespace)</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Drives what we promise: client-hosted sites don&apos;t get the hosting/uptime Care bullet or the Site Health card
+              (we can&apos;t act on uptime we don&apos;t control), and their default retainer is the chatbot rather than Care.
+            </p>
           </div>
         )}
         {/* Admin-only: how the agency configures the assistant's knowledge.

@@ -25,11 +25,18 @@ create table if not exists clients (
   -- everything in here is world-readable — no secrets. Empty {} renders the
   -- widget's built-in defaults.
   widget_config jsonb not null default '{}'::jsonb,
-  -- Finalized pricing-sheet tier assignment. No FK — the tier catalog is
-  -- code-defined in lib/tiers.ts (same pattern as billing.ts's PLANS), not a
-  -- DB table, since Owen is still iterating on the sheet.
+  -- Pricing-sheet tier assignment ('care' | 'seo' | 'growth'). No FK — the
+  -- tier catalog is code-defined in lib/tiers.ts (same pattern as
+  -- services.ts's CATALOG), not a DB table.
+  -- `vertical` is NO LONGER a pricing dimension (the Local/B2B tier split was
+  -- collapsed 2026-08-18) — kept only as a harmless segmentation tag.
   vertical      text check (vertical in ('local', 'b2b')),
-  tier_key      text
+  tier_key      text,
+  -- Who owns the platform the client's site runs on. 'us' = we host (default
+  -- post-launch path → Care retainer; hosting bullet + Site Health apply).
+  -- 'client' = client-owned infra (e.g. Squarespace) → default retainer is
+  -- the chatbot; hosting promises and Site Health are suppressed.
+  hosting       text check (hosting in ('us', 'client')) default 'us'
 );
 
 -- ── knowledge_base ───────────────────────────────────────────────────────────
@@ -283,6 +290,28 @@ create table if not exists service_grants (
   unique (client_id, service_key)
 );
 create index if not exists service_grants_client_idx on service_grants (client_id);
+
+-- ── client_line_items ────────────────────────────────────────────────────────
+-- Per-deal custom line items: a client's billing is a tier TEMPLATE plus these
+-- (add/remove/re-price/comp anything for a specific client). Billing and
+-- presentation ONLY — never an entitlement source; access grants stay in
+-- service_grants. See lib/line-items.ts.
+create table if not exists client_line_items (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references clients(id) on delete cascade,
+  label text not null,
+  description text,
+  amount_cents integer not null,
+  cadence text not null check (cadence in ('monthly', 'one_time')),
+  -- 'included' = shown on the info sheet at $0 as a deal sweetener.
+  -- Keep amount_cents at its real value and let this flag zero it at billing
+  -- time, so we can always see what we gave away.
+  included boolean not null default false,
+  stripe_price_id text,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists client_line_items_client_idx on client_line_items(client_id, sort_order);
 
 -- ── seo_audits ────────────────────────────────────────────────────────────────
 -- One row per PageSpeed Insights run against one URL (the `seo` add-on service).

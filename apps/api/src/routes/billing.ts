@@ -9,11 +9,14 @@ import {
   addServiceToSubscription, removeServiceFromSubscription, grantService, revokeService,
   getOrCreateTierPaymentLink, attributeCheckoutToClient,
   listClientSubscriptions, cancelClientSubscription,
-  computeAdsFee, reconcileAdsFee, getAdsFloorCents
+  computeAdsFee, reconcileAdsFee, getAdsFloorCents,
+  createCustomDealSubscription, invoiceOneTimeLineItems
 } from '../lib/billing'
 import { listServices, serviceForKey } from '../lib/services'
 import { getEntitlements } from '../lib/entitlements'
 import { listTiers, tierForKey } from '../lib/tiers'
+import { listLineItems, createLineItem, updateLineItem, deleteLineItem } from '../lib/line-items'
+import { getInfoSheet } from '../lib/info-sheet'
 
 export const billingRouter = Router()
 
@@ -21,8 +24,8 @@ const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5173'
 
 const SERVICE_KEYS = ['seo', 'content', 'reviews', 'social', 'local', 'chat', 'ads'] as const
 
-// The finalized pricing-sheet tier catalog (Local/B2B x Care/mid/top) — see
-// lib/tiers.ts. Hardcoded, not Stripe-backed yet.
+// The pricing-sheet tier catalog (one ladder: Care / SEO / Growth) — see
+// lib/tiers.ts.
 billingRouter.get('/tiers', (_req, res) => {
   res.json(listTiers())
 })
@@ -194,6 +197,113 @@ billingRouter.post('/:id/services/comp', async (req, res) => {
   } catch (err) {
     console.error('[billing] service comp error', err)
     res.status(500).json({ error: 'Failed to update service grant' })
+  }
+})
+
+// ── Per-client custom line items (superadmin) ────────────────────────────────
+// The per-deal customization layer on top of the tier template — billing and
+// presentation only, never entitlements (see lib/line-items.ts).
+const lineItemSchema = z.object({
+  label: z.string().min(1).max(200),
+  description: z.string().max(2000).nullish(),
+  amountCents: z.number().int().min(0).max(10_000_000),
+  cadence: z.enum(['monthly', 'one_time']),
+  included: z.boolean().optional(),
+  sortOrder: z.number().int().optional()
+})
+
+billingRouter.get('/:id/line-items', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    res.json(await listLineItems(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to load line items' })
+  }
+})
+
+billingRouter.post('/:id/line-items', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const parsed = lineItemSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  try {
+    res.json(await createLineItem(client.id, parsed.data))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create line item' })
+  }
+})
+
+billingRouter.patch('/:id/line-items/:itemId', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const parsed = lineItemSchema.partial().safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
+  try {
+    res.json(await updateLineItem(req.params.id, req.params.itemId, parsed.data))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update line item' })
+  }
+})
+
+billingRouter.delete('/:id/line-items/:itemId', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await deleteLineItem(req.params.id, req.params.itemId)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete line item' })
+  }
+})
+
+// The client's full commercial picture (tier + add-ons + line items + totals)
+// — feeds the superadmin Info Sheet view, the client-facing deal artifact.
+billingRouter.get('/:id/info-sheet', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    res.json(await getInfoSheet(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to build info sheet' })
+  }
+})
+
+// Creates the Stripe subscription for a customized deal (tier + monthly line
+// items, invoiced). Superadmin, explicit action — payment links stay the path
+// for vanilla single-tier deals.
+billingRouter.post('/:id/custom-deal', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  if (!client.tierKey) return res.status(400).json({ error: 'Assign a tier first — a custom deal is a tier plus line items' })
+  try {
+    await createCustomDealSubscription(client.id, client.name, client.tierKey)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[billing] custom-deal error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create custom deal subscription' })
+  }
+})
+
+// Bills the deal's one-time items (build fee, chatbot setup) as one one-off
+// invoice. Idempotent per line item.
+billingRouter.post('/:id/one-time-invoice', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+  try {
+    const result = await invoiceOneTimeLineItems(client.id, client.name)
+    res.json({ ok: true, billed: result.billed.length, skipped: result.skipped.length })
+  } catch (err) {
+    console.error('[billing] one-time-invoice error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create invoice' })
   }
 })
 

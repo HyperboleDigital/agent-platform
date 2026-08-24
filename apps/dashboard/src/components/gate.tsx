@@ -18,17 +18,27 @@ export function Gate({ service, children }: { service: ServiceKey; children: Rea
   return <>{children}</>
 }
 
-// For sections that are internal agency tooling rather than something the
-// client operates themselves (Content, where we draft and publish posts on
-// their behalf). The matching nav entry is hidden for clients too — this
-// guards the URL, since a hidden link is not access control.
+// For routes that are internal agency tooling rather than something the
+// client operates themselves — both client sections (Content, Info Sheet) and
+// top-level superadmin views (/jobs). The matching nav entries are hidden for
+// clients too — this guards the URL, since a hidden link is not access
+// control.
 //
 // Redirects rather than showing a "no access" wall: to a client this section
 // doesn't conceptually exist, so an error about it would only raise questions.
+//
+// NOTE: outside ClientLayout there is no outlet context at all —
+// useClientCtx() returns undefined, not a partial object — so everything
+// derived from it here must be optional or this crashes on top-level routes.
 export function AdminOnly({ children }: { children: ReactNode }) {
-  const { client } = useClientCtx()
+  const ctx = useClientCtx() as ReturnType<typeof useClientCtx> | undefined
   const { data: me, isLoading } = useSWR('me', api.me)
-  if ((isLoading && !me) || !client) return <Skeleton className="h-64 w-full" />
-  if (!me?.isSuperadmin) return <Navigate to={`/clients/${client.slug}`} replace />
-  return <>{children}</>
+  if (isLoading && !me) return <Skeleton className="h-64 w-full" />
+  if (me?.isSuperadmin) return <>{children}</>
+  // Not a superadmin: send them somewhere that exists for them. Inside a
+  // client section that's the client's own home — wait for the slug to
+  // resolve rather than redirecting blind; on a top-level route it's the
+  // app root.
+  if (ctx && !ctx.client) return <Skeleton className="h-64 w-full" />
+  return <Navigate to={ctx?.client ? `/clients/${ctx.client.slug}` : '/'} replace />
 }

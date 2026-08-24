@@ -7,6 +7,7 @@
     "start": "node dist/index.js",
     "backfill": "tsx src/scripts/backfill-embeddings.ts",
     "ads-token": "tsx src/scripts/google-ads-refresh-token.ts",
+    "setup-stripe-pricing": "tsx src/scripts/setup-stripe-pricing.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run"

@@ -38,12 +38,36 @@ function startOfUtcMonth(): string {
 // what an unknown count means for their specific cap — returning 0 here would
 // silently mean "no usage yet", which reads as "under every limit" and turns a
 // database blip into uncapped spend.
-async function countSince(sinceIso: string, clientId?: string): Promise<number | null> {
+//
+// TWO UNITS, deliberately:
+//
+// - countMessagesSince: message_logs rows. One row = one LLM call. This is the
+//   unit of SPEND, so it's what the global daily breaker counts.
+// - countConversationsSince: chat_sessions rows. One row = one conversation.
+//   This is the unit the pricing sheet SELLS ("conversations/month"), so it's
+//   what the per-client caps and the dashboard usage card count. Counting
+//   messages here double-charged multi-message chats: a client whose visitors
+//   had 2 conversations of 2 messages each showed "4 of 1,000" on Billing
+//   while the Assistant page truthfully said 2 conversations handled.
+async function countMessagesSince(sinceIso: string, clientId?: string): Promise<number | null> {
   let q = supabase.from('message_logs').select('*', { count: 'exact', head: true }).gte('created_at', sinceIso)
   if (clientId) q = q.eq('client_id', clientId)
   const { count, error } = await q
   if (error) {
     console.error('[usage] count error', error.message)
+    return null
+  }
+  return count ?? 0
+}
+
+async function countConversationsSince(sinceIso: string, clientId: string): Promise<number | null> {
+  const { count, error } = await supabase
+    .from('chat_sessions')
+    .select('*', { count: 'exact', head: true })
+    .eq('client_id', clientId)
+    .gte('started_at', sinceIso)
+  if (error) {
+    console.error('[usage] conversation count error', error.message)
     return null
   }
   return count ?? 0
@@ -57,9 +81,9 @@ export interface CapStatus {
 // Checked at the START of a chat request, before any LLM call.
 export async function checkChatCaps(clientId: string): Promise<CapStatus> {
   const [globalToday, clientToday, clientThisMonth, sub] = await Promise.all([
-    countSince(startOfUtcDay()),
-    countSince(startOfUtcDay(), clientId),
-    countSince(startOfUtcMonth(), clientId),
+    countMessagesSince(startOfUtcDay()), // spend unit: every message is an LLM call
+    countConversationsSince(startOfUtcDay(), clientId),
+    countConversationsSince(startOfUtcMonth(), clientId),
     getSubscription(clientId)
   ])
   const plan = sub ? planForSubscription(sub.stripePriceId) : null
@@ -95,7 +119,7 @@ export interface MonthlyUsage {
 
 export async function getMonthlyUsage(clientId: string): Promise<MonthlyUsage> {
   const [used, sub] = await Promise.all([
-    countSince(startOfUtcMonth(), clientId),
+    countConversationsSince(startOfUtcMonth(), clientId),
     getSubscription(clientId)
   ])
   const plan = sub ? planForSubscription(sub.stripePriceId) : null

@@ -1,7 +1,9 @@
 import Stripe from 'stripe'
 import { supabase } from './supabase'
 import { serviceForKey, adsFloorPriceId, type ServiceKey } from './services'
+import { listLineItems, type ClientLineItem } from './line-items'
 import { tierForKey, tierForPriceId } from './tiers'
+import { applyTierTransition } from './tier-transitions'
 
 // Pin the API version explicitly rather than inheriting the account's
 // dashboard-configured default, which may be older than what this SDK's
@@ -193,10 +195,14 @@ export async function listClientSubscriptions(clientId: string): Promise<ClientS
   return res.data
     .map(s => {
       const price = s.items.data[0]?.price
+      // Sum every item — a custom deal's subscription carries the tier plus
+      // per-deal line items, and showing only item 0's price would understate
+      // what it actually bills.
+      const totalCents = s.items.data.reduce((sum, i) => sum + (i.price?.unit_amount ?? 0) * (i.quantity ?? 1), 0)
       return {
         id: s.id,
         priceId: price?.id ?? null,
-        amountCents: price?.unit_amount ?? null,
+        amountCents: s.items.data.length ? totalCents : null,
         status: s.status,
         created: new Date(s.created * 1000).toISOString(),
         isTracked: s.id === tracked?.stripeSubscriptionId,
@@ -317,21 +323,28 @@ export async function syncSubscriptionFromStripe(subscription: Stripe.Subscripti
   if (error) console.error('[billing] failed to sync subscription', error.message)
 
   // If the base price is one of the pricing-sheet tiers, keep the client's
-  // tier_key/vertical in lockstep with what Stripe is actually billing — this
-  // is what stops the "Pricing-sheet tier vs Current plan" drift: once a client
-  // pays a tier's link, the label and the charge are the same object. Only
-  // while the subscription is active, so a canceled tier doesn't keep asserting
-  // the label.
+  // tier_key in lockstep with what Stripe is actually billing — this is what
+  // stops the "Pricing-sheet tier vs Current plan" drift: once a client pays a
+  // tier's link, the label and the charge are the same object. Only while the
+  // subscription is active, so a canceled tier doesn't keep asserting the
+  // label. (vertical is no longer touched — it stopped being a pricing
+  // dimension 2026-08-18.) A legacy six-tier price resolves to its
+  // consolidated tier, so an old subscription renewing quietly migrates the
+  // client's tier_key forward.
   const tier = tierForPriceId(baseItem?.price?.id)
   if (tier && ACTIVE_STATUSES.has(subscription.status)) {
-    const { error: tierErr } = await supabase
-      .from('clients')
-      .update({ tier_key: tier.key, vertical: tier.vertical })
-      .eq('id', clientId)
-    if (tierErr) console.error('[billing] failed to sync tier_key', tierErr.message)
+    await applyTierTransition(clientId, tier.key)
   }
 
   await syncSubscriptionItems(clientId, items)
+
+  // Billing changed -> the entitled deliverable set may have changed (add-on
+  // added/removed, subscription canceled, tier item swapped). Reconcile the
+  // client's scheduled jobs now. Dynamic import for the same cycle reason as
+  // in tier-transitions.ts.
+  const { reconcileClientJobs } = await import('./scheduled-jobs')
+  await reconcileClientJobs(clientId).catch(err =>
+    console.error('[billing] job reconcile after sync failed:', err instanceof Error ? err.message : err))
 }
 
 // Replaces our subscription_items mirror for a client with the exact set of
@@ -409,6 +422,124 @@ export async function removeServiceFromSubscription(clientId: string, serviceKey
 
   const fresh = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId)
   await syncSubscriptionFromStripe(fresh)
+}
+
+// ── Custom deals ─────────────────────────────────────────────────────────────
+// Payment links cover the vanilla "one tier, list price" case and must keep
+// working. But most deals are now customized (tier + per-client line items,
+// see lib/line-items.ts), and a payment link can't express that — so custom
+// deals get their subscription created server-side with multiple items,
+// using inline price_data for anything that isn't a catalog price.
+//
+// One shared Stripe Product backs every inline custom price — deliberately
+// NOT a Product per client (that sprawls badly) and not product_data on the
+// price (which mints a new Product per call, same sprawl).
+let customProductId: string | null = null
+
+async function getCustomLineItemProduct(): Promise<string> {
+  if (customProductId) return customProductId
+  const found = await stripe.products.search({ query: `metadata['kind']:'custom_line_item'`, limit: 1 })
+  if (found.data[0]) return (customProductId = found.data[0].id)
+  const created = await stripe.products.create({
+    name: 'Custom services (per-deal line items)',
+    metadata: { kind: 'custom_line_item' }
+  })
+  return (customProductId = created.id)
+}
+
+// Creates the Stripe subscription for a customized deal: the client's tier
+// price + every monthly, non-included custom line item. `included` items and
+// one_time items never become subscription items (one-time fees go through
+// invoiceOneTimeLineItems below).
+//
+// Billed via send_invoice rather than charge_automatically — a custom deal is
+// negotiated agency work and the customer usually has no card on file yet;
+// Stripe issues a hosted invoice the client pays, and renewals invoice the
+// same way. Refuses when a tracked subscription is already active, so this
+// can't silently double-bill next to an existing payment-link sub.
+export async function createCustomDealSubscription(clientId: string, clientName: string, tierKey: string): Promise<void> {
+  const tier = tierForKey(tierKey)
+  if (!tier) throw new Error(`Unknown tier: ${tierKey}`)
+  if (!tier.stripePriceId) throw new Error(`Tier "${tier.name}" has no Stripe price configured`)
+
+  const existing = await getSubscription(clientId)
+  if (existing && ACTIVE_STATUSES.has(existing.status) && existing.stripeSubscriptionId) {
+    throw new Error('This client already has an active subscription — cancel it first, then create the custom deal')
+  }
+
+  const lineItems = (await listLineItems(clientId)).filter(i => i.cadence === 'monthly' && !i.included)
+  const productId = lineItems.some(i => !i.stripePriceId) ? await getCustomLineItemProduct() : null
+
+  const items: Stripe.SubscriptionCreateParams.Item[] = [
+    { price: tier.stripePriceId, quantity: 1 },
+    ...lineItems.map(i =>
+      i.stripePriceId
+        ? { price: i.stripePriceId, quantity: 1 }
+        : {
+            price_data: {
+              currency: 'usd',
+              product: productId as string,
+              recurring: { interval: 'month' as const },
+              unit_amount: i.amountCents
+            },
+            quantity: 1,
+            metadata: { line_item_id: i.id, label: i.label }
+          }
+    )
+  ]
+
+  const customerId = await getOrCreateStripeCustomer(clientId, clientName)
+  const sub = await stripe.subscriptions.create({
+    customer: customerId,
+    items,
+    collection_method: 'send_invoice',
+    days_until_due: 14,
+    metadata: { client_id: clientId, tier_key: tier.key, custom_deal: 'true' }
+  })
+  await syncSubscriptionFromStripe(sub)
+}
+
+// Bills the deal's one-time items (build fee, chatbot setup, …) as invoice
+// items on ONE one-off Stripe invoice — never as subscription items.
+// Idempotent per line item: an item that already has an invoice item (matched
+// on metadata.line_item_id) is skipped, so re-running after a partial failure
+// can't double-bill. Superadmin explicit action, never automatic.
+export async function invoiceOneTimeLineItems(clientId: string, clientName: string): Promise<{ billed: ClientLineItem[]; skipped: ClientLineItem[] }> {
+  const oneTime = (await listLineItems(clientId)).filter(i => i.cadence === 'one_time' && !i.included)
+  if (oneTime.length === 0) return { billed: [], skipped: [] }
+
+  const customerId = await getOrCreateStripeCustomer(clientId, clientName)
+  const existing = await stripe.invoiceItems.list({ customer: customerId, limit: 100 })
+  const alreadyBilled = new Set(existing.data.map(i => i.metadata?.line_item_id).filter(Boolean))
+
+  const billed: ClientLineItem[] = []
+  const skipped: ClientLineItem[] = []
+  for (const item of oneTime) {
+    if (alreadyBilled.has(item.id)) { skipped.push(item); continue }
+    await stripe.invoiceItems.create({
+      customer: customerId,
+      amount: item.amountCents,
+      currency: 'usd',
+      description: item.label,
+      metadata: { kind: 'one_time_line_item', line_item_id: item.id, client_id: clientId }
+    })
+    billed.push(item)
+  }
+
+  if (billed.length > 0) {
+    // Collect the pending invoice items onto one one-off invoice and finalize
+    // it so it's payable immediately (hosted invoice URL) instead of floating
+    // until the next subscription invoice happens to sweep them up.
+    const invoice = await stripe.invoices.create({
+      customer: customerId,
+      collection_method: 'send_invoice',
+      days_until_due: 14,
+      pending_invoice_items_behavior: 'include',
+      metadata: { kind: 'one_time_line_items', client_id: clientId }
+    })
+    if (invoice.id) await stripe.invoices.finalizeInvoice(invoice.id)
+  }
+  return { billed, skipped }
 }
 
 // ── Paid Ads fee: "greater of a flat floor or a % of spend" ───────────────────
@@ -491,6 +622,9 @@ export async function grantService(clientId: string, serviceKey: ServiceKey, gra
     revoked_at: null
   }, { onConflict: 'client_id,service_key' })
   if (error) throw error
+  const { reconcileClientJobs } = await import('./scheduled-jobs')
+  await reconcileClientJobs(clientId).catch(err =>
+    console.error('[billing] job reconcile after grant failed:', err instanceof Error ? err.message : err))
 }
 
 // Soft-revokes a comped service grant.
@@ -501,4 +635,7 @@ export async function revokeService(clientId: string, serviceKey: ServiceKey): P
     .eq('client_id', clientId)
     .eq('service_key', serviceKey)
   if (error) throw error
+  const { reconcileClientJobs } = await import('./scheduled-jobs')
+  await reconcileClientJobs(clientId).catch(err =>
+    console.error('[billing] job reconcile after revoke failed:', err instanceof Error ? err.message : err))
 }

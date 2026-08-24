@@ -40,6 +40,9 @@ export interface MessageTelemetry {
 
 export type Vertical = 'local' | 'b2b'
 
+// Who hosts the client's website — see Client.hosting below.
+export type HostingOwner = 'us' | 'client'
+
 // Default knowledge-base retrieval confidence (top match cosine similarity)
 // below which the assistant admits it's unsure and offers a human instead of
 // answering. Shared so the orchestrator (which enforces it) and the analytics
@@ -81,8 +84,16 @@ export interface Client {
   clerkOrgId?: string | null   // Clerk Organization that owns this client (tenant boundary)
   portalConfig: PortalConfig
   widgetConfig: WidgetConfig   // public chat-widget appearance — no secrets
-  vertical: Vertical | null    // which pricing-sheet ladder this client is on
-  tierKey: string | null       // key into lib/tiers.ts's TIER catalog
+  // NO LONGER a pricing dimension (the Local/B2B tier split was collapsed
+  // 2026-08-18) — kept only as a harmless segmentation tag.
+  vertical: Vertical | null
+  tierKey: string | null       // key into lib/tiers.ts's tier catalog ('care' | 'seo' | 'growth')
+  // Who owns the platform the client's site runs on. 'us' (default) = we host
+  // → Care is the default post-launch retainer; the hosting/uptime tier bullet
+  // and Site Health card apply. 'client' = client-owned infra (e.g. their own
+  // Squarespace) → the default retainer is the chatbot, and hosting promises +
+  // Site Health are suppressed (we can't act on uptime we don't control).
+  hosting: HostingOwner
   // Clean dashboard URL identifier (e.g. "spec-id"), separate from Clerk's own
   // auto-generated org slug. Auto-assigned at creation, editable by a
   // superadmin. Used only for building /clients/:slug URLs — every internal
@@ -146,6 +157,13 @@ export interface AgentConfig {
   // outside these hours is one a human would likely have missed. Unset = the
   // analytics layer's default (Mon–Fri 09:00–17:00 in the given tz).
   businessHours?: BusinessHours
+  // Live-but-unmanaged: set when a client downgrades off a chat-including tier
+  // but keeps their previously-built assistant running (chat persistence at
+  // Care — see lib/tier-transitions.ts). The widget answers, conversations are
+  // logged, leads are captured; KB retraining, new document ingestion, the
+  // unanswered-questions review, and prompt changes are NOT included. Cleared
+  // automatically when they move back onto a chat-including tier.
+  chatUnmanaged?: boolean
 }
 
 export interface BusinessHours {
