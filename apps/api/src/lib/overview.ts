@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import { getAllClients } from './clients'
 import { planForSubscription, isActive, type SubscriptionRow } from './billing'
 import { serviceForPriceId } from './services'
+import { getMonthlyLineItemRevenueByClient } from './line-items'
 import { DEFAULT_MONTHLY_CAP } from './usage'
 
 interface SubRow {
@@ -71,14 +72,16 @@ function startOfUtcMonth(): string {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString()
 }
 
-// Per-client conversation counts for the current calendar month, in one
+// Per-client CONVERSATION counts for the current calendar month, in one
 // query — Supabase's JS client has no GROUP BY, so tally client-side the
-// same way usage.ts's countSince() does for the single-client case.
+// same way usage.ts does for the single-client case. chat_sessions, not
+// message_logs: the unit sold (and shown on the Billing card) is the
+// conversation — see the two-units note in lib/usage.ts.
 async function getMonthlyUsageByClient(): Promise<Map<string, number>> {
   const { data, error } = await supabase
-    .from('message_logs')
+    .from('chat_sessions')
     .select('client_id')
-    .gte('created_at', startOfUtcMonth())
+    .gte('started_at', startOfUtcMonth())
   if (error) console.error('[overview] failed to count monthly usage', error.message)
   const counts = new Map<string, number>()
   for (const row of data ?? []) {
@@ -109,10 +112,11 @@ export interface ClientRollup {
 export async function getClientRollups(): Promise<ClientRollup[]> {
   const clients = await getAllClients()
   const clientIds = clients.map(c => c.id)
-  const [subsByClient, usageByClient, addonRevenueByClient] = await Promise.all([
+  const [subsByClient, usageByClient, addonRevenueByClient, lineItemRevenueByClient] = await Promise.all([
     getSubscriptionsForClients(clientIds),
     getMonthlyUsageByClient(),
-    getAddonRevenueByClient(clientIds)
+    getAddonRevenueByClient(clientIds),
+    getMonthlyLineItemRevenueByClient(clientIds)
   ])
 
   return clients.map(c => {
@@ -120,7 +124,14 @@ export async function getClientRollups(): Promise<ClientRollup[]> {
     const plan = sub ? planForSubscription(sub.stripePriceId) : null
     const comped = isComped(sub)
     const billingActive = isActive(sub) && !comped
-    const mrrCents = billingActive ? (plan?.monthlyPriceCents ?? 0) + (addonRevenueByClient.get(c.id) ?? 0) : 0
+    // Tier price + purchased add-ons + monthly custom line items (included:
+    // true items and one_time items contribute nothing — the summing rule
+    // lives in lib/line-items.ts, shared with the info sheet). A custom deal's
+    // price_data items aren't in the services catalog, so they only count via
+    // the line-items table — no double count with addonRevenue.
+    const mrrCents = billingActive
+      ? (plan?.monthlyPriceCents ?? 0) + (addonRevenueByClient.get(c.id) ?? 0) + (lineItemRevenueByClient.get(c.id) ?? 0)
+      : 0
     return {
       clientId: c.id,
       slug: c.slug,

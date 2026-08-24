@@ -812,6 +812,16 @@ export default function Assistant() {
         <p className="text-sm text-muted-foreground">What your assistant does, how it's performing, and what it knows.</p>
       </div>
 
+      {/* Live-but-unmanaged (chat persistence at Care): the widget keeps
+          answering and capturing leads after a downgrade, but the managed work
+          stops. A quiet notice, deliberately not a nag banner. */}
+      {client?.agentConfig?.chatUnmanaged && (
+        <p className="text-xs text-muted-foreground">
+          Your assistant is live and answering with its current knowledge. Ongoing updates — retraining on new
+          documents, content refreshes, and the unanswered-questions review — are part of the Growth plan.
+        </p>
+      )}
+
       <AssistantCard />
 
       {/* Widget setup and Knowledge base are Hyperbole's side of the assistant —

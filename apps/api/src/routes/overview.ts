@@ -3,6 +3,7 @@ import { getIdentity } from '../lib/authz'
 import { getOverviewSummary, getClientRollups } from '../lib/overview'
 import { listOpenRequests, updateRequestStatus } from '../lib/change-requests'
 import { startAdhocCrawl, refreshAdhocCrawl, listAdhocCrawls, crawlConfigured } from '../lib/dataforseo'
+import { listJobsOverview, runJobNow, reconcileAllClients } from '../lib/scheduled-jobs'
 import { gmailConfigured, getPlatformAuthUrl, checkPlatformGmailStatus, disconnectPlatformGmail } from '../lib/gmail'
 
 export const overviewRouter = Router()
@@ -13,6 +14,36 @@ overviewRouter.use((req, res, next) => {
   const identity = getIdentity(req)
   if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
   next()
+})
+
+// ── Scheduled jobs (handoff #2 §1) ──────────────────────────────────────────
+// The operational backbone view: every client × every job they should have,
+// with last run/status/next run, plus `missing` warnings for anything their
+// entitlements promise that has no enabled job — the check that catches us
+// promising something we aren't delivering.
+overviewRouter.get('/jobs', async (_req, res) => {
+  try {
+    res.json(await listJobsOverview())
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to load jobs' })
+  }
+})
+
+overviewRouter.post('/jobs/:id/run', async (req, res) => {
+  try {
+    res.json(await runJobNow(req.params.id))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Job run failed' })
+  }
+})
+
+overviewRouter.post('/jobs/reconcile', async (_req, res) => {
+  try {
+    await reconcileAllClients()
+    res.json(await listJobsOverview())
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Reconcile failed' })
+  }
 })
 
 overviewRouter.get('/summary', async (_req, res) => {

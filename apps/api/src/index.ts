@@ -21,6 +21,7 @@ import { reconcileUserMembership } from './lib/clients'
 import { finalizePendingCrawls } from './lib/dataforseo'
 import { failOrphanedRuns } from './lib/prospect-generation-runs'
 import { runMonthlyReports, isReportWindow } from './lib/report-scheduler'
+import { runDueJobs, reconcileAllClients } from './lib/scheduled-jobs'
 import { runScheduledSiteChecks } from './lib/site-monitor'
 
 const app = express()
@@ -183,6 +184,47 @@ setInterval(async () => {
     siteChecking = false
   }
 }, SITE_CHECK_INTERVAL_MS).unref()
+
+// Scheduled-jobs dispatcher (handoff #2 §1): ONE poller for every per-client
+// recurring deliverable, handlers registered by job_type in
+// lib/scheduled-jobs.ts. Rows are auto-provisioned from entitlements by the
+// reconcile sweep below (and on every tier/add-on change) — this loop only
+// runs what's due. Each due row is CAS-claimed on its next_run_at, so a second
+// API instance polling concurrently cannot double-run a job.
+const JOBS_DISPATCH_INTERVAL_MS = 60 * 1000
+let dispatching = false
+setInterval(async () => {
+  if (dispatching) return
+  dispatching = true
+  try {
+    await runDueJobs()
+  } catch (err) {
+    console.error('[jobs] dispatch error', err instanceof Error ? err.message : err)
+  } finally {
+    dispatching = false
+  }
+}, JOBS_DISPATCH_INTERVAL_MS).unref()
+
+// Drift sweep: entitlement changes reconcile inline (see applyTierTransition
+// and the add-on paths in lib/billing.ts); this catches anything that slipped
+// past — a webhook that failed mid-way, rows edited by hand, a new job type
+// shipped in a deploy. Also runs once at startup so a fresh deploy provisions
+// existing clients without waiting an hour.
+const JOBS_RECONCILE_INTERVAL_MS = 60 * 60 * 1000
+let reconciling = false
+async function reconcileSweep() {
+  if (reconciling) return
+  reconciling = true
+  try {
+    await reconcileAllClients()
+  } catch (err) {
+    console.error('[jobs] reconcile error', err instanceof Error ? err.message : err)
+  } finally {
+    reconciling = false
+  }
+}
+setInterval(reconcileSweep, JOBS_RECONCILE_INTERVAL_MS).unref()
+void reconcileSweep()
 
 const FINALIZE_INTERVAL_MS = 20_000
 let finalizing = false

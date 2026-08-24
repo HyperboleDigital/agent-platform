@@ -28,6 +28,12 @@ export function LockedSection({ clientId, serviceKey }: { clientId: string; serv
 
   const service = services?.find(s => s.key === serviceKey)
   const comingSoon = service?.status === 'coming_soon'
+  // Only an 'available' service can be bought as a monthly add-on. A
+  // 'tier_only' service (SEO, Content, Chat) is granted by being on the tier
+  // that includes it — showing its legacy à-la-carte price here would quote a
+  // number that isn't on the pricing sheet, and "Add to plan" would fail
+  // server-side anyway (addServiceToSubscription refuses non-available).
+  const purchasable = service?.status === 'available'
 
   async function purchase() {
     setBusy(true)
@@ -75,7 +81,7 @@ export function LockedSection({ clientId, serviceKey }: { clientId: string; serv
               real billing action. Clients don't see it — pricing a service they
               don't have yet is the conversation the contact CTA starts, not a
               number to weigh alone on a locked screen. */}
-          {service && !comingSoon && me?.isSuperadmin && (
+          {service && purchasable && me?.isSuperadmin && (
             <p className="text-sm">
               <span className="text-lg font-semibold tabular-nums">{formatCents(service.monthlyPriceCents)}</span>
               <span className="text-muted-foreground"> / month</span>
@@ -97,11 +103,16 @@ export function LockedSection({ clientId, serviceKey }: { clientId: string; serv
           {/* Superadmin provisioning — the actions that actually change billing. */}
           {me?.isSuperadmin && (
             <div className="flex w-full flex-col gap-2">
-              {!comingSoon && (
+              {purchasable && (
                 <Button onClick={purchase} disabled={busy} className="w-full">
                   <Sparkles className="h-4 w-4" />
                   {busy ? 'Adding…' : 'Add to plan'}
                 </Button>
+              )}
+              {service?.status === 'tier_only' && (
+                <p className="text-xs text-muted-foreground">
+                  Included with the plan that covers it — move this client onto that tier on the Billing tab, or comp it below.
+                </p>
               )}
               <Button onClick={comp} disabled={busy} variant="outline" size="sm" className="w-full">
                 Comp this service

@@ -2,12 +2,13 @@ import { Router } from 'express'
 import type { Request } from 'express'
 import multer from 'multer'
 import { getAllClients, upsertClient, getClientById, getClientBySlug, inviteClientUser, deleteClient } from '../lib/clients'
+import { applyTierTransition } from '../lib/tier-transitions'
 import { uploadOrgLogo, deleteOrgLogo, ALLOWED_LOGO_TYPES as ALLOWED_ORG_LOGO_TYPES, MAX_LOGO_BYTES as MAX_ORG_LOGO_BYTES } from '../lib/org-logo'
 import { addDocument, listDocuments, deleteDocument, updateDocumentDescription } from '../tools/knowledge-base'
 import { extractText, isSupportedFile, SUPPORTED_EXTENSIONS } from '../lib/file-extract'
 import { uploadLogo, deleteLogo, ALLOWED_LOGO_TYPES, MAX_LOGO_BYTES } from '../lib/widget-logo'
 import { getLeads, updateLeadStatus, deleteLead } from '../tools/crm'
-import { getStats, getDailyMessageCounts } from '../lib/logs'
+import { getStats, getDailyConversationCounts } from '../lib/logs'
 import { getConnectorStatus } from '../lib/connectors'
 import { gmailConfigured, getAuthUrl, disconnectGmail } from '../lib/gmail'
 import { getMonthlyUsage } from '../lib/usage'
@@ -102,6 +103,7 @@ clientsRouter.post('/', async (req, res) => {
       delete req.body.slug       // and so is repointing their dashboard URL
       delete req.body.vertical   // pricing-sheet tier assignment is a superadmin (billing) action
       delete req.body.tierKey
+      delete req.body.hosting    // who hosts the site is a superadmin call, not a client toggle
       // Widget appearance/behaviour is configured by Hyperbole, not the client
       // — the Widget setup tab is superadmin-only in the dashboard, and this is
       // what actually enforces it. agentConfig is deliberately NOT stripped
@@ -123,7 +125,8 @@ clientsRouter.post('/', async (req, res) => {
         req.body.agentConfig = {
           ...req.body.agentConfig,
           confidenceThreshold: stored?.confidenceThreshold,
-          businessHours: stored?.businessHours
+          businessHours: stored?.businessHours,
+          chatUnmanaged: stored?.chatUnmanaged
         }
       }
     }
@@ -131,6 +134,21 @@ clientsRouter.post('/', async (req, res) => {
     return res.status(403).json({ error: 'Only an admin can create a new client' })
   }
   try {
+    // Tier changes go through applyTierTransition — the same choke point the
+    // Stripe webhook uses — so the downgrade side-effects (chat persistence at
+    // Care) fire regardless of which path changed the tier. It writes tier_key
+    // itself, so strip it from the generic upsert payload.
+    if (isUpdate && req.body.tierKey !== undefined) {
+      await applyTierTransition(req.body.id, req.body.tierKey)
+      delete req.body.tierKey
+      // The transition may have just set/cleared chatUnmanaged on the stored
+      // agent_config — if this same request also writes agentConfig, re-read
+      // so the upsert below doesn't clobber it with a stale copy.
+      if (req.body.agentConfig) {
+        const fresh = (await getClientById(req.body.id))?.agentConfig
+        req.body.agentConfig = { ...req.body.agentConfig, chatUnmanaged: fresh?.chatUnmanaged }
+      }
+    }
     const client = await upsertClient(req.body)
     res.json(client)
   } catch (err) {
@@ -257,7 +275,7 @@ clientsRouter.get('/:id/stats/timeseries', async (req, res) => {
   const identity = identityOf(req)
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
   const days = Math.min(90, Math.max(1, Number(req.query.days) || 14))
-  res.json(await getDailyMessageCounts(req.params.id, days))
+  res.json(await getDailyConversationCounts(req.params.id, days))
 })
 
 // Conversations used this calendar month vs. the client's plan cap

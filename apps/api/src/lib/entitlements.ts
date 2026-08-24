@@ -14,6 +14,11 @@ import { tierForKey } from './tiers'
 //
 // This is the single source of truth for both API route guards (assertEntitled)
 // and the dashboard's locked-section rendering. Never trust the client.
+//
+// There is deliberately NO fourth source: per-client custom line items
+// (client_line_items, lib/line-items.ts) are billing/presentation only and
+// must never be read here. If a custom deal grants access to something, that
+// grant goes through the comp path above.
 
 export interface ServiceEntitlement {
   entitled: boolean

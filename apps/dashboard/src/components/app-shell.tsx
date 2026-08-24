@@ -6,8 +6,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Users, Sparkles, LayoutDashboard, Search, Bot,
   MessageSquarePlus, FileBarChart, CreditCard, Settings, Lock, Building2, MapPin, Target, Megaphone, Users2,
-  Menu, X
-} from 'lucide-react'
+  Menu, X, ListChecks } from 'lucide-react'
 import { UserButton } from '@clerk/react'
 import { dark } from '@clerk/themes'
 import { api, checkHealth, type ServiceKey } from '@/lib/api'
@@ -24,15 +23,17 @@ const SUPERADMIN_TOP_NAV = [
   { label: 'Overview', to: '/overview', icon: LayoutDashboard },
   { label: 'Audit Tool', to: '/audit-tool', icon: Search },
   { label: 'Prospecting', to: '/prospecting', icon: Target },
+  { label: 'Jobs', to: '/jobs', icon: ListChecks },
 ]
 
 // Per-client sections. `to` is relative to /clients/:id ('' = the index/home).
-// `serviceKey` marks sections gated behind a service. A gated section a client
-// isn't entitled to is shown with a lock icon *only if it's something they can
-// actually add themselves* (status 'available') — that lock is a working
-// upsell. A section granted ONLY by tier ('tier_only', e.g. Local Presence) is
-// hidden entirely when not entitled: a locked, un-buyable item is a dead end
-// that just confuses (see ClientNav's `hidden`).
+// `serviceKey` marks sections gated behind a service. For CLIENTS the rule is
+// absolute and enforced in one place (ClientNav below): a service section
+// renders only when the client is entitled to it. No teaser states, no locked
+// items with upgrade prompts — an unpurchased service simply doesn't exist in
+// their nav. (The upsell surface is the report + the contact CTA, not a dead
+// padlock.) Superadmins see every section for every client; a lock glyph marks
+// the ones this client isn't entitled to, as an at-a-glance entitlement map.
 // `superadminOnly` marks internal agency tooling we operate on the client's
 // behalf rather than something they use themselves — hidden from them entirely
 // (the route is guarded by <AdminOnly>, since hiding a link isn't access
@@ -49,7 +50,9 @@ const CLIENT_SECTIONS: ClientNavItem[] = [
   { label: 'SEO + AI Visibility', to: 'seo', icon: Search, serviceKey: 'seo' },
   { label: 'Local Presence', to: 'local', icon: MapPin, serviceKey: 'local' },
   { label: 'Chat Assistant', to: 'assistant', icon: Bot, serviceKey: 'chat' },
-  { label: 'Leads', to: 'leads', icon: Users },
+  // Leads exist only via the chat agent's CRM tool (tools/crm.ts), so the
+  // section is part of the chat service, not a universal one.
+  { label: 'Leads', to: 'leads', icon: Users, serviceKey: 'chat' },
   { label: 'Content', to: 'content', icon: Sparkles, serviceKey: 'content', superadminOnly: true },
   { label: 'Paid Ads', to: 'ads', icon: Megaphone, serviceKey: 'ads' },
   { label: 'Requests', to: 'requests', icon: MessageSquarePlus },
@@ -93,15 +96,14 @@ function ClientNav({ slug }: { slug: string }) {
       {CLIENT_SECTIONS.map(item => {
         // Internal tooling — never shown to a client.
         if (item.superadminOnly && !me?.isSuperadmin) return null
-        const svc = item.serviceKey ? entitlements?.services[item.serviceKey] : undefined
-        const entitled = svc?.entitled ?? false
-        // Hide a tier-only section the client hasn't unlocked — it can't be
-        // added on its own, so a locked entry would be a dead end. Purchasable
-        // ('available') sections stay visible-but-locked as an upsell.
-        if (item.serviceKey && !entitled && svc?.status === 'tier_only') return null
+        const entitled = item.serviceKey ? (entitlements?.services[item.serviceKey]?.entitled ?? false) : true
+        // The one nav-entitlement rule: clients only ever see sections they're
+        // entitled to. Superadmins see everything, with a lock marking what
+        // this client doesn't have.
+        if (!entitled && !me?.isSuperadmin) return null
         const to = item.to ? `${base}/${item.to}` : base
         const active = item.to ? location.pathname === to : location.pathname === base
-        const locked = !!item.serviceKey && !entitled
+        const locked = !entitled
         return <NavLink key={item.label} to={to} active={active} icon={item.icon} label={item.label} locked={locked} />
       })}
     </>

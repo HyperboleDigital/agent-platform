@@ -54,6 +54,23 @@ separate user pools, so `SUPERADMIN_USER_IDS` differs (local = dev user id,
 Render = prod user id). Full runbook + the "restricted sign-up mode" gotcha:
 `docs/clerk-production-migration.md`.
 
+## 2026-08-18: pricing restructure (read before anything pricing/tier-shaped)
+
+The pricing model changed SHAPE, not just numbers: six Local/B2B tiers →
+ONE ladder (care/seo/growth in `lib/tiers.ts`), `vertical` is no longer a
+pricing dimension, Local Presence is a $250/mo add-on (`STRIPE_PRICE_LOCAL`),
+and every client's deal is now tier template + custom line items
+(`client_line_items`, `lib/line-items.ts` — billing/presentation ONLY, never
+an entitlement source) rendered on a superadmin Info Sheet view. Chatbots
+persist at Care via a comp grant on downgrade (`lib/tier-transitions.ts` — the
+one choke point for tier changes, used by both the webhook and "Save tier").
+`clients.hosting` models who owns the platform (client-hosted = no hosting
+bullet, no Site Health card, chatbot is the default retainer). Custom deals
+get server-side invoice-billed Stripe subscriptions (`createCustomDealSubscription`);
+payment links remain the vanilla path. **Setup still needed before it bills
+real money — see "Shipped 2026-08-18" in `TODO.md`** (two migrations, new
+Stripe env vars, manual Stripe move for the one affected client).
+
 ## Most recent session (2026-08-02/03): widget config, domain lock, deploy, chat memory
 
 Kicked off by testing the prospecting-generated chat widget on a real Framer
