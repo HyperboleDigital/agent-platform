@@ -42,6 +42,10 @@ import {
 import { getIdentity, canAccessClient, canManageTeam } from '../lib/authz'
 import type { Identity } from '../lib/authz'
 import { getLatestSiteHealth, recordSiteHealthCheck } from '../lib/site-health'
+import { getClientAutomation, setJobEnabled, addClientJob, removeClientJob, listJobTypes } from '../lib/scheduled-jobs'
+import { computeSetupStatus } from '../lib/setup-status'
+import { buildMonthSummary } from '../lib/month-summary'
+import { listBriefs, briefToPrompt, markBriefDrafted } from '../lib/content-briefs'
 import {
   listCitations, upsertCitation, deleteCitation, seedStandardDirectories, summarizeCitations,
   listGbpActivity, addGbpActivity, deleteGbpActivity, postsThisMonth
@@ -972,6 +976,107 @@ clientsRouter.get('/:id/seo/keyword-ideas', async (req, res) => {
   }
 })
 
+// ── Setup checklist (handoff #3 §2) ──────────────────────────────────────────
+// The one-time manual setup steps SEO delivery depends on, computed live (never
+// stored). Readable by superadmin AND the entitled client — the banner tells
+// both when delivery is running on an incomplete setup.
+clientsRouter.get('/:id/setup-status', async (req, res) => {
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  try {
+    res.json(await computeSetupStatus(id))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to compute setup status' })
+  }
+})
+
+// ── "This month" panel (handoff #3 §3) ───────────────────────────────────────
+// Aggregates only existing data — no paid calls. Clients see the wins;
+// `attention` (the superadmin task list) is stripped for them.
+clientsRouter.get('/:id/month-summary', async (req, res) => {
+  const identity = identityOf(req)
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  try {
+    const summary = await buildMonthSummary(id, typeof req.query.month === 'string' ? req.query.month : undefined)
+    if (!identity?.isSuperadmin) summary.attention = []
+    res.json(summary)
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to build month summary' })
+  }
+})
+
+// ── Automation (scheduled jobs, per-client) ──────────────────────────────────
+// The superadmin "Automation" card on the client's SEO page: this client's
+// jobs, next/last run, run history with cost, and the monthly job budget.
+// Superadmin-only — job internals and spend are operational, not client-facing.
+clientsRouter.get('/:id/automation', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    res.json(await getClientAutomation(req.params.id))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to load automation' })
+  }
+})
+
+clientsRouter.post('/:id/automation/jobs/:jobId/toggle', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await setJobEnabled(req.params.jobId, !!req.body?.enabled)
+    res.json(await getClientAutomation(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to toggle job' })
+  }
+})
+
+// Hand-schedule a job for this client — works for clients with no tier
+// (pre-onboarding); the row is admin_added so reconcile leaves it alone.
+clientsRouter.post('/:id/automation/jobs', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const jobType = typeof req.body?.jobType === 'string' ? req.body.jobType : ''
+  const cadence = typeof req.body?.cadence === 'string' ? req.body.cadence : 'monthly'
+  try {
+    await addClientJob(req.params.id, jobType, cadence as 'daily' | 'weekly' | 'monthly')
+    res.json(await getClientAutomation(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to add job' })
+  }
+})
+
+// Delete a hand-scheduled job (admin_added only — plan-provisioned rows are
+// disabled, never deleted).
+clientsRouter.delete('/:id/automation/jobs/:jobId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  try {
+    await removeClientJob(req.params.id, req.params.jobId)
+    res.json(await getClientAutomation(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to remove job' })
+  }
+})
+
+// Per-client monthly job-budget override (portalConfig.jobBudgetCents).
+clientsRouter.post('/:id/automation/budget', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const budgetCents = Number(req.body?.budgetCents)
+  if (!Number.isFinite(budgetCents) || budgetCents < 0 || budgetCents > 100000) {
+    return res.status(400).json({ error: 'budgetCents must be between 0 and 100000 ($1,000)' })
+  }
+  try {
+    const client = await getClientById(req.params.id)
+    if (!client) return res.status(404).json({ error: 'Client not found' })
+    await upsertClient({ id: client.id, portalConfig: { ...client.portalConfig, jobBudgetCents: Math.round(budgetCents) } })
+    res.json(await getClientAutomation(req.params.id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update budget' })
+  }
+})
+
 // ── DataForSEO On-Page crawl audit (SEO-automation plan, Phase 0) ─────────────
 // Superadmin-only beta: costs real money per run (~$0.002/page), so it's gated
 // off the client-facing funnel until the pipeline is proven. The crawl runs
@@ -1337,7 +1442,10 @@ clientsRouter.patch('/:id/posts/:postId', async (req, res) => {
   const { title, slug, metaDescription, contentMd, brief, targetKeyword, status } = req.body ?? {}
   try {
     if (typeof status === 'string') {
-      return res.json(await transitionPost(id, req.params.postId, status as PostStatus))
+      const identity = identityOf(req)
+      // Quota override is a superadmin-only escape hatch (handoff #3 §4c).
+      const overrideQuota = !!req.body?.overrideQuota && !!identity?.isSuperadmin
+      return res.json(await transitionPost(id, req.params.postId, status as PostStatus, { overrideQuota }))
     }
     res.json(await updatePost(id, req.params.postId, {
       ...(typeof title === 'string' ? { title } : {}),
@@ -1370,7 +1478,9 @@ clientsRouter.post('/:id/posts/:postId/publish', async (req, res) => {
     // status-transition failure updates the same CMS item instead of
     // creating a duplicate.
     await setFramerItemId(id, post.id, result.itemId)
-    const published = await transitionPost(id, post.id, 'published')
+    const identity = identityOf(req)
+    const overrideQuota = !!req.body?.overrideQuota && !!identity?.isSuperadmin
+    const published = await transitionPost(id, post.id, 'published', { overrideQuota })
     res.json(published)
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to publish to Framer' })
@@ -1386,6 +1496,34 @@ clientsRouter.get('/:id/posts/:postId/export', async (req, res) => {
   res.setHeader('Content-Type', 'text/markdown')
   res.setHeader('Content-Disposition', `attachment; filename="${post.slug || post.id}.md"`)
   res.send(body)
+})
+
+// ── Content briefs (handoff #3 §4b) ─────────────────────────────────────────
+// Real customer questions → monthly briefs. Reads open to entitled content
+// clients (Growth sees what's planned); "Draft this" spends strong-model
+// tokens so it stays superadmin-only.
+clientsRouter.get('/:id/content/briefs', async (req, res) => {
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  res.json(await listBriefs(id))
+})
+
+clientsRouter.post('/:id/content/briefs/:briefId/draft', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireContentAccess(req, res)
+  if (!id) return
+  try {
+    const briefs = await listBriefs(id)
+    const brief = briefs.find(b => b.id === req.params.briefId)
+    if (!brief) return res.status(404).json({ error: 'Brief not found' })
+    if (brief.status === 'drafted' && brief.postId) return res.status(400).json({ error: 'Brief already drafted' })
+    const post = await draftPost(id, briefToPrompt(brief), brief.targetKeyword)
+    await markBriefDrafted(id, brief.id, post.id)
+    res.json({ post, brief: { ...brief, status: 'drafted', postId: post.id } })
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to draft from brief' })
+  }
 })
 
 clientsRouter.get('/:id/framer-connection', async (req, res) => {
@@ -1461,7 +1599,9 @@ clientsRouter.post('/:id/reports/run-monthly', async (req, res) => {
   if (!client) return res.status(404).json({ error: 'Client not found' })
   const periodKey = typeof req.body?.periodKey === 'string' ? req.body.periodKey : previousPeriodKey()
   try {
-    res.json(await deliverMonthlyReport(client.id, client.name, periodKey))
+    // Deliberate superadmin click — the one scheduled-report path allowed to
+    // actually send (still guarded + test-mode-redirected).
+    res.json(await deliverMonthlyReport(client.id, client.name, periodKey, { sendEmail: true }))
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to run the monthly report' })
   }

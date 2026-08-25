@@ -27,7 +27,25 @@ export interface ReportData {
   visibility: {
     mentionRate: number // 0..1
     totalChecks: number
+    // Per-provider breakdown (handoff #3 §3) — absent on reports built before
+    // 2026-08-25.
+    byProvider?: Record<string, { mentionRate: number; runs: number }>
   } | null
+  // Keyword movement over the period (first vs last rank check) — the
+  // report's counterpart of the "This month" panel's movers list. Optional:
+  // reports stored before 2026-08-25 don't carry it.
+  keywords?: {
+    tracked: number
+    movedUp: { keyword: string; from: number | null; to: number | null }[]
+    movedDown: { keyword: string; from: number | null; to: number | null }[]
+  } | null
+  // Content published in the period (Growth tier). Optional as above.
+  content?: { published: { title: string; keyword: string }[] } | null
+  // Open unanswered chatbot questions feeding next month's content plan.
+  unansweredCount?: number
+  // seo_fix requests VERIFIED against a crawl in the period (never bare
+  // 'done' counts — see migrate_2026-08-25b_seo-fix-tracking.sql).
+  issuesFixed?: number
   siteHealth: {
     score: number // 0..100 DataForSEO onpage_score
     topIssues: { title: string; severity: string; count: number }[]
@@ -135,11 +153,59 @@ export async function buildReport(clientId: string, periodStart?: string, period
       }
     : null
 
-  // Visibility: mention rate across all runs in the period.
+  // Visibility: mention rate across all runs in the period, with the
+  // per-provider breakdown the SEO+GEO tier promises.
   const periodRuns = visRuns.filter(r => inPeriod(r.createdAt))
+  const byProvider: Record<string, { mentionRate: number; runs: number }> = {}
+  for (const r of periodRuns) {
+    const p = byProvider[r.provider] ?? { mentionRate: 0, runs: 0 }
+    p.runs++
+    if (r.mentioned) p.mentionRate++
+    byProvider[r.provider] = p
+  }
+  for (const p of Object.values(byProvider)) p.mentionRate = p.runs ? p.mentionRate / p.runs : 0
   const visibility = periodRuns.length
-    ? { mentionRate: periodRuns.filter(r => r.mentioned).length / periodRuns.length, totalChecks: periodRuns.length }
+    ? { mentionRate: periodRuns.filter(r => r.mentioned).length / periodRuns.length, totalChecks: periodRuns.length, byProvider }
     : null
+
+  // Keyword movers: first vs last rank check in the period per tracked
+  // keyword. Each read tolerates its own failure (e.g. a table whose
+  // migration hasn't run yet) so the report still builds without the section.
+  const [rankRes, kwRes, postRes, unansweredRes, verifiedRes] = await Promise.all([
+    supabase.from('seo_keyword_ranks').select('keyword_id, keyword, rank_absolute, checked_at')
+      .eq('client_id', clientId).gte('checked_at', `${start}T00:00:00Z`).lte('checked_at', `${end}T23:59:59Z`)
+      .order('checked_at', { ascending: true }),
+    supabase.from('seo_target_keywords').select('id').eq('client_id', clientId),
+    supabase.from('blog_posts').select('title, target_keyword, status, published_at').eq('client_id', clientId),
+    supabase.from('chat_unanswered_questions').select('id', { count: 'exact', head: true })
+      .eq('client_id', clientId).eq('status', 'open'),
+    supabase.from('change_requests').select('id')
+      .eq('client_id', clientId).eq('source', 'seo_fix')
+      .gte('verified_at', `${start}T00:00:00Z`).lte('verified_at', `${end}T23:59:59Z`),
+  ])
+  const rankRows = rankRes.error ? [] : rankRes.data ?? []
+  const kwRows = kwRes.error ? [] : kwRes.data ?? []
+  const postRows = postRes.error ? [] : postRes.data ?? []
+  const unansweredCount = unansweredRes.error ? undefined : unansweredRes.count ?? 0
+  const verifiedRows = verifiedRes.error ? [] : verifiedRes.data ?? []
+  const trackedIds = new Set((kwRows as any[]).map(k => k.id))
+  const byKw = new Map<string, { keyword: string; first: number | null; last: number | null }>()
+  for (const r of rankRows as any[]) {
+    if (!trackedIds.has(r.keyword_id)) continue
+    const e = byKw.get(r.keyword_id)
+    if (!e) byKw.set(r.keyword_id, { keyword: r.keyword, first: r.rank_absolute, last: r.rank_absolute })
+    else e.last = r.rank_absolute
+  }
+  const movedUp: { keyword: string; from: number | null; to: number | null }[] = []
+  const movedDown: { keyword: string; from: number | null; to: number | null }[] = []
+  for (const { keyword, first, last } of byKw.values()) {
+    if ((last ?? 101) < (first ?? 101)) movedUp.push({ keyword, from: first, to: last })
+    else if ((last ?? 101) > (first ?? 101)) movedDown.push({ keyword, from: first, to: last })
+  }
+  const keywords = trackedIds.size > 0 ? { tracked: trackedIds.size, movedUp, movedDown } : null
+  const published = (postRows as any[])
+    .filter(p => p.status === 'published' && p.published_at && p.published_at.slice(0, 10) >= start && p.published_at.slice(0, 10) <= end)
+  const content = published.length ? { published: published.map(p => ({ title: p.title ?? '(untitled)', keyword: p.target_keyword })) } : null
 
   // Site health: current crawl-based health score + top issues (point-in-time,
   // from the latest finished crawl — not period-bounded).
@@ -176,6 +242,10 @@ export async function buildReport(clientId: string, periodStart?: string, period
     visibility,
     siteHealth,
     baseline,
+    keywords,
+    content,
+    unansweredCount,
+    issuesFixed: (verifiedRows as any[]).length,
     chat: chatEntitled
       ? {
           conversationsThisMonth: usage.used,
@@ -285,14 +355,35 @@ export function renderReportEmail(report: Report): { subject: string; body: stri
     for (const iss of d.siteHealth.topIssues) lines.push(`  • [${iss.severity}] ${iss.title}`)
     lines.push(``)
   }
+  if (d.keywords && (d.keywords.movedUp.length || d.keywords.movedDown.length)) {
+    lines.push(`KEYWORD MOVEMENT (${d.keywords.tracked} tracked)`)
+    const fmtRank = (r: number | null) => (r == null ? '100+' : `#${r}`)
+    for (const k of d.keywords.movedUp.slice(0, 5)) lines.push(`  ^ "${k.keyword}": ${fmtRank(k.from)} -> ${fmtRank(k.to)}`)
+    for (const k of d.keywords.movedDown.slice(0, 3)) lines.push(`  v "${k.keyword}": ${fmtRank(k.from)} -> ${fmtRank(k.to)}`)
+    lines.push(``)
+  }
   if (d.visibility) {
+    const providerNames: Record<string, string> = { openai: 'ChatGPT', anthropic: 'Claude', perplexity: 'Perplexity', google_aio: 'Google AI Overviews' }
     lines.push(
       `AI SEARCH VISIBILITY`,
       `  Brand mentioned in ${pct(d.visibility.mentionRate)} of ${d.visibility.totalChecks} checks`,
-      ``
     )
+    for (const [prov, v] of Object.entries(d.visibility.byProvider ?? {})) {
+      lines.push(`    ${providerNames[prov] ?? prov}: ${pct(v.mentionRate)} of ${v.runs}`)
+    }
+    lines.push(``)
   }
-  lines.push(`WEBSITE UPDATES`, `  Change requests completed: ${d.requestsClosed}`, ``, `— Hyperbole Digital`)
+  if (d.content?.published.length) {
+    lines.push(`CONTENT PUBLISHED`)
+    for (const p of d.content.published) lines.push(`  • ${p.title} (targeting "${p.keyword}")`)
+    lines.push(``)
+  }
+  lines.push(`WEBSITE UPDATES`, `  Change requests completed: ${d.requestsClosed}`)
+  if (d.issuesFixed != null && d.issuesFixed > 0) lines.push(`  SEO fixes confirmed by re-crawl: ${d.issuesFixed}`)
+  if (d.unansweredCount != null && d.unansweredCount > 0) {
+    lines.push(``, `CUSTOMER QUESTIONS`, `  ${d.unansweredCount} real customer question(s) captured by your chat assistant are feeding next month's content plan.`)
+  }
+  lines.push(``, `— Hyperbole Digital`)
 
   return {
     subject: `Your ${d.clientName} performance report (${report.periodStart} – ${report.periodEnd})`,

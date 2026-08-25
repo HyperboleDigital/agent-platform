@@ -667,3 +667,50 @@ export async function researchKeywords(seed: string, location = DEFAULT_ORGANIC_
     }
   }).filter(k => k.keyword)
 }
+
+// ── Google AI Overview capture (GEO citation tracking, handoff #3 §4a) ───────
+// Same SERP endpoint as the rank check, but asking DataForSEO to load the AI
+// Overview block (Google renders it async, so `load_async_ai_overview` makes
+// the crawler wait for it). Returns the overview's text + the domains it
+// cites, or null when the query produced no AI Overview at all — which is a
+// real signal ("Google doesn't answer this with AI"), not an error.
+export interface AiOverviewResult {
+  text: string
+  citedDomains: string[]
+}
+
+export async function fetchAiOverview(query: string, location = DEFAULT_ORGANIC_LOCATION): Promise<AiOverviewResult | null> {
+  const json = await dfs('/serp/google/organic/live/advanced', [{
+    keyword: query,
+    location_name: location,
+    language_code: 'en',
+    depth: 20,
+    load_async_ai_overview: true,
+  }])
+
+  const items = (json.tasks?.[0]?.result?.[0]?.items ?? []) as any[]
+  const overview = items.find(i => i.type === 'ai_overview')
+  if (!overview) return null
+
+  // The overview's content is a list of sub-items (ai_overview_element),
+  // each with text + optional references; top-level `references` may also
+  // exist. Read both defensively.
+  const parts: string[] = []
+  const domains = new Set<string>()
+  const collectRefs = (refs: any[]) => {
+    for (const r of refs ?? []) {
+      const d = r?.domain ?? (typeof r?.url === 'string' ? r.url.replace(/^https?:\/\//, '').split('/')[0] : null)
+      if (d) domains.add(String(d).toLowerCase().replace(/^www\./, ''))
+    }
+  }
+  for (const el of overview.items ?? []) {
+    if (typeof el?.text === 'string' && el.text.trim()) parts.push(el.text.trim())
+    collectRefs(el?.references)
+  }
+  if (typeof overview.text === 'string' && overview.text.trim()) parts.push(overview.text.trim())
+  collectRefs(overview.references)
+
+  const text = parts.join('\n')
+  if (!text && domains.size === 0) return null
+  return { text, citedDomains: [...domains] }
+}

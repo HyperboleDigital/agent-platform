@@ -99,8 +99,11 @@ function QueriesCard({ clientId }: { clientId: string }) {
   )
 }
 
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: 'ChatGPT', anthropic: 'Claude', perplexity: 'Perplexity', google_aio: 'Google AI Overviews',
+}
 function providerLabel(p: string) {
-  return p === 'openai' ? 'ChatGPT' : 'Claude'
+  return PROVIDER_LABELS[p] ?? p
 }
 
 function RunsCard({ clientId }: { clientId: string }) {
@@ -110,6 +113,23 @@ function RunsCard({ clientId }: { clientId: string }) {
 
   const trend = (data?.trend ?? []).map(t => ({ date: t.date, mentionRate: Math.round(t.mentionRate * 100) }))
   const runs = data?.runs ?? []
+
+  // Per-provider breakdown across the loaded window (handoff #3 §4a).
+  const byProvider = new Map<string, { mentioned: number; total: number }>()
+  for (const r of runs) {
+    const b = byProvider.get(r.provider) ?? { mentioned: 0, total: 0 }
+    b.total++
+    if (r.mentioned) b.mentioned++
+    byProvider.set(r.provider, b)
+  }
+  // Who's getting cited instead: top domains from runs where we were NOT
+  // mentioned but the engine cited someone (Perplexity / AI Overviews).
+  const citedInstead = new Map<string, number>()
+  for (const r of runs) {
+    if (r.mentioned || !r.citedDomains) continue
+    for (const d of r.citedDomains) citedInstead.set(d, (citedInstead.get(d) ?? 0) + 1)
+  }
+  const topCited = [...citedInstead.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
 
   return (
     <div className="grid gap-3">
@@ -125,6 +145,29 @@ function RunsCard({ clientId }: { clientId: string }) {
           />
         </CardContent>
       </Card>
+      {byProvider.size > 0 && (
+        <div className="grid gap-3 sm:grid-cols-4">
+          {[...byProvider.entries()].map(([prov, b]) => (
+            <Card key={prov}>
+              <CardContent className="p-3">
+                <p className="text-xs text-muted-foreground">{providerLabel(prov)}</p>
+                <p className="text-xl font-semibold">{Math.round((b.mentioned / b.total) * 100)}%</p>
+                <p className="text-xs text-muted-foreground">{b.mentioned} of {b.total} checks</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+      {topCited.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>Who&apos;s getting cited instead</CardTitle></CardHeader>
+          <CardContent className="pt-0">
+            <p className="text-sm text-muted-foreground">
+              {topCited.map(([d, n]) => `${d} (${n})`).join(' · ')}
+            </p>
+          </CardContent>
+        </Card>
+      )}
       <Card className="overflow-hidden p-0">
         {runs.length ? (
           <Table>
@@ -165,7 +208,7 @@ export function AiVisibilityTab() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <p className="text-sm text-muted-foreground">Track how your brand shows up when people ask ChatGPT and Claude.</p>
+        <p className="text-sm text-muted-foreground">Track how your brand shows up when people ask ChatGPT, Claude, Perplexity, and Google's AI Overviews.</p>
       </div>
       <QueriesCard clientId={clientId} />
       <RunsCard clientId={clientId} />

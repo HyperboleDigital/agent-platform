@@ -659,6 +659,9 @@ function AuditCard({ clientId, domain }: { clientId: string; domain?: string }) 
         {crawl?.status === 'finished' && (
           <>
             <AuditReport crawl={crawl} showCost={isAdmin} />
+            <p className="text-xs text-muted-foreground">
+              Last audited: {new Date(crawl.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
             <AuditProgress points={history ?? []} />
             {canFix && (
               <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2.5">

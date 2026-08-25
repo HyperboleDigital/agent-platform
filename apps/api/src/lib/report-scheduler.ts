@@ -9,8 +9,15 @@ import { sendGuardedEmail, getNotificationSettings } from './notify'
 //
 // READ THIS BEFORE CHANGING ANYTHING HERE.
 //
-// This is the only scheduler in the platform permitted to send client email,
-// and it exists against a standing rule that it must not. That rule was
+// SINCE 2026-08-25 (handoff #3 §6) the scheduled path is DRAFT-ONLY: it
+// generates the report, claims the period, and nudges the superadmin on
+// Slack; the email itself leaves only on a superadmin click (sendReport, or
+// the run-now route which passes sendEmail: true). The machinery below is
+// kept intact because the deliberate-send path still uses it, and because
+// every guarantee still matters even for drafts (one draft per period).
+//
+// Historical context: this was the only scheduler in the platform permitted
+// to send client email, against a standing rule that it must not. That rule was
 // written after 582 emails were auto-sent to a real inbox from an unbounded
 // loop (see lib/notify.ts). It is allowed here only because every one of the
 // following holds, and it stops being safe the moment any of them is removed:
@@ -62,7 +69,7 @@ function tierPromisesReport(tierKey: string | null): boolean {
 export interface DeliveryOutcome {
   clientId: string
   clientName: string
-  status: 'sent' | 'skipped' | 'failed'
+  status: 'sent' | 'drafted' | 'skipped' | 'failed'
   detail: string
 }
 
@@ -97,20 +104,46 @@ async function finishClaim(
   if (error) console.error('[report-scheduler] failed to finalize claim:', error.message)
 }
 
-// Runs one client's monthly report end to end. Safe to call directly (the
-// superadmin "run now" path uses it too).
+// Slack nudge to the superadmin when a scheduled report draft is ready
+// (handoff #3 §6). Slack is explicitly allowed — it is not the email path.
+// Best-effort; a Slack failure never fails the draft.
+async function nudgeSuperadmin(clientName: string, periodKey: string): Promise<void> {
+  const webhook = process.env.SUPERADMIN_SLACK_WEBHOOK
+  if (!webhook) return
+  try {
+    const dashboardUrl = process.env.DASHBOARD_URL ?? ''
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: `Monthly report drafted — ${clientName} (${periodKey}). Review it in the dashboard and click Send.${dashboardUrl ? ` ${dashboardUrl}` : ''}`,
+      }),
+    })
+    if (!res.ok) throw new Error(`Slack ${res.status}`)
+  } catch (err) {
+    console.warn('[report-scheduler] Slack nudge failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+// Runs one client's monthly report. Since 2026-08-25 (handoff #3 §6) the
+// SCHEDULED path only GENERATES the report and nudges the superadmin on
+// Slack — the email leaves via the dashboard's Send button (sendReport, still
+// guarded). Passing sendEmail: true restores the full deliver-and-send, used
+// ONLY by the superadmin "run monthly report now" route — a deliberate human
+// click, which is exactly the boundary the 582-email guardrail draws.
 export async function deliverMonthlyReport(
   clientId: string,
   clientName: string,
-  periodKey: string
+  periodKey: string,
+  opts: { sendEmail?: boolean } = {}
 ): Promise<DeliveryOutcome> {
   const settings = await getNotificationSettings(clientId)
-  if (!settings.email_enabled || !settings.email_to) {
+  if (opts.sendEmail && (!settings.email_enabled || !settings.email_to)) {
     return { clientId, clientName, status: 'skipped', detail: 'No report recipient configured' }
   }
 
   if (!(await claimPeriod(clientId, periodKey))) {
-    return { clientId, clientName, status: 'skipped', detail: `${periodKey} already delivered` }
+    return { clientId, clientName, status: 'skipped', detail: `${periodKey} already handled` }
   }
 
   try {
@@ -122,10 +155,19 @@ export async function deliverMonthlyReport(
 
     const { start, end } = periodBounds(periodKey)
     const report = await buildReport(clientId, start, end)
+
+    if (!opts.sendEmail) {
+      // Draft-only: claim the period as drafted and hand off to a human.
+      await finishClaim(clientId, periodKey, { status: 'drafted', reportId: report.id })
+      await nudgeSuperadmin(clientName, periodKey)
+      return { clientId, clientName, status: 'drafted', detail: 'Report generated — awaiting superadmin review + send' }
+    }
+
     const { subject, body } = renderReportEmail(report)
 
     const result = await sendGuardedEmail({
-      clientId, event: 'report.ready', to: settings.email_to, subject, body,
+      // settings.email_to is guaranteed by the sendEmail guard above.
+      clientId, event: 'report.ready', to: settings.email_to!, subject, body,
     })
 
     if (!result.sent) {
@@ -148,8 +190,8 @@ export async function deliverMonthlyReport(
   }
 }
 
-// The scheduled entry point. Sends only for the month that just ended, and
-// only to clients whose tier promises the report.
+// The scheduled entry point. DRAFTS only (see above) — one draft per client
+// for the month that just ended, only for tiers promising the report.
 export async function runMonthlyReports(now = new Date()): Promise<DeliveryOutcome[]> {
   const periodKey = previousPeriodKey(now)
   const clients = await getAllClients()

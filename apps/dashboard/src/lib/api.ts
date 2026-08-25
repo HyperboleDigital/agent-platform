@@ -826,11 +826,12 @@ export interface VisibilityRun {
   id: string
   clientId: string
   queryId: string
-  provider: 'openai' | 'anthropic'
+  provider: 'openai' | 'anthropic' | 'perplexity' | 'google_aio'
   model: string | null
   mentioned: boolean
   domainCited: boolean
   snippet: string | null
+  citedDomains: string[] | null
   createdAt: string
 }
 
@@ -1034,8 +1035,100 @@ export interface JobRow {
   lastRunAt: string | null
   lastStatus: string | null
   lastError: string | null
+  lastCostCents: number | null
   nextRunAt: string | null
   implemented: boolean
+  adminDisabled: boolean
+  adminAdded: boolean
+}
+
+export interface JobTypeInfo {
+  jobType: string
+  label: string
+  description: string
+  implemented: boolean
+}
+
+export interface JobRunRow {
+  id: string
+  jobType: string
+  label: string
+  startedAt: string
+  finishedAt: string | null
+  status: string
+  error: string | null
+  costCents: number
+  summary: Record<string, unknown> | null
+}
+
+export interface BudgetStatus {
+  budgetCents: number
+  spentCents: number
+  overBudget: boolean
+}
+
+export interface ClientAutomation {
+  jobs: JobRow[]
+  budget: BudgetStatus
+  recentRuns: JobRunRow[]
+}
+
+export interface SetupItem {
+  key: string
+  label: string
+  complete: boolean
+  detail: string
+  section: string
+}
+
+export interface SetupStatus {
+  required: SetupItem[]
+  complete: boolean
+  incompleteCount: number
+}
+
+export interface ContentBrief {
+  id: string
+  clientId: string
+  questionId: string | null
+  title: string
+  targetKeyword: string
+  question: string | null
+  outline: string[]
+  internalLinks: string[]
+  status: 'open' | 'drafted' | 'archived'
+  postId: string | null
+  createdAt: string
+}
+
+export interface KeywordMove { keyword: string; from: number | null; to: number | null }
+
+export interface AttentionItem {
+  kind: 'fix_unverified' | 'content_due' | 'brief_ready' | 'setup_incomplete' | 'budget_exceeded'
+  label: string
+  section: string
+}
+
+export interface MonthSummary {
+  period: { start: string; end: string }
+  siteHealth: { score: number | null; delta: number | null; issuesFixed: number; issuesOpen: number }
+  keywords: { tracked: number; movedUp: KeywordMove[]; movedDown: KeywordMove[]; newTop10: KeywordMove[] }
+  visibility: {
+    mentionRate: number | null
+    delta: number | null
+    byProvider: Record<string, { mentionRate: number; runs: number }>
+    newlyCited: string[]
+    citedInstead: { domain: string; count: number }[]
+  }
+  content: {
+    published: { title: string; slug: string | null; keyword: string }[]
+    inReview: { title: string; keyword: string }[]
+    quotaUsed: number
+    quotaCap: number
+  }
+  unansweredQuestions: { question: string; count: number; lastAsked: string }[]
+  requestsClosed: number
+  attention: AttentionItem[]
 }
 
 export interface ClientJobs {
@@ -1125,6 +1218,18 @@ export const api = {
     siteHealth: (id: string) => request<SiteHealth | null>(`/clients/${id}/site-health`),
     checkSiteHealth: (id: string) => request<SiteHealth>(`/clients/${id}/site-health/check`, { method: 'POST' }),
     entitlements: (id: string) => request<Entitlements>(`/clients/${id}/entitlements`),
+    setupStatus: (id: string) => request<SetupStatus>(`/clients/${id}/setup-status`),
+    monthSummary: (id: string, month?: string) =>
+      request<MonthSummary>(`/clients/${id}/month-summary${month ? `?month=${month}` : ''}`),
+    automation: (id: string) => request<ClientAutomation>(`/clients/${id}/automation`),
+    toggleJob: (id: string, jobId: string, enabled: boolean) =>
+      request<ClientAutomation>(`/clients/${id}/automation/jobs/${jobId}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+    addJob: (id: string, jobType: string, cadence: 'daily' | 'weekly' | 'monthly') =>
+      request<ClientAutomation>(`/clients/${id}/automation/jobs`, { method: 'POST', body: JSON.stringify({ jobType, cadence }) }),
+    removeJob: (id: string, jobId: string) =>
+      request<ClientAutomation>(`/clients/${id}/automation/jobs/${jobId}`, { method: 'DELETE' }),
+    setJobBudget: (id: string, budgetCents: number) =>
+      request<ClientAutomation>(`/clients/${id}/automation/budget`, { method: 'POST', body: JSON.stringify({ budgetCents }) }),
     seoConfig: (id: string) => request<PortalConfig>(`/clients/${id}/seo/config`),
     updateSeoConfig: (id: string, config: Partial<PortalConfig>) =>
       request<PortalConfig>(`/clients/${id}/seo/config`, { method: 'PUT', body: JSON.stringify(config) }),
@@ -1208,10 +1313,13 @@ export const api = {
       request<BlogPost>(`/clients/${id}/posts/generate`, { method: 'POST', body: JSON.stringify({ brief, targetKeyword }) }),
     updatePost: (id: string, postId: string, patch: Partial<Pick<BlogPost, 'title' | 'slug' | 'metaDescription' | 'contentMd' | 'brief' | 'targetKeyword'>>) =>
       request<BlogPost>(`/clients/${id}/posts/${postId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-    transitionPost: (id: string, postId: string, status: PostStatus) =>
-      request<BlogPost>(`/clients/${id}/posts/${postId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-    publishPost: (id: string, postId: string) =>
-      request<BlogPost>(`/clients/${id}/posts/${postId}/publish`, { method: 'POST' }),
+    transitionPost: (id: string, postId: string, status: PostStatus, overrideQuota = false) =>
+      request<BlogPost>(`/clients/${id}/posts/${postId}`, { method: 'PATCH', body: JSON.stringify({ status, overrideQuota }) }),
+    publishPost: (id: string, postId: string, overrideQuota = false) =>
+      request<BlogPost>(`/clients/${id}/posts/${postId}/publish`, { method: 'POST', body: JSON.stringify({ overrideQuota }) }),
+    contentBriefs: (id: string) => request<ContentBrief[]>(`/clients/${id}/content/briefs`),
+    draftFromBrief: (id: string, briefId: string) =>
+      request<{ post: BlogPost; brief: ContentBrief }>(`/clients/${id}/content/briefs/${briefId}/draft`, { method: 'POST' }),
     exportPost: async (id: string, postId: string, filename: string) => {
       const res = await fetch(`${BASE}/clients/${id}/posts/${postId}/export`, { headers: await authHeaders() })
       if (!res.ok) throw new Error(`Export failed: ${res.status}`)
@@ -1358,6 +1466,7 @@ export const api = {
   overview: {
     summary: () => request<OverviewSummary>('/overview/summary'),
     jobs: () => request<ClientJobs[]>('/overview/jobs'),
+    jobTypes: () => request<JobTypeInfo[]>('/overview/jobs/types'),
     runJob: (jobId: string) => request<JobRunResult>(`/overview/jobs/${jobId}/run`, { method: 'POST' }),
     reconcileJobs: () => request<ClientJobs[]>('/overview/jobs/reconcile', { method: 'POST' }),
     clients: () => request<ClientRollup[]>('/overview/clients'),

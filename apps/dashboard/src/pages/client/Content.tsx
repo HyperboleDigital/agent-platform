@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Sparkles, Download, Upload, Eye, Pencil } from 'lucide-react'
+import { Sparkles, Download, Upload, Eye, Pencil, MessageCircleQuestion } from 'lucide-react'
 import { api } from '@/lib/api'
-import type { BlogPost, PostStatus } from '@/lib/api'
+import type { BlogPost, PostStatus, ContentBrief } from '@/lib/api'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -234,6 +234,73 @@ function PostEditor({ clientId, post }: { clientId: string; post: BlogPost }) {
   )
 }
 
+// Content briefs (handoff #3 §4b): real customer questions the chatbot
+// couldn't answer + unranked target keywords, turned into monthly briefs by
+// the content_brief job. "Draft this" (superadmin — spends strong-model
+// tokens) hands one into the draft flow below.
+function BriefsCard({ clientId, isSuperadmin, onDrafted }: { clientId: string; isSuperadmin: boolean; onDrafted: (postId: string) => void }) {
+  const key = ['content-briefs', clientId]
+  const { data: briefs } = useSWR(key, () => api.clients.contentBriefs(clientId))
+  const [drafting, setDrafting] = useState<string | null>(null)
+
+  const open = (briefs ?? []).filter(b => b.status === 'open')
+  if (!briefs || briefs.length === 0) return null
+
+  async function draftThis(brief: ContentBrief) {
+    setDrafting(brief.id)
+    try {
+      const { post } = await api.clients.draftFromBrief(clientId, brief.id)
+      toast.success('Draft created from brief — review it below.')
+      mutate(key)
+      mutate(['posts', clientId])
+      onDrafted(post.id)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to draft from brief')
+    } finally {
+      setDrafting(null)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <MessageCircleQuestion className="h-4 w-4" /> Content briefs
+          {open.length > 0 && <Badge variant="warning">{open.length} waiting</Badge>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 pt-0">
+        <p className="text-sm text-muted-foreground">
+          Planned from real questions your customers asked the chat assistant, plus keywords you&apos;re not ranking for yet.
+        </p>
+        {briefs.map(b => (
+          <div key={b.id} className={`rounded-md border border-border p-3 ${b.status !== 'open' ? 'opacity-60' : ''}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">{b.title}</p>
+                <p className="text-xs text-muted-foreground">
+                  Keyword: {b.targetKeyword}
+                  {b.question && <> · answers: &ldquo;{b.question}&rdquo;</>}
+                </p>
+                {b.outline.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">{b.outline.join(' · ')}</p>
+                )}
+              </div>
+              {b.status === 'open' && isSuperadmin ? (
+                <Button size="sm" variant="secondary" onClick={() => draftThis(b)} disabled={drafting !== null}>
+                  {drafting === b.id ? 'Drafting…' : 'Draft this'}
+                </Button>
+              ) : (
+                <Badge variant={b.status === 'drafted' ? 'success' : 'secondary'}>{b.status}</Badge>
+              )}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Content() {
   const { clientId } = useClientCtx()
   const { data: posts, isLoading } = useSWR(['posts', clientId], () => api.clients.posts(clientId))
@@ -249,6 +316,7 @@ export default function Content() {
         <p className="text-sm text-muted-foreground">AI-drafted, keyword-targeted blog posts — review before anything goes live.</p>
       </div>
 
+      <BriefsCard clientId={clientId} isSuperadmin={!!me?.isSuperadmin} onDrafted={setSelectedId} />
       <GenerateCard clientId={clientId} onGenerated={setSelectedId} />
 
       {isLoading && <Skeleton className="h-40 w-full" />}

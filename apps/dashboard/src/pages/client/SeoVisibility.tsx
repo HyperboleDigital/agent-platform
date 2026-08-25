@@ -1,10 +1,18 @@
 import { useState } from 'react'
+import useSWR from 'swr'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { api } from '@/lib/api'
+import { useClientCtx } from '@/pages/client/ClientLayout'
+import { SetupBanner } from '@/components/setup-banner'
+import { AutomationCard } from '@/components/automation-card'
 import { SiteHealthTab } from './Seo'
 import { AiVisibilityTab } from './Visibility'
 
 export default function SeoVisibility() {
   const [tab, setTab] = useState('site-health')
+  const { clientId } = useClientCtx()
+  const { data: me } = useSWR('me', api.me)
+  const isSuperadmin = me?.isSuperadmin ?? false
 
   return (
     <div className="flex flex-col gap-6">
@@ -12,6 +20,9 @@ export default function SeoVisibility() {
         <h2 className="text-lg font-semibold">SEO + AI Visibility</h2>
         <p className="text-sm text-muted-foreground">Technical site health, keyword rankings, and how your brand shows up in AI search.</p>
       </div>
+
+      <SetupBanner clientId={clientId} />
+      {isSuperadmin && <AutomationCard clientId={clientId} />}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>

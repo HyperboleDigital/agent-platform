@@ -1,7 +1,8 @@
 import { complete } from './llm/complete'
-import { getCrawl } from './dataforseo'
+import { getCrawl, getCrawlHistory } from './dataforseo'
+import { supabase } from './supabase'
 import { getClientById } from './clients'
-import { createRequest, type ChangeRequest } from './change-requests'
+import { createRequest, type ChangeRequest, type FixMeta } from './change-requests'
 
 // Phase 2 of the SEO-automation plan: turn crawl issues into concrete,
 // Claude-generated fixes delivered as one-click change requests. First fix
@@ -127,7 +128,11 @@ function toMarkdown(items: MetaFixItem[]): string {
 export async function createMetaFixRequest(clientId: string, crawlId: string, createdBy: string | null): Promise<{ request: ChangeRequest; count: number }> {
   const draft = await draftMetaFixes(clientId, crawlId)
   const title = `SEO fix: titles & meta descriptions (${draft.items.length} page${draft.items.length === 1 ? '' : 's'})`
-  const request = await createRequest(clientId, title, toMarkdown(draft.items), createdBy)
+  const request = await createRequest(clientId, title, toMarkdown(draft.items), createdBy, {
+    source: 'seo_fix',
+    // The fix_verify job checks these keys × urls against the next crawl.
+    fixMeta: { checkKeys: TITLE_DESC_KEYS, urls: draft.items.map(i => i.url) },
+  })
   return { request, count: draft.items.length }
 }
 
@@ -195,7 +200,12 @@ ${it.jsonld}
 export async function createSchemaFixRequest(clientId: string, createdBy: string | null): Promise<{ request: ChangeRequest; count: number }> {
   const draft = await draftSchemaFixes(clientId)
   const title = `SEO fix: schema markup (${draft.items.length} page${draft.items.length === 1 ? '' : 's'})`
-  const request = await createRequest(clientId, title, schemaMarkdown(draft.items), createdBy)
+  // No crawl check covers JSON-LD presence — checkKeys stays empty, so
+  // fix_verify leaves schema fixes to manual confirmation.
+  const request = await createRequest(clientId, title, schemaMarkdown(draft.items), createdBy, {
+    source: 'seo_fix',
+    fixMeta: { checkKeys: [], urls: draft.items.map(i => i.url) },
+  })
   return { request, count: draft.items.length }
 }
 
@@ -243,6 +253,82 @@ Return ONLY the llms.txt file content (markdown), no code fences, no preamble.`
 export async function createLlmsTxtRequest(clientId: string, createdBy: string | null): Promise<{ request: ChangeRequest; count: number }> {
   const content = await draftLlmsTxt(clientId)
   const body = `Auto-generated **llms.txt** — the emerging standard that tells AI engines (ChatGPT, Perplexity, Claude, etc.) how to use your content. Save this as \`/llms.txt\` at your site root (e.g. https://yoursite.com/llms.txt).\n\n\`\`\`markdown\n${content}\n\`\`\``
-  const request = await createRequest(clientId, 'SEO fix: llms.txt (AI search guidance file)', body, createdBy)
+  const client = await getClientById(clientId)
+  const domain = client?.domain ? (client.domain.startsWith('http') ? client.domain : `https://${client.domain}`) : ''
+  // Verifiable: the AI-Search-Health check on the next crawl reports
+  // hasLlmsTxt — fix_verify treats 'llms_txt' as that pseudo-check.
+  const request = await createRequest(clientId, 'SEO fix: llms.txt (AI search guidance file)', body, createdBy, {
+    source: 'seo_fix',
+    fixMeta: { checkKeys: ['llms_txt'], urls: domain ? [`${domain.replace(/\/$/, '')}/llms.txt`] : [] },
+  })
   return { request, count: 1 }
+}
+
+// ── Fix verification (handoff #3 §5) ─────────────────────────────────────────
+// "We fixed 11 issues" with proof: after the monthly crawl, every DONE seo_fix
+// request is compared against the latest finished crawl. If the checks it
+// addressed no longer flag its URLs, it's verified; if they still do, it
+// regressed. Free — reads existing crawl data, no new paid calls.
+
+function normalizeUrl(u: string): string {
+  return u.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '')
+}
+
+export interface FixVerifyOutcome {
+  verified: number
+  regressed: number
+  awaitingCrawl: number // done after the latest crawl — judged next cycle
+  unverifiable: number  // no crawl-checkable meta (e.g. schema fixes)
+}
+
+export async function verifySeoFixes(clientId: string): Promise<FixVerifyOutcome> {
+  const crawls = await getCrawlHistory(clientId) // finished only, oldest→newest
+  const crawl = crawls[crawls.length - 1]
+  const outcome: FixVerifyOutcome = { verified: 0, regressed: 0, awaitingCrawl: 0, unverifiable: 0 }
+  if (!crawl) return outcome
+
+  const { data, error } = await supabase
+    .from('change_requests')
+    .select('id, fix_meta, completed_at')
+    .eq('client_id', clientId)
+    .eq('source', 'seo_fix')
+    .eq('status', 'done')
+  if (error) throw new Error(`verifySeoFixes: ${error.message}`)
+
+  // Union of still-flagged URLs per check key, from the latest crawl.
+  const flaggedByKey = new Map<string, Set<string>>()
+  for (const c of crawl.checks ?? []) {
+    flaggedByKey.set(c.key, new Set(c.urls.map(normalizeUrl)))
+  }
+
+  for (const row of data ?? []) {
+    const meta = row.fix_meta as FixMeta | null
+    if (!meta || meta.checkKeys.length === 0) { outcome.unverifiable++; continue }
+    // Only judge against a crawl that ran AFTER the fix was applied — a fix
+    // marked done yesterday can't be confirmed by last month's crawl.
+    if (row.completed_at && new Date(row.completed_at) > new Date(crawl.createdAt)) {
+      outcome.awaitingCrawl++
+      continue
+    }
+
+    let stillFlagged = false
+    for (const key of meta.checkKeys) {
+      if (key === 'llms_txt') {
+        // Pseudo-check: the AI-Search-Health probe reports llms.txt presence.
+        if (crawl.aiSearch && !crawl.aiSearch.hasLlmsTxt) stillFlagged = true
+        continue
+      }
+      const flagged = flaggedByKey.get(key)
+      if (flagged && meta.urls.some(u => flagged.has(normalizeUrl(u)))) stillFlagged = true
+    }
+
+    const patch = stillFlagged
+      ? { regressed_at: new Date().toISOString(), verified_at: null }
+      : { verified_at: new Date().toISOString(), regressed_at: null }
+    const { error: updErr } = await supabase.from('change_requests').update(patch).eq('id', row.id)
+    if (updErr) { console.error('[seo-fixes] verify update failed:', updErr.message); continue }
+    if (stillFlagged) outcome.regressed++
+    else outcome.verified++
+  }
+  return outcome
 }

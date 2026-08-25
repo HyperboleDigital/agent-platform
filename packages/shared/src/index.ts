@@ -138,6 +138,13 @@ export interface PortalConfig {
   // "123-456-7890". Hyperbole has manager (MCC) access; the client pays Google
   // directly. Unset = the Paid Ads section shows its "connect account" state.
   googleAdsCustomerId?: string
+  // Monthly ceiling (in cents) on what scheduled jobs may spend on paid APIs
+  // (DataForSEO crawls/SERP checks, visibility LLM calls) for this client.
+  // Unset = the default in lib/scheduled-jobs.ts ($5). The dispatcher sums
+  // job_runs.cost_cents for the calendar month before starting a paid job and
+  // records 'budget_exceeded' instead of running when the ceiling is reached;
+  // superadmin run-now deliberately bypasses it.
+  jobBudgetCents?: number
 }
 
 export interface AgentConfig {

@@ -3,6 +3,8 @@ import { getClientById } from './clients'
 import { searchDocs } from '../tools/knowledge-base'
 import { complete } from './llm/complete'
 import type { Client } from '@agent-platform/shared'
+import { tierForKey } from './tiers'
+import { onPostPublished } from './content-briefs'
 
 // Blog content engine (the `content` add-on service). One strong-model call
 // produces a structured draft; mechanical validation + one repair pass keep
@@ -352,11 +354,42 @@ export async function updatePost(
   return fromRow(data as Row)
 }
 
-export async function transitionPost(clientId: string, postId: string, to: PostStatus): Promise<BlogPost> {
+// Published posts this calendar month — the content-quota denominator
+// (handoff #3 §4c). Counts by published_at so re-publishing an old post after
+// an edit doesn't double-count.
+export async function publishedThisMonth(clientId: string): Promise<number> {
+  const monthStart = new Date()
+  monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0)
+  const { count, error } = await supabase
+    .from('blog_posts')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId)
+    .eq('status', 'published')
+    .gte('published_at', monthStart.toISOString())
+  if (error) { console.error('[content] publishedThisMonth failed:', error.message); return 0 }
+  return count ?? 0
+}
+
+export async function transitionPost(clientId: string, postId: string, to: PostStatus, opts: { overrideQuota?: boolean } = {}): Promise<BlogPost> {
   const existing = await getPost(clientId, postId)
   if (!existing) throw new Error('Post not found')
   if (!canTransition(existing.status, to)) {
     throw new Error(`Cannot move a ${existing.status} post to ${to}`)
+  }
+
+  // Content quota (handoff #3 §4c): the tier's contentPiecesPerMonth is a
+  // hard stop on publishing, with an explicit superadmin override. A tier
+  // with quota 0 (or no tier) publishes only via override — those clients
+  // aren't sold monthly content, so a publish is always a deliberate act.
+  if (to === 'published' && !opts.overrideQuota) {
+    const client = await getClientById(clientId)
+    const cap = tierForKey(client?.tierKey)?.quotas.contentPiecesPerMonth ?? 0
+    const used = await publishedThisMonth(clientId)
+    if (used >= cap) {
+      throw new Error(cap > 0
+        ? `Monthly content quota reached (${used} of ${cap} published this month) — publishing more requires a superadmin override.`
+        : 'This plan has no monthly content quota — publishing requires a superadmin override.')
+    }
   }
 
   const { data, error } = await supabase
@@ -371,7 +404,13 @@ export async function transitionPost(clientId: string, postId: string, to: PostS
     .select()
     .single()
   if (error) throw error
-  return fromRow(data as Row)
+  const post = fromRow(data as Row)
+  // Close the questions→content loop: mark the source question answered and
+  // feed the Q&A back to the chatbot KB. Best-effort by design.
+  if (to === 'published') {
+    void onPostPublished(clientId, postId, { title: post.title, contentMd: post.contentMd })
+  }
+  return post
 }
 
 // Records the Framer CMS item ID a post was published as, so a retry after a

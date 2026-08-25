@@ -218,6 +218,174 @@ whole point) and doubles as a throttle. It works on *prospects'* sites, so
   (Reddit/Quora) is a service-play, not a build. No own-forum (cold-start trap).
 
 ## Checkpoint log
+- **2026-08-25d (manual job scheduling for any client — VERIFIED)** — Owen:
+  entitlements are guidance, not a hard gate — he needs to schedule/run jobs
+  for clients that aren't onboarded yet (no tier). Added `admin_added` to
+  `scheduled_jobs` (**same pending migration**, `migrate_2026-08-25d_...sql`,
+  now two flags): hand-scheduled rows live outside the entitlement contract —
+  reconcile never disables them, and they can be deleted outright
+  (plan-provisioned rows still only ever disable). /jobs page: selecting a
+  specific client always shows their card (even zero jobs / no tier) with an
+  "Add a job… + cadence + Schedule" control (implemented handlers only);
+  manual rows get a "manual" badge + delete button. Routes:
+  `POST/DELETE /clients/:id/automation/jobs[/:jobId]`,
+  `GET /overview/jobs/types`. Duplicate add re-enables the existing row
+  (unique index) instead of erroring. Also hardened reconcile: a transient
+  null from getClientById used to read as "wants no jobs" and mass-disable a
+  healthy client's rows (probable cause of Sweet Additions showing all-jobs-
+  disabled on 2026-08-25) — desiredJobsFor now throws on lookup failure and
+  reconcile skips that client for the sweep. Verified live on a no-tier
+  throwaway: add → run-now ok → duplicate-add re-enables → bad type rejected;
+  pre-migration reconcile still disables the manual row (expected — flags
+  aren't sticky until migration d runs), cleanup clean. Sweet Additions'
+  non-sticky disables self-heal at the next reconcile sweep.
+- **2026-08-25c (four-engine GEO — LIVE-VERIFIED, bullet flipped)** — Owen set
+  `PERPLEXITY_API_KEY` (local .env; **still needs setting on Render**). Full
+  4-leg run on a throwaway client, cleaned up after: generic query → not
+  mentioned anywhere, Perplexity + AI Overview both returned real competitor
+  citation lists (semrush.com et al); brand-adjacent Tampa query → mentioned
+  on ALL FOUR engines, with Perplexity's native citations including
+  hyperboledigital.com itself (domainCited=true) plus the local-competitor
+  set (alldigitalgroup.com, digitalneighbor.com, …) — exactly the
+  "who's getting cited instead" input. GEO tier bullet in `lib/tiers.ts`
+  flipped to `built: true`. Per handoff #2 §0.2, the $1,200 hold-until-GEO
+  condition is now met — repricing unblocked, Owen's call.
+- **2026-08-25b (per-client job opt-outs + post-migration verification, LIVE-VERIFIED)** —
+  Owen's ask: per-client control over which jobs run ("some jobs may need to
+  run and some might not based on customer"). Root problem: the hourly
+  reconcile sweep treated entitlements as authoritative and RE-ENABLED any
+  manually disabled job within the hour, so the disable toggle couldn't
+  express a deliberate per-client opt-out.
+  - `scheduled_jobs.admin_disabled` (**⚠️ run `migrate_2026-08-25d_job-admin-disabled.sql`**):
+    disabling from the UI sets it (reconcile leaves the row alone); enabling
+    clears it and reschedules via computeNextRun so a stale next_run_at can't
+    fire instantly. Entitlement-removal disables still don't set the flag.
+    Admin-disabled jobs are excluded from the "entitled but not scheduled"
+    warning — that warning is for gaps nobody chose. Code tolerates the
+    missing column pre-migration (falls back to non-sticky toggling).
+  - /jobs page: client selector dropdown + per-job Enable/Disable buttons
+    (calls the same per-client toggle route as the SEO-page Automation card);
+    "disabled (by you — stays off)" badge distinguishes deliberate opt-outs.
+  - **Post-migration verification of the 2026-08-25 handoff-#3 work ran clean**
+    (migrations a–c applied by Owen; throwaway client, real crawl, cleaned up):
+    crawl job recorded real cost (4.5¢) in job_runs; fix_verify round-trip —
+    fake done llms.txt fix → `regressed_at` (hyperbole still has no llms.txt),
+    clean titles fix → `verified_at`; `visibility_runs.cited_domains` persists
+    (google_aio stored semrush.com et al); fake unanswered question → real
+    Haiku brief with outline, question → `briefed`; budget gate at 1¢ →
+    `budget_exceeded`, no paid call. Bonus: Owen's locally running dev API
+    picked the throwaway's due jobs off the shared DB mid-test and ran the
+    new handlers via the dispatcher — CAS claiming and job_runs bookkeeping
+    confirmed on the real tick path, not just run-now.
+  - Still pending: `PERPLEXITY_API_KEY` (Owen fetching it) → live 4-leg
+    visibility run → flip the GEO bullet in tiers.ts. Brief→draft→publish→KB
+    loop verified through `briefed`; the publish half still needs a real
+    Framer-connected run.
+- **2026-08-25 (handoff #3 — SEO+GEO delivery loop: phases 0–6 built, partially
+  live-verified)** — Closed the gaps between "every tool exists" and "the month
+  runs itself." **⚠️ THREE MIGRATIONS to run before deploy** (in order):
+  `migrate_2026-08-25_job-runs.sql`, `migrate_2026-08-25b_seo-fix-tracking.sql`,
+  `migrate_2026-08-25c_geo-content.sql`. Everything degrades gracefully
+  pre-migration (verified), but budgets/cost history/fix-verify/briefs are
+  inert until they run.
+  - **Phase 0 (pricing)** was already shipped 2026-08-18 by handoff #2 —
+    verified live: Sweet Additions resolves to `care`, three-tier catalog +
+    legacy key/price maps intact. Nothing touched.
+  - **Phase 1 (scheduler gaps)** — `job_runs` audit table (cost per run,
+    'running' rows swept to failed after 30min), per-client monthly paid-job
+    budget (`portalConfig.jobBudgetCents`, default $5; sums real
+    `job_runs.cost_cents`; fail-closed on read errors, fail-open ONLY when the
+    table predates its migration; superadmin run-now bypasses), cost recorded
+    per handler (crawl = real DataForSEO cost; SERP 0.2¢/kw + visibility
+    1¢/leg are deliberate overestimates). New `fix_verify` (day 3) +
+    `content_brief` (day 2) jobs provision for seo-entitled clients;
+    visibility_poll upgraded to weekly on the seo tier. Superadmin
+    **Automation card** on the client SEO page (per-job status/cost, run-now,
+    toggle, budget editor, run history) + "Last audited" stamp under the
+    audit. **Found + fixed a real provisioning bug:** `desiredJobsFor` gated
+    on `entitlements.planKey` (Stripe-only), so a tier-ASSIGNED client with no
+    Stripe subscription — i.e. every newly onboarded client — got ZERO jobs;
+    now gates on `tierForKey(client.tierKey) || planKey`. Live-verified on a
+    throwaway seo client: 8 jobs provisioned, rank_check run-now →
+    `setup_incomplete` (no spend), unimplemented handler fails loudly,
+    budget defaults honored, cleanup left no orphans.
+  - **Phase 2 (setup checklist)** — `lib/setup-status.ts` computes (never
+    stores) the 5 core gates (GSC live-fetch, ≥5 keywords, ≥3 visibility
+    queries, brand terms, baseline crawl) + conditional local/content items;
+    `GET /:id/setup-status` (superadmin + entitled client); collapsible
+    SetupBanner on the SEO page linking each red item to its config screen.
+    rank_check/visibility_poll now report `setup_incomplete` instead of
+    erroring when prerequisites are missing. Live-verified (5 red on a fresh
+    client; Spec-ID shows 4). NOT built: the red count badge on the
+    superadmin client list (would live-fetch GSC per client on list load —
+    needs a cheaper variant).
+  - **Phase 3 (This-month panel)** — `lib/month-summary.ts` +
+    `GET /:id/month-summary?month=YYYY-MM` (attention[] stripped for
+    clients); `MonthSummaryCard` leads ClientHome for seo-entitled clients
+    (wins-first framing, month picker, per-provider visibility, keyword
+    movers, "who's getting cited instead", quota, unanswered questions,
+    superadmin attention list). `change_requests.source`
+    ('client'|'seo_fix') + `fix_meta` set by all three fix creators.
+    Report email extended: keyword movers, per-provider visibility, content
+    published, verified-fix count, unanswered-question count — old stored
+    reports still render (all new fields optional). Live-verified against
+    Spec-ID (real July post + keywords rendered; graceful empty state on a
+    bare client; pre-migration column absences degrade to warnings).
+  - **Phase 4a (four engines)** — `lib/visibility.ts` now runs
+    openai/anthropic/perplexity/google_aio, each leg skipped (logged) when
+    unconfigured. Perplexity via `sonar` (`PERPLEXITY_API_KEY` — **NOT YET
+    SET; Owen must add it**, leg is built but unverified). Google AI
+    Overviews via the existing DataForSEO SERP subscription
+    (`load_async_ai_overview` on the same endpoint as rank checks) —
+    **LIVE-VERIFIED**: real overview text + cited domains for "what is
+    technical seo" (semrush.com et al), correct no-overview signal for a
+    local query (recorded as skip, not mention=false, so the rate isn't
+    polluted). Native citations stored in `visibility_runs.cited_domains`
+    (insert falls back pre-migration); dashboard visibility tab: per-provider
+    % cards + "Who's getting cited instead". **GEO tier bullet stays
+    `built: false`** until the Perplexity leg is live-verified with a real
+    key.
+  - **Phase 4b (questions → briefs)** — `chat_unanswered_questions`
+    (orchestrator's low-confidence path now upserts fire-and-forget;
+    `seedUnansweredFromHistory` backfills 90 days of message_logs on first
+    brief run) + `content_briefs` tables; `generateBriefs` (Haiku, N = tier
+    quota min 1, + up to 2 unranked target keywords, idempotent per month)
+    wired as the `content_brief` job; routes `GET /:id/content/briefs`
+    (entitled clients read) + superadmin `POST .../briefs/:id/draft` →
+    existing draftPost flow, brief marked drafted; on PUBLISH the source
+    question flips to `answered` and the Q&A is added to the chatbot KB via
+    `addDocument`. BriefsCard on the Content page. **Not live-verified**
+    (blocked on migration c) — verify post-migration: fake unanswered
+    question → brief → draft → publish → question answered + KB doc exists.
+  - **Phase 4c (quotas)** — `transitionPost` blocks publishing past the
+    tier's `contentPiecesPerMonth` (clear message; superadmin `overrideQuota`
+    honored on both the status PATCH and the Framer publish route); month
+    summary surfaces quotaUsed/quotaCap. `pagesPerMonth` NOT enforced —
+    there's no countable "optimized page" object yet; bullet stays false.
+  - **Phase 5 (fix verification)** — `verifySeoFixes` in seo-fixes.ts:
+    every done `seo_fix` request compared to the latest finished crawl
+    (checkKeys×URLs; `llms_txt` pseudo-key reads aiSearch.hasLlmsTxt; fixes
+    done after the crawl wait for the next one) → sets
+    `verified_at`/`regressed_at`; wired as the `fix_verify` job (free).
+    Month summary's issuesFixed counts VERIFIED only; regressions surface in
+    attention[]. Schema fixes have no crawl check → `unverifiable`, stay
+    manual. **Not live-verified** (blocked on migration b) — verify with a
+    real title fix + re-crawl on hyperboledigital.com.
+  - **Phase 6 (report send)** — **deliberate semantics change over handoff
+    #2:** the scheduled report path (health_report job + legacy interval) is
+    now DRAFT-ONLY — generates, claims the period as 'drafted', and posts a
+    Slack nudge to `SUPERADMIN_SLACK_WEBHOOK`; email leaves only on a
+    superadmin click (the existing guarded `sendReport`, or the run-now
+    route which passes `sendEmail: true`). This implements handoff #3's
+    "generation scheduled, sending manual" guardrail; Owen should confirm he
+    wants drafts-not-sends (flip is one option flag if not). PDF attachment
+    on send NOT built — no server-side report PDF exists (the jspdf audit
+    PDF is dashboard-side and audit-shaped).
+  - Typechecks clean across the workspace after every phase. All throwaway
+    verify clients deleted. **Post-migration verification list:** budget
+    skip at 1¢, job_runs rows w/ real crawl cost, fix-verify round-trip,
+    brief pipeline end-to-end, Perplexity leg once the key lands (then flip
+    the GEO bullet).
 - **2026-07-21 (offer-sheet audit → tiers, Site Health, Local Presence)** — Owen
   supplied the finalized Local Services + B2B offer sheets as a PDF and asked for
   a gap report against the codebase. Three things shipped off the back of it; the

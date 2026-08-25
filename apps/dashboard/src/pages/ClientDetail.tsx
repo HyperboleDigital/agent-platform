@@ -27,6 +27,7 @@ import { SiteBaselineCard } from '@/components/site-baseline-card'
 import { ContactButton } from '@/components/contact-button'
 import { RequestsTable } from '@/components/requests-table'
 import { EmailListField } from '@/components/email-list-field'
+import { MonthSummaryCard } from '@/components/month-summary'
 
 // ── Section wrappers ─────────────────────────────────────────────────────────
 // Each maps a /clients/:id/<section> route to the section component below,
@@ -38,6 +39,8 @@ export function ClientHome() {
   const { data: stats } = useSWR(id ? ['stats', id] : null, () => api.clients.stats(id))
   const { entitlements } = useEntitlements(id)
   const chatEntitled = entitlements?.services.chat?.entitled ?? false
+  const seoEntitled = entitlements?.services.seo?.entitled ?? false
+  const { data: me } = useSWR('me', api.me)
 
   // Billing redirect toast — the API's success/cancel URLs land here.
   useEffect(() => {
@@ -63,6 +66,9 @@ export function ClientHome() {
   return (
     <div className="flex flex-col gap-6">
       <PlanStatusCard clientId={id} hosting={client?.hosting} />
+      {/* The retainer-justification view (handoff #3 §3) — the default landing
+          card for SEO+GEO clients: what happened this month, led by wins. */}
+      {seoEntitled && <MonthSummaryCard clientId={id} isSuperadmin={!!me?.isSuperadmin} />}
       {/* No Site Health on client-hosted sites — we can't act on uptime for a
           site we don't host, and a red badge we can't fix is worse than
           showing nothing. */}

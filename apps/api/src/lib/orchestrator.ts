@@ -1,4 +1,5 @@
 import type { IncomingMessage, AgentResponse, AgentConfig } from '@agent-platform/shared'
+import { recordUnansweredQuestion } from './content-briefs'
 import { DEFAULT_CONFIDENCE_THRESHOLD } from '@agent-platform/shared'
 import { searchDocsDetailed } from '../tools/knowledge-base'
 import { bookCalendly } from '../tools/calendly'
@@ -215,6 +216,10 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
     lowConfidence = true
     escalate = true
     needContact = true
+    // GEO content pipeline (handoff #3 §4b): persist the question the bot
+    // couldn't answer — these become monthly content briefs. Fire-and-forget;
+    // never blocks or breaks the reply.
+    void recordUnansweredQuestion(message.clientId, message.body)
     escalationReason = `Low retrieval confidence (${topSim.toFixed(2)} < ${threshold}) — bot was unsure and offered a human.`
     await notifyEscalation(client, {
       from: message.from,

@@ -113,11 +113,12 @@ const CATALOG: TierInfo[] = [
       // The crawl audit is live, but CWV and internal-linking work have no
       // dashboard surface of their own — bullet stays false until they do.
       { text: 'Ongoing technical SEO: audits, Core Web Vitals, internal linking', built: false },
-      // ⚠️ STAYS false: lib/visibility.ts tracks OpenAI + Anthropic only. The
-      // engine names were dropped from the copy, but "monthly citation
-      // tracking" as a category still promises more coverage than the two of
-      // three major engines we check. Do not flip without adding engines.
-      { text: 'AI search visibility (GEO): entity/schema optimization, llms.txt, monthly citation tracking', built: false },
+      // Flipped 2026-08-25: lib/visibility.ts now tracks all four engines —
+      // ChatGPT, Claude, Perplexity (native citations), and Google AI
+      // Overviews (DataForSEO capture) — live-verified in one run against
+      // hyperboledigital.com. llms.txt + schema fix generation ship as
+      // change requests; citation runs are weekly on this tier.
+      { text: 'AI search visibility (GEO): entity/schema optimization, llms.txt, monthly citation tracking', built: true, section: 'seo' },
       { text: 'Quarterly strategy call', built: false }
     ]
   },

@@ -6,6 +6,18 @@ import { listAttachments, ATTACHMENT_BUCKET } from './attachments'
 
 export type RequestStatus = 'open' | 'in_progress' | 'done' | 'declined' | 'cancelled'
 
+// Who originated the request: a client ask, or a platform-generated SEO fix
+// (seo-fixes.ts). SEO fixes carry fix_meta so the fix_verify job can confirm
+// them against the next crawl — see migrate_2026-08-25b_seo-fix-tracking.sql.
+export type RequestSource = 'client' | 'seo_fix'
+
+export interface FixMeta {
+  // Crawl check keys this fix addresses (empty = not crawl-verifiable).
+  checkKeys: string[]
+  // The page URLs the fix targets.
+  urls: string[]
+}
+
 export interface ChangeRequest {
   id: string
   clientId: string
@@ -17,6 +29,10 @@ export interface ChangeRequest {
   createdAt: string
   updatedAt: string
   completedAt: string | null
+  source: RequestSource
+  fixMeta: FixMeta | null
+  verifiedAt: string | null
+  regressedAt: string | null
 }
 
 interface Row {
@@ -30,6 +46,11 @@ interface Row {
   created_at: string
   updated_at: string
   completed_at: string | null
+  // Optional pre-migration: absent until migrate_2026-08-25b runs.
+  source?: RequestSource | null
+  fix_meta?: FixMeta | null
+  verified_at?: string | null
+  regressed_at?: string | null
 }
 
 function fromRow(r: Row): ChangeRequest {
@@ -43,7 +64,11 @@ function fromRow(r: Row): ChangeRequest {
     cancelReason: r.cancel_reason,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
-    completedAt: r.completed_at
+    completedAt: r.completed_at,
+    source: r.source ?? 'client',
+    fixMeta: r.fix_meta ?? null,
+    verifiedAt: r.verified_at ?? null,
+    regressedAt: r.regressed_at ?? null
   }
 }
 
@@ -152,10 +177,17 @@ export async function listOpenRequests(): Promise<ChangeRequestWithClient[]> {
   return requests.map(r => ({ ...r, clientName: nameById.get(r.clientId) ?? 'Unknown client' }))
 }
 
-export async function createRequest(clientId: string, title: string, description: string, createdBy: string | null): Promise<ChangeRequest> {
+export async function createRequest(
+  clientId: string, title: string, description: string, createdBy: string | null,
+  opts: { source?: RequestSource; fixMeta?: FixMeta } = {}
+): Promise<ChangeRequest> {
   const { data, error } = await supabase
     .from('change_requests')
-    .insert({ client_id: clientId, title, description, created_by: createdBy })
+    .insert({
+      client_id: clientId, title, description, created_by: createdBy,
+      ...(opts.source ? { source: opts.source } : {}),
+      ...(opts.fixMeta ? { fix_meta: opts.fixMeta } : {}),
+    })
     .select()
     .single()
   if (error) throw error

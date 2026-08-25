@@ -44,6 +44,20 @@ Done so far (§0 + §1 of the handoff):
 Next per the handoff order: Care report blocks + review queue (§2.2), GEO
 tracking gaps (§3.1), SEO+GEO report (§2.3), content pipeline (§5).
 
+### Handoff #3 (SEO+GEO delivery loop) — built 2026-08-25
+
+Full detail in `docs/plans/seo-automation.md`'s checkpoint log (2026-08-25
+entry). **⚠️ RUN THESE MIGRATIONS in order before deploying:**
+`migrate_2026-08-25_job-runs.sql`, `migrate_2026-08-25b_seo-fix-tracking.sql`,
+`migrate_2026-08-25c_geo-content.sql`. Perplexity key set + all
+four GEO engines live-verified 2026-08-25; GEO bullet flipped. **Set
+`PERPLEXITY_API_KEY` on Render as well** (local .env only so far). Also run
+`migrate_2026-08-25d_job-admin-disabled.sql` for sticky per-client job
+opt-outs. Note the
+deliberate semantics change: scheduled monthly reports now DRAFT + Slack-nudge
+instead of auto-sending — the send is a dashboard click (see checkpoint entry;
+one option flag to revert if you'd rather keep auto-send).
+
 
 Working list of what's next / unfinished. Owen reviews and edits this
 directly — treat entries here as authoritative over anything a session
@@ -213,8 +227,11 @@ Other notes:
   a chat-including tier). Test it deliberately on Spec-ID — assign Growth, drop
   to Care, confirm the comp grant appears and the "live but unmanaged" notice
   renders — before a real client ever downgrades.
-- The GEO bullet stays `built: false` — visibility still tracks OpenAI +
-  Anthropic only; packaging changed, coverage didn't.
+- The GEO bullet flipped to `built: true` on 2026-08-25 — all four engines
+  (ChatGPT, Claude, Perplexity, Google AI Overviews) live-verified in one
+  run. Remember to set `PERPLEXITY_API_KEY` on Render too, or the deployed
+  API silently skips that leg. Per handoff #2 §0.2 the $1,200 price was held
+  until this shipped — repricing is now unblocked (Owen's call).
 
 ## Offer-sheet gaps (from the 2026-07-21 PDF audit)
 

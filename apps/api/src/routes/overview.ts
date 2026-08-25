@@ -3,7 +3,7 @@ import { getIdentity } from '../lib/authz'
 import { getOverviewSummary, getClientRollups } from '../lib/overview'
 import { listOpenRequests, updateRequestStatus } from '../lib/change-requests'
 import { startAdhocCrawl, refreshAdhocCrawl, listAdhocCrawls, crawlConfigured } from '../lib/dataforseo'
-import { listJobsOverview, runJobNow, reconcileAllClients } from '../lib/scheduled-jobs'
+import { listJobsOverview, runJobNow, reconcileAllClients, listJobTypes } from '../lib/scheduled-jobs'
 import { gmailConfigured, getPlatformAuthUrl, checkPlatformGmailStatus, disconnectPlatformGmail } from '../lib/gmail'
 
 export const overviewRouter = Router()
@@ -27,6 +27,10 @@ overviewRouter.get('/jobs', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to load jobs' })
   }
+})
+
+overviewRouter.get('/jobs/types', (_req, res) => {
+  res.json(listJobTypes())
 })
 
 overviewRouter.post('/jobs/:id/run', async (req, res) => {

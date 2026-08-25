@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from './supabase'
 import { getClientById } from './clients'
 import { complete } from './llm/complete'
+import { fetchAiOverview, crawlConfigured } from './dataforseo'
 
 // AI-search visibility tracking: does ChatGPT/Claude mention this client's
 // brand when asked a query a prospective customer might actually ask? Uses
@@ -18,10 +19,22 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const CHEAP_OPENAI_MODEL = process.env.OPENAI_CHEAP_MODEL ?? 'gpt-4o-mini'
 const CHEAP_ANTHROPIC_MODEL = process.env.ANTHROPIC_CHEAP_MODEL ?? 'claude-haiku-4-5-20251001'
 
-export type Provider = 'openai' | 'anthropic'
+// Four engines (handoff #3 §4a): ChatGPT + Claude via each provider's own
+// live web-search tool; Perplexity via its API (returns citations natively);
+// Google AI Overviews via the existing DataForSEO SERP subscription's
+// load_async_ai_overview capture. Each leg degrades gracefully when its
+// key/vendor isn't configured.
+export type Provider = 'openai' | 'anthropic' | 'perplexity' | 'google_aio'
 
 interface RawAnswer {
   text: string
+  // Domains the engine itself cited (Perplexity + AI Overviews return these
+  // natively). undefined = the engine doesn't report citations; we fall back
+  // to string-matching the answer text.
+  citedDomains?: string[]
+  // google_aio only: the query produced no AI Overview at all. Recorded as
+  // its own signal rather than a mention=false (see runVisibilityChecks).
+  noAnswer?: boolean
 }
 
 async function askOpenAI(query: string): Promise<RawAnswer> {
@@ -36,6 +49,46 @@ async function askOpenAI(query: string): Promise<RawAnswer> {
 // The installed @anthropic-ai/sdk (0.24.3) predates typed support for the
 // server-side web_search tool, but the Messages API itself accepts it
 // regardless of SDK type coverage — cast the tool block through.
+const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL ?? 'sonar'
+
+// Perplexity: OpenAI-compatible chat endpoint; citations come back natively
+// (top-level `citations` — URL strings — and/or `search_results` objects).
+async function askPerplexity(query: string): Promise<RawAnswer> {
+  const res = await fetch('https://api.perplexity.ai/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: PERPLEXITY_MODEL,
+      messages: [{ role: 'user', content: query }],
+      max_tokens: 1024,
+    }),
+  })
+  if (!res.ok) throw new Error(`Perplexity API ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  const json = await res.json() as any
+  const text = json.choices?.[0]?.message?.content ?? ''
+  const domains = new Set<string>()
+  for (const c of json.citations ?? []) {
+    if (typeof c === 'string') {
+      const d = c.replace(/^https?:\/\//, '').split('/')[0]
+      if (d) domains.add(d.toLowerCase().replace(/^www\./, ''))
+    }
+  }
+  for (const r of json.search_results ?? []) {
+    const d = typeof r?.url === 'string' ? r.url.replace(/^https?:\/\//, '').split('/')[0] : null
+    if (d) domains.add(d.toLowerCase().replace(/^www\./, ''))
+  }
+  return { text, citedDomains: [...domains] }
+}
+
+async function askGoogleAio(query: string): Promise<RawAnswer> {
+  const overview = await fetchAiOverview(query)
+  if (!overview) return { text: '', noAnswer: true }
+  return { text: overview.text, citedDomains: overview.citedDomains }
+}
+
 async function askAnthropic(query: string): Promise<RawAnswer> {
   const res = await anthropic.messages.create({
     model: CHEAP_ANTHROPIC_MODEL,
@@ -131,6 +184,7 @@ export interface VisibilityRun {
   mentioned: boolean
   domainCited: boolean
   snippet: string | null
+  citedDomains: string[] | null
   createdAt: string
 }
 
@@ -143,6 +197,7 @@ interface RunRow {
   mentioned: boolean
   domain_cited: boolean
   snippet: string | null
+  cited_domains?: string[] | null
   created_at: string
 }
 
@@ -156,6 +211,7 @@ function runFromRow(r: RunRow): VisibilityRun {
     mentioned: r.mentioned,
     domainCited: r.domain_cited,
     snippet: r.snippet,
+    citedDomains: r.cited_domains ?? null,
     createdAt: r.created_at
   }
 }
@@ -175,30 +231,51 @@ export async function runVisibilityChecks(clientId: string, queryId?: string): P
     : (await listQueries(clientId)).filter(q => q.active)
   if (queries.length === 0) return []
 
+  // Only run the legs that are actually configured — a missing key skips its
+  // engine (logged once per run) instead of erroring every query.
+  const legs: Array<[Provider, (q: string) => Promise<RawAnswer>, string | null]> = []
+  if (process.env.OPENAI_API_KEY) legs.push(['openai', askOpenAI, CHEAP_OPENAI_MODEL])
+  if (process.env.ANTHROPIC_API_KEY) legs.push(['anthropic', askAnthropic, CHEAP_ANTHROPIC_MODEL])
+  if (process.env.PERPLEXITY_API_KEY) legs.push(['perplexity', askPerplexity, PERPLEXITY_MODEL])
+  if (crawlConfigured()) legs.push(['google_aio', askGoogleAio, null])
+  const skipped = (['openai', 'anthropic', 'perplexity', 'google_aio'] as Provider[]).filter(p => !legs.some(l => l[0] === p))
+  if (skipped.length) console.warn(`[visibility] engines not configured, skipped: ${skipped.join(', ')}`)
+
+  const normalizedDomain = domain.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '')
+
   const results: VisibilityRun[] = []
   for (const q of queries) {
-    for (const [provider, ask, model] of [
-      ['openai', askOpenAI, CHEAP_OPENAI_MODEL],
-      ['anthropic', askAnthropic, CHEAP_ANTHROPIC_MODEL]
-    ] as const) {
+    for (const [provider, ask, model] of legs) {
       try {
         const answer = await ask(q.query)
+        // google_aio with no AI Overview at all: nothing to judge — skip the
+        // row rather than record a mention=false that would drag the rate
+        // down for a query Google doesn't AI-answer for ANYONE.
+        if (answer.noAnswer) continue
         const judged = await judgeMention(answer.text, brandTerms, domain)
-        const { data, error } = await supabase
-          .from('visibility_runs')
-          .insert({
-            client_id: clientId,
-            query_id: q.id,
-            provider,
-            model,
-            mentioned: judged.mentioned,
-            domain_cited: judged.domainCited,
-            snippet: judged.snippet || null
-          })
-          .select()
-          .single()
-        if (error) { console.error('[visibility] failed to save run', error.message); continue }
-        results.push(runFromRow(data as RunRow))
+        // Native citations beat string-matching where the engine reports them.
+        const citedDomains = answer.citedDomains ?? null
+        const domainCited = citedDomains
+          ? citedDomains.some(d => d === normalizedDomain) || judged.domainCited
+          : judged.domainCited
+        const row = {
+          client_id: clientId,
+          query_id: q.id,
+          provider,
+          model,
+          mentioned: judged.mentioned || domainCited,
+          domain_cited: domainCited,
+          snippet: judged.snippet || null,
+        }
+        // cited_domains predates migrate_2026-08-25c on some environments —
+        // retry without it so runs aren't lost mid-rollout.
+        let ins = await supabase.from('visibility_runs')
+          .insert({ ...row, cited_domains: citedDomains }).select().single()
+        if (ins.error && /cited_domains/.test(ins.error.message)) {
+          ins = await supabase.from('visibility_runs').insert(row).select().single()
+        }
+        if (ins.error) { console.error('[visibility] failed to save run', ins.error.message); continue }
+        results.push(runFromRow(ins.data as RunRow))
       } catch (err) {
         console.error(`[visibility] ${provider} check failed for query "${q.query}"`, err)
       }
