@@ -230,6 +230,16 @@ export interface SendEmailOptions {
   // notification previews) still read correctly.
   html?: string
   extraHeaders?: Record<string, string>
+  // Files to attach (multipart/mixed). `contentBase64` is plain base64 — no
+  // data: URI prefix. Callers are responsible for size sanity; Gmail rejects
+  // messages over 25MB total.
+  attachments?: EmailAttachment[]
+}
+
+export interface EmailAttachment {
+  filename: string
+  contentType: string   // e.g. "application/pdf"
+  contentBase64: string
 }
 
 // Shared MIME-building + send, given an already-resolved connection — the
@@ -244,7 +254,7 @@ async function sendViaConnection(
   optionsOrHeaders: SendEmailOptions | Record<string, string> = {}
 ): Promise<void> {
   // Back-compat: this used to take a bare extraHeaders map as the 5th arg.
-  const isOptions = ['fromName', 'replyTo', 'html', 'extraHeaders']
+  const isOptions = ['fromName', 'replyTo', 'html', 'extraHeaders', 'attachments']
     .some(k => k in optionsOrHeaders)
   const options: SendEmailOptions = isOptions
     ? optionsOrHeaders as SendEmailOptions
@@ -267,13 +277,15 @@ async function sendViaConnection(
 
   // Bodies are NOT header-sanitized (newlines are fine there) but always sit
   // after the blank line, so they can't inject headers regardless.
-  let mime: string
+  //
+  // The text/html content is built headerless first so it can sit either at
+  // the top level (no attachments) or as the first part of a multipart/mixed
+  // envelope (with attachments).
+  let contentLines: string[]
   if (options.html) {
     // Boundary is random so body text can never accidentally contain it.
     const boundary = `==_ap_${randomBytes(12).toString('hex')}`
-    mime = [
-      ...headerLines,
-      'MIME-Version: 1.0',
+    contentLines = [
       `Content-Type: multipart/alternative; boundary="${boundary}"`,
       '',
       `--${boundary}`,
@@ -285,9 +297,42 @@ async function sendViaConnection(
       '',
       options.html,
       `--${boundary}--`
-    ].join('\r\n')
+    ]
   } else {
-    mime = [...headerLines, 'Content-Type: text/plain; charset="UTF-8"', '', body].join('\r\n')
+    contentLines = ['Content-Type: text/plain; charset="UTF-8"', '', body]
+  }
+
+  let mime: string
+  if (options.attachments?.length) {
+    const mixed = `==_ap_mix_${randomBytes(12).toString('hex')}`
+    const lines = [
+      ...headerLines,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${mixed}"`,
+      '',
+      `--${mixed}`,
+      ...contentLines
+    ]
+    for (const att of options.attachments) {
+      // Filename lands inside a quoted header parameter — quotes stripped on
+      // top of the usual CRLF sanitization so it can't break out.
+      const filename = headerSafe(att.filename).replace(/"/g, '')
+      lines.push(
+        `--${mixed}`,
+        `Content-Type: ${headerSafe(att.contentType)}; name="${filename}"`,
+        'Content-Transfer-Encoding: base64',
+        `Content-Disposition: attachment; filename="${filename}"`,
+        '',
+        // RFC 2045 caps encoded lines at 76 chars.
+        att.contentBase64.replace(/\s+/g, '').match(/.{1,76}/g)?.join('\r\n') ?? ''
+      )
+    }
+    lines.push(`--${mixed}--`)
+    mime = lines.join('\r\n')
+  } else {
+    mime = options.html
+      ? [...headerLines, 'MIME-Version: 1.0', ...contentLines].join('\r\n')
+      : [...headerLines, ...contentLines].join('\r\n')
   }
 
   const gmail = google.gmail({ version: 'v1', auth: conn.client })

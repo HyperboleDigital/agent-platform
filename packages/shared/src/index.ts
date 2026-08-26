@@ -1,6 +1,8 @@
 // ─── Shared types across API, dashboard, and widget ──────────────────────────
 
-export type Channel = 'chat' | 'email'
+// 'roi-calculator' leads arrive via the public website ROI calculator
+// endpoint (apps/api/src/routes/roi-leads.ts), not a conversation.
+export type Channel = 'chat' | 'email' | 'roi-calculator'
 export type Intent = 'faq' | 'booking' | 'lead' | 'escalate' | 'unknown'
 
 export interface IncomingMessage {

@@ -16,6 +16,7 @@ import { overviewRouter } from './routes/overview'
 import { prospectingRouter } from './routes/prospecting'
 import { previewRouter } from './routes/preview'
 import { widgetConfigRouter } from './routes/widget-config'
+import { roiLeadsRouter } from './routes/roi-leads'
 import { getIdentity } from './lib/authz'
 import { reconcileUserMembership } from './lib/clients'
 import { finalizePendingCrawls } from './lib/dataforseo'
@@ -45,6 +46,12 @@ app.use(helmet())
 const WIDGET_PUBLIC_PATHS = ['/chat', '/contact', '/widget-config']
 const widgetCors = cors({ origin: '*' })
 
+// The Spec-ID website's ROI calculator posts leads here (see
+// routes/roi-leads.ts). Unlike the widget it lives on exactly one known site,
+// so its CORS is pinned to that site's origins rather than '*'.
+const ROI_LEADS_PATH = '/leads/roi-calculator'
+const roiCors = cors({ origin: ['https://spec-id.com', 'https://www.spec-id.com'] })
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean)
 if (!allowedOrigins?.length) {
   console.warn('[cors] ALLOWED_ORIGINS is not set — cross-origin requests will be rejected. Set it for the dashboard origins that need access.')
@@ -52,6 +59,7 @@ if (!allowedOrigins?.length) {
 const strictCors = cors({ origin: allowedOrigins ?? [] })
 
 app.use((req, res, next) => {
+  if (req.path === ROI_LEADS_PATH) return roiCors(req, res, next)
   const isWidgetPath = WIDGET_PUBLIC_PATHS.some(p => req.path === p || req.path.startsWith(`${p}/`))
   return isWidgetPath ? widgetCors(req, res, next) : strictCors(req, res, next)
 })
@@ -65,6 +73,13 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), stripeWe
 // needs Clerk's exact raw bytes, and this is an unauthenticated,
 // signature-verified external caller, not a dashboard request.
 app.post('/webhooks/clerk', express.raw({ type: 'application/json' }), clerkWebhookHandler)
+
+// ROI calculator leads carry the visitor's PDF as base64 (route caps the
+// decoded PDF at 2MB → ~2.7MB of JSON), so this one route gets its own larger
+// body parser. Registered BEFORE the global 1mb parser below — body-parser
+// skips a request whose body is already parsed, so the global limit never
+// re-applies here, and no other route gets the bigger allowance.
+app.use(ROI_LEADS_PATH, express.json({ limit: '4mb' }), roiLeadsRouter)
 
 app.use(express.json({ limit: '1mb' }))
 app.use(clerkMiddleware()) // attaches req.auth when a Clerk session is present; doesn't block anonymous requests

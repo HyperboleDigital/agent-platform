@@ -34,10 +34,13 @@ function fromRow(row: LeadRow): Lead {
 }
 
 export async function logLead(
-  lead: Omit<Lead, 'id' | 'createdAt' | 'channel' | 'status'> & { sessionId?: string }
+  // `channel` is optional so existing chat/contact callers keep the table's
+  // 'chat' default; non-conversation sources (ROI calculator) pass theirs.
+  lead: Omit<Lead, 'id' | 'createdAt' | 'channel' | 'status'> & { sessionId?: string; channel?: Channel }
 ): Promise<void> {
   await supabase.from('leads').insert({
     client_id: lead.clientId,
+    ...(lead.channel ? { channel: lead.channel } : {}),
     name: lead.name,
     email: lead.email,
     intent: lead.intent,

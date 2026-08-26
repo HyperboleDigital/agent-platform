@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { sendSlackAlert } from '../tools/slack'
-import { sendPlainEmail, gmailConnected, sendPlatformEmail, platformGmailConnected } from './gmail'
+import { sendPlainEmail, gmailConnected, sendPlatformEmail, platformGmailConnected, type EmailAttachment } from './gmail'
 import { buildEmail, type EmailBrand, type EmailRow } from './email-template'
 import { logoUrl } from './widget-logo'
 import type { Client } from '@agent-platform/shared'
@@ -14,11 +14,27 @@ export interface EscalationInput {
   name?: string
   message: string       // what the visitor said / wants
   reason: string        // why it's being escalated
-  channel: 'chat' | 'contact_form'
+  channel: 'chat' | 'contact_form' | 'roi-calculator'
   // Only present for clients whose widgetConfig.contactFields opted into these.
   company?: string
   phone?: string
   division?: string
+  // Extra labeled rows for the notification email, e.g. the ROI calculator's
+  // inputs/results. Rendered between the contact rows and the Reason row.
+  details?: EmailRow[]
+  // Attached to the notification email (e.g. the ROI summary PDF the visitor
+  // downloaded). Never persisted — email-only.
+  attachments?: EmailAttachment[]
+}
+
+// Where LEAD notifications (contact form, ROI calculator, sales inquiries) go.
+// Support escalations always go to agentConfig.escalationEmail; leads prefer a
+// dedicated sales recipient when one is configured. Spec-ID's is Tom, set via
+// SPEC_ID_LEAD_EMAIL in the deployment env (no per-client config slot for a
+// separate lead recipient exists yet — add one before a second client needs it).
+function leadRecipient(client: Client): string | undefined {
+  if (client.slug === 'spec-id' && process.env.SPEC_ID_LEAD_EMAIL) return process.env.SPEC_ID_LEAD_EMAIL
+  return client.agentConfig?.escalationEmail
 }
 
 // Chat escalations pass the widget's session id as `from` (sess_<rand>) —
@@ -53,14 +69,19 @@ function brandFor(client: Client): EmailBrand {
 export async function notifyEscalation(client: Client, input: EscalationInput): Promise<void> {
   const cfg = client.agentConfig ?? ({} as Client['agentConfig'])
   const visitorEmail = asEmail(input.from)
-  // A contact-form submission is someone asking to be contacted — that's a
-  // lead. A chat escalation is the bot getting stuck. Same plumbing, but the
-  // salesperson opening it should immediately know which one they've got.
-  const isLead = input.channel === 'contact_form'
+  // A contact-form submission or a calculator download is someone asking to
+  // be contacted — that's a lead. A chat escalation is the bot getting stuck.
+  // Same plumbing, but the salesperson opening it should immediately know
+  // which one they've got.
+  const isLead = input.channel !== 'chat'
+  const isRoi = input.channel === 'roi-calculator'
 
-  // 1. Record it (also powers the dashboard "open escalations" stat).
+  // 1. Record it (also powers the dashboard "open escalations" stat). An ROI
+  // calculator download is NOT an escalation — it already exists as a lead
+  // row, and an open-escalation per PDF download would just be noise to
+  // resolve — so only conversation-driven channels record one.
   // Note: the escalations table's required address column is `from_email`.
-  await supabase.from('escalations').insert({
+  if (!isRoi) await supabase.from('escalations').insert({
     client_id: client.id,
     from_email: input.from,
     body: input.message,
@@ -96,31 +117,44 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
   // misfiring is a reputational risk — a live visitor's escalation must reach
   // the real client inbox in production, the same way it already does when
   // sent via the client's own Gmail.
-  if (cfg.escalationEmail) {
+  const to = isLead ? leadRecipient(client) : cfg.escalationEmail
+  if (to) {
     const who = input.name || visitorEmail || 'A website visitor'
     // Subjects are read in a crowded inbox list, so they lead with what
     // happened and who it was — not an opaque reason code and a session id.
-    const subject = isLead
-      ? `${SUBJECT_PREFIX} New lead — ${who}`
-      : `${SUBJECT_PREFIX} Needs a human — ${who}`
+    // The bracketed prefix names the SOURCE so a one-time Gmail filter can
+    // file each stream separately.
+    const subject = isRoi
+      ? `[ROI Calculator] New lead — ${who}`
+      : isLead
+        ? `${SUBJECT_PREFIX} New lead — ${who}`
+        : `${SUBJECT_PREFIX} Needs a human — ${who}`
 
     const rows: EmailRow[] = [{ label: 'From', value: input.name || visitorEmail || 'Anonymous visitor' }]
     if (visitorEmail) rows.push({ label: 'Email', value: visitorEmail, href: `mailto:${visitorEmail}` })
     if (input.company) rows.push({ label: 'Company', value: input.company })
     if (input.phone) rows.push({ label: 'Phone', value: input.phone, href: `tel:${input.phone}` })
     if (input.division) rows.push({ label: 'Division', value: input.division })
+    if (input.details?.length) rows.push(...input.details)
     rows.push({ label: 'Reason', value: input.reason })
-    rows.push({ label: 'Source', value: isLead ? 'Website contact form' : 'Website chat' })
+    rows.push({
+      label: 'Source',
+      value: isRoi ? 'Website ROI calculator' : isLead ? 'Website contact form' : 'Website chat'
+    })
     rows.push({ label: 'Received', value: new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) })
 
     const { html, text } = buildEmail(brandFor(client), {
-      eyebrow: isLead ? 'New lead' : 'Needs a human',
-      headline: isLead
-        ? `${who} wants to hear from you`
-        : `Your assistant handed off a conversation`,
-      intro: isLead
-        ? 'Someone reached out through your website and is waiting on a reply.'
-        : "Your AI assistant couldn't finish this one on its own and flagged it for a person.",
+      eyebrow: isRoi ? 'New lead — ROI calculator' : isLead ? 'New lead' : 'Needs a human',
+      headline: isRoi
+        ? `${who} ran the ROI calculator`
+        : isLead
+          ? `${who} wants to hear from you`
+          : `Your assistant handed off a conversation`,
+      intro: isRoi
+        ? 'They entered their numbers on your website, downloaded their ROI summary (attached), and left their contact details.'
+        : isLead
+          ? 'Someone reached out through your website and is waiting on a reply.'
+          : "Your AI assistant couldn't finish this one on its own and flagged it for a person.",
       rows,
       quote: input.message?.trim() ? { title: 'What they said', text: input.message } : undefined,
       cta: visitorEmail ? { label: `Reply to ${input.name || visitorEmail}`, url: `mailto:${visitorEmail}` } : undefined,
@@ -137,6 +171,7 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
       // The whole point: Reply reaches the prospect, not their own inbox.
       replyTo: visitorEmail ?? undefined,
       html,
+      attachments: input.attachments,
       extraHeaders: { 'X-Agent-Platform-Event': isLead ? 'lead' : 'escalation' }
     }
 
@@ -148,7 +183,7 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
     let sent = false
     if (await gmailConnected(client.id)) {
       try {
-        await sendPlainEmail(client.id, cfg.escalationEmail, subject, text, sendOptions)
+        await sendPlainEmail(client.id, to, subject, text, sendOptions)
         sent = true
       } catch (err) {
         console.error(`[escalation] client Gmail send failed for ${client.id}, falling back to platform sender`, err)
@@ -157,7 +192,7 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
     if (!sent) {
       try {
         if (await platformGmailConnected()) {
-          await sendPlatformEmail(cfg.escalationEmail, subject, text, sendOptions)
+          await sendPlatformEmail(to, subject, text, sendOptions)
         } else {
           console.warn(`[escalation] no Gmail connected (client ${client.id} or platform) — email skipped`)
         }
