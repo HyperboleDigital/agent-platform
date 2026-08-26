@@ -1571,6 +1571,7 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
   const [hosting, setHosting] = useState<HostingOwner>(client.hosting ?? 'us')
   const [systemPromptExtra, setExtra] = useState(cfg.systemPromptExtra ?? '')
   const [escalationEmails, setEscalationEmails] = useState(splitEmails(cfg.escalationEmail))
+  const [supportEmails, setSupportEmails] = useState(splitEmails(cfg.supportEmail))
   const [saving, setSaving] = useState(false)
 
   const normalizedDomain = normalizeDomain(domain)
@@ -1585,7 +1586,7 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
       const updated = await api.clients.upsert({
         id: client.id,
         ...(me?.isSuperadmin ? { name, domain: normalizedDomain, slug, hosting } : {}),
-        agentConfig: { ...cfg, systemPromptExtra, escalationEmail: joinEmails(escalationEmails) }
+        agentConfig: { ...cfg, systemPromptExtra, escalationEmail: joinEmails(escalationEmails), supportEmail: joinEmails(supportEmails) }
       })
       mutate(['client', clientId])
       toast.success('Config saved', { icon: <CheckCircle2 className="h-4 w-4" /> })
@@ -1672,8 +1673,12 @@ function ConfigTab({ clientId, client }: { clientId: string; client: import('@ag
           </div>
         )}
         <div className="grid gap-1.5">
-          <Label>Escalation email(s) <span className="font-normal text-muted-foreground">(where "get a human" requests and captured leads are sent)</span></Label>
-          <EmailListField emails={escalationEmails} onChange={setEscalationEmails} placeholder="support@yourcompany.com" />
+          <Label>Lead email(s) <span className="font-normal text-muted-foreground">(where captured leads are sent — contact form, chatbot, website calculators)</span></Label>
+          <EmailListField emails={escalationEmails} onChange={setEscalationEmails} placeholder="sales@yourcompany.com" />
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Support escalation email(s) <span className="font-normal text-muted-foreground">(where "get a human" / couldn't-answer hand-offs are sent; empty = same as lead emails)</span></Label>
+          <EmailListField emails={supportEmails} onChange={setSupportEmails} placeholder="support@yourcompany.com" />
         </div>
         <Button onClick={save} disabled={saving || !!domainError} className="justify-self-start">
           {saving ? 'Saving…' : 'Save config'}

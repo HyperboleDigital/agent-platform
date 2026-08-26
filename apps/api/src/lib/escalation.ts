@@ -27,16 +27,6 @@ export interface EscalationInput {
   attachments?: EmailAttachment[]
 }
 
-// Where LEAD notifications (contact form, ROI calculator, sales inquiries) go.
-// Support escalations always go to agentConfig.escalationEmail; leads prefer a
-// dedicated sales recipient when one is configured. Spec-ID's is Tom, set via
-// SPEC_ID_LEAD_EMAIL in the deployment env (no per-client config slot for a
-// separate lead recipient exists yet — add one before a second client needs it).
-function leadRecipient(client: Client): string | undefined {
-  if (client.slug === 'spec-id' && process.env.SPEC_ID_LEAD_EMAIL) return process.env.SPEC_ID_LEAD_EMAIL
-  return client.agentConfig?.escalationEmail
-}
-
 // Chat escalations pass the widget's session id as `from` (sess_<rand>) —
 // only contact-form submissions carry a real address. Everything that treats
 // `from` as contactable has to check first, or a salesperson ends up hitting
@@ -117,7 +107,12 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
   // misfiring is a reputational risk — a live visitor's escalation must reach
   // the real client inbox in production, the same way it already does when
   // sent via the client's own Gmail.
-  const to = isLead ? leadRecipient(client) : cfg.escalationEmail
+  // Leads (contact form, chatbot capture, ROI calculator) go to the lead
+  // recipients (escalationEmail — comma-separated list, dashboard-managed).
+  // Support escalations prefer the dedicated supportEmail when one is set
+  // (e.g. Spec-ID routes "couldn't answer" hand-offs to contact@spec-id.com)
+  // and fall back to the lead recipients otherwise.
+  const to = isLead ? cfg.escalationEmail : (cfg.supportEmail || cfg.escalationEmail)
   if (to) {
     const who = input.name || visitorEmail || 'A website visitor'
     // Subjects are read in a crowded inbox list, so they lead with what

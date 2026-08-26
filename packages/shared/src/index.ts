@@ -154,7 +154,15 @@ export interface AgentConfig {
   knowledgeBaseIds: string[]
   calendlyLink?: string
   slackWebhook?: string
-  escalationEmail?: string   // where human-needed items (escalations, contact form) are sent
+  // Where captured LEADS (contact form, chatbot capture, ROI calculator) are
+  // sent. Comma-separated for multiple recipients (goes verbatim into the
+  // email's To: header). Also the fallback for support escalations when
+  // supportEmail is unset.
+  escalationEmail?: string
+  // Where SUPPORT escalations ("the assistant couldn't answer / get a human")
+  // are sent, when they should go somewhere other than the lead recipients —
+  // e.g. Spec-ID's contact@spec-id.com. Unset = escalationEmail.
+  supportEmail?: string
   autoSendThreshold: number
   emailDraft: boolean
   // Below this KB-retrieval confidence (top match cosine similarity, 0..1) the
