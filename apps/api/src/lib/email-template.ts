@@ -19,10 +19,10 @@ export interface EmailBrand {
   businessName: string
   color: string
   logoUrl?: string | null
-  // Optional centred text in the header bar. Unset (the norm) = the header
-  // shows just the client's mark — clients don't want "X Chat Assistant"
-  // branding on their notifications; the eyebrow/subject already say what
-  // the email is.
+  // Centred text in the header bar. Defaults to "Chat Assistant" — the
+  // generic system name WITHOUT the business name in front (the client asked
+  // that no company name ever appear in the bar; their logo already carries
+  // the identity). Pass a label only to override the generic text.
   label?: string
 }
 
@@ -121,16 +121,12 @@ export function renderEmailHtml(brand: EmailBrand, content: EmailContent): strin
   // centred in the bar rather than drifting toward the logo. Fixed 130px sides
   // keep that true in email clients, which don't support flexbox — and match
   // the logo's own max-width so a wide mark can't push the label off-centre.
-  // Without a label (the default for escalation/lead notifications — the
-  // client asked for just their mark, no "X Chat Assistant" text), the bar is
-  // simply the mark on its own.
-  const headerMark = brand.label
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+  const label = escapeHtml(brand.label ?? 'Chat Assistant')
+  const headerMark = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td align="left" width="130" style="width:130px;vertical-align:middle;">${mark}</td>
-        <td align="center" style="vertical-align:middle;font:600 16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:.02em;">${escapeHtml(brand.label)}</td>
+        <td align="center" style="vertical-align:middle;font:600 16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:.02em;">${label}</td>
         <td width="130" style="width:130px;">&nbsp;</td>
       </tr></table>`
-    : mark
 
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><meta name="color-scheme" content="light" />

@@ -46,9 +46,10 @@ function brandFor(client: Client): EmailBrand {
     // manually-entered one is already absolute. Either way it must be publicly
     // reachable, since an email client fetches it with no session.
     logoUrl: widget.logoPath ? logoUrl(client.id) : widget.logo
-    // No `label` on purpose: the header bar carries just the client's mark.
-    // "X Chat Assistant" text at the top was removed at the client's request —
-    // the subject line and eyebrow already say what the email is.
+    // No `label` on purpose: the template's generic "Chat Assistant" default
+    // is exactly what's wanted here — the client asked that no company name
+    // ever appear in the bar (their logo already carries the identity), so
+    // never prefix the business name onto it.
   }
 }
 
