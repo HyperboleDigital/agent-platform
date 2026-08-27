@@ -45,11 +45,10 @@ function brandFor(client: Client): EmailBrand {
     // An uploaded logo is served from our own origin as an absolute URL; a
     // manually-entered one is already absolute. Either way it must be publicly
     // reachable, since an email client fetches it with no session.
-    logoUrl: widget.logoPath ? logoUrl(client.id) : widget.logo,
-    // Names the client, not just the product — "Spec-ID Chat Assistant"
-    // reads as theirs; the template's generic "Chat Assistant" default is
-    // only for callers that don't have a client to brand this to.
-    label: `${businessName} Chat Assistant`
+    logoUrl: widget.logoPath ? logoUrl(client.id) : widget.logo
+    // No `label` on purpose: the header bar carries just the client's mark.
+    // "X Chat Assistant" text at the top was removed at the client's request —
+    // the subject line and eyebrow already say what the email is.
   }
 }
 

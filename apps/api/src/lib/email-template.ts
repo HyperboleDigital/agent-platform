@@ -19,9 +19,10 @@ export interface EmailBrand {
   businessName: string
   color: string
   logoUrl?: string | null
-  // Right-hand label in the header bar. Names the system this came from, so a
-  // salesperson glancing at it knows it's the website assistant and not a
-  // person emailing them. Defaults to "Chat Assistant".
+  // Optional centred text in the header bar. Unset (the norm) = the header
+  // shows just the client's mark — clients don't want "X Chat Assistant"
+  // branding on their notifications; the eyebrow/subject already say what
+  // the email is.
   label?: string
 }
 
@@ -114,17 +115,21 @@ export function renderEmailHtml(brand: EmailBrand, content: EmailContent): strin
     ? `<img src="${logo}" alt="${business}" height="28" style="height:28px;max-width:130px;display:block;border:0;" />`
     : `<span style="font:600 17px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;">${business}</span>`
 
-  // Three cells: the client's mark left, the system label centred, and an
-  // empty cell on the right of equal width so the label sits centred in the
-  // bar rather than drifting toward the logo. Fixed 130px sides keep that true
-  // in email clients, which don't support flexbox — and match the logo's own
-  // max-width so a wide mark can't push the label off-centre.
-  const label = escapeHtml(brand.label ?? 'Chat Assistant')
-  const headerMark = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+  // With a label: three cells — the client's mark left, the system label
+  // centred, and an empty cell on the right of equal width so the label sits
+  // centred in the bar rather than drifting toward the logo. Fixed 130px sides
+  // keep that true in email clients, which don't support flexbox — and match
+  // the logo's own max-width so a wide mark can't push the label off-centre.
+  // Without a label (the default for escalation/lead notifications — the
+  // client asked for just their mark, no "X Chat Assistant" text), the bar is
+  // simply the mark on its own.
+  const headerMark = brand.label
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
         <td align="left" width="130" style="width:130px;vertical-align:middle;">${mark}</td>
-        <td align="center" style="vertical-align:middle;font:600 16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:.02em;">${label}</td>
+        <td align="center" style="vertical-align:middle;font:600 16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:.02em;">${escapeHtml(brand.label)}</td>
         <td width="130" style="width:130px;">&nbsp;</td>
       </tr></table>`
+    : mark
 
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><meta name="color-scheme" content="light" />
