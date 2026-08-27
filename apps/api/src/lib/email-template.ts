@@ -109,11 +109,12 @@ export function renderEmailHtml(brand: EmailBrand, content: EmailContent): strin
 
   // Logo sits on the brand-coloured header bar, same as the widget, so a
   // light/white mark reads correctly — matching what the dashboard already
-  // tells operators when they upload one. A client with no logo gets their
-  // name in type instead, so the bar is never empty.
+  // tells operators when they upload one. NO text fallback on purpose: the
+  // client asked that the bar never show a company name — with no logo it's
+  // simply a slim brand-coloured band.
   const mark = logo
     ? `<img src="${logo}" alt="${business}" height="28" style="height:28px;max-width:130px;display:block;border:0;" />`
-    : `<span style="font:600 17px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;">${business}</span>`
+    : '&nbsp;'
 
   // With a label: three cells — the client's mark left, the system label
   // centred, and an empty cell on the right of equal width so the label sits
