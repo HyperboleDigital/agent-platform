@@ -308,7 +308,41 @@
   let messages = [{ role: 'assistant', content: WELCOME, ts: Date.now() }];
 
   const style = document.createElement('style');
-  style.textContent = `
+
+  // The widget lives in the HOST page's DOM, so its styles fight the site's
+  // own CSS in both directions. hardenCss() settles both at injection time:
+  //   1. Every rule is prefixed with #ap-widget — higher specificity AND a
+  //      guarantee that widget-internal class names (.cf-field, .ap-msg …)
+  //      can never style the page's own elements, whatever the site names
+  //      its classes.
+  //   2. Every declaration gets !important, so site-wide rules (Webflow/
+  //      Squarespace typography, resets) can't override widget styling.
+  //      @keyframes blocks are left untouched — !important is invalid there.
+  // Keeping the source CSS readable and transforming here beats hand-writing
+  // a thousand !importants.
+  function hardenCss(css) {
+    const KEYFRAMES = /@[-\w]*keyframes[^{]+\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g;
+    const saved = [];
+    // Park keyframes blocks so the rule transform can't touch them.
+    let out = css.replace(KEYFRAMES, (m) => `/*__KF${saved.push(m) - 1}__*/`);
+    out = out.replace(/([^{}@/]+)\{([^{}]*)\}/g, (m, sel, body) => {
+      const scoped = sel.split(',').map((s) => {
+        const t = s.trim();
+        if (!t) return t;
+        return t.startsWith('#ap-widget') ? t : `#ap-widget ${t}`;
+      }).join(', ');
+      // Split on ; but not inside url(...) etc.
+      const hardened = body.split(/;(?![^(]*\))/).map((d) => {
+        const t = d.trim();
+        if (!t || t.indexOf(':') < 0 || /!important$/i.test(t)) return d;
+        return `${d} !important`;
+      }).join(';');
+      return `${scoped}{${hardened}}`;
+    });
+    return out.replace(/\/\*__KF(\d+)__\*\//g, (_, i) => saved[Number(i)]);
+  }
+
+  const rawCss = `
     #ap-widget {
       --p: ${COLOR_PRIMARY};
       --p2: ${COLOR_SECONDARY};
@@ -793,6 +827,7 @@
       }
     }
   `;
+  style.textContent = hardenCss(rawCss);
   document.head.appendChild(style);
 
   // ─── Avatar content (logo > emoji > initial) ──────────────────────────────
