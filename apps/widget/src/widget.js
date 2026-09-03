@@ -323,6 +323,13 @@
       --bg-input: #F9FAFB;
       --success: #22C55E;
       --white: #ffffff;
+      /* Anchor typography at the widget root. Without this, any element that
+         doesn't set its own font-size/line-height inherits the HOST page's
+         body values — fine on a ~15px Squarespace site, huge on a Webflow
+         site with an 18px+ base. The widget must look identical everywhere. */
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text);
     }
     #ap-widget, #ap-widget * {
       box-sizing: border-box; margin: 0; padding: 0;
