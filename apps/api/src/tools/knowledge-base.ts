@@ -55,11 +55,27 @@ export async function searchDocsDetailed(query: string, clientId: string): Promi
         match_count: 3
       })
       if (!error && data?.length) {
-        const rows = data as DocRow[]
+        let rows = data as DocRow[]
+        // Rows stored without an embedding (Voyage rate-limited or down at
+        // ingest time — see addDocument's fallback) are invisible to the
+        // vector index, so a vector hit here can silently shadow better
+        // keyword matches among them. When any such rows exist for this
+        // client, merge in keyword hits so un-embedded documents stay
+        // findable until the backfill embeds them.
+        const { count: unembedded } = await supabase
+          .from('knowledge_base')
+          .select('id', { count: 'exact', head: true })
+          .eq('client_id', clientId)
+          .is('embedding', null)
+        if (unembedded) {
+          const kwRows = await keywordRows(query, clientId)
+          const seen = new Set(rows.map(r => r.id))
+          rows = [...rows, ...kwRows.filter(r => !seen.has(r.id)).slice(0, 2)]
+        }
         return {
           context: format(rows),
           matches: toMatches(rows),
-          topSimilarity: rows[0]?.similarity ?? null,
+          topSimilarity: (data as DocRow[])[0]?.similarity ?? null,
           queryEmbedding: embedding
         }
       }
@@ -77,7 +93,7 @@ export async function searchDocsDetailed(query: string, clientId: string): Promi
 // Full-text + ilike fallback. No similarity score exists for keyword matches,
 // so topSimilarity is null (the orchestrator treats null as "can't judge
 // confidence" and won't trip the low-confidence fallback on keyword-only setups).
-async function keywordSearch(query: string, clientId: string): Promise<Omit<SearchResult, 'queryEmbedding'>> {
+async function keywordRows(query: string, clientId: string): Promise<DocRow[]> {
   // 2. Full-text search.
   let { data } = await supabase
     .from('knowledge_base')
@@ -97,7 +113,11 @@ async function keywordSearch(query: string, clientId: string): Promise<Omit<Sear
       .limit(3))
   }
 
-  const rows = (data ?? []) as DocRow[]
+  return (data ?? []) as DocRow[]
+}
+
+async function keywordSearch(query: string, clientId: string): Promise<Omit<SearchResult, 'queryEmbedding'>> {
+  const rows = await keywordRows(query, clientId)
   return {
     context: rows.length ? format(rows) : NO_RESULTS,
     matches: toMatches(rows),
@@ -194,7 +214,19 @@ export async function addDocument(
 ): Promise<{ documentId: string; ids: string[] }> {
   const { url, fileId, description } = options
   const chunks = chunkText(content)
-  const embeddings = embeddingsEnabled() ? await embedDocuments(chunks) : []
+  // Embedding failure (Voyage 429 rate limit, outage) must not block storing
+  // the document — search already degrades to Postgres full-text when
+  // embeddings are missing, so a chunk without a vector is still findable.
+  // This matters most for the website importer, which adds many documents
+  // back-to-back and blew straight through Voyage's no-payment-method 3 RPM.
+  let embeddings: number[][] = []
+  if (embeddingsEnabled()) {
+    try {
+      embeddings = await embedDocuments(chunks)
+    } catch (err) {
+      console.warn(`[knowledge-base] embedding failed for "${title}" — storing without vectors (full-text search still works):`, err instanceof Error ? err.message : err)
+    }
+  }
   const useDocumentColumns = await hasDocumentColumns()
   const documentId = randomUUID()
 

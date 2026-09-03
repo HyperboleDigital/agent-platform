@@ -497,6 +497,8 @@
     .ap-msg .ap-list:last-child { margin-bottom: 0 !important; }
     .ap-msg .ap-list li { margin: 2px 0 !important; }
     .ap-msg strong { font-weight: 700 !important; }
+    .ap-msg a { color: inherit !important; font-weight: 600 !important; text-decoration: underline !important; text-underline-offset: 2px !important; }
+    .ap-msg a:hover { opacity: 0.75; }
     @keyframes ap-msg-in {
       from { opacity: 0; transform: translateY(10px) scale(0.95); }
       to { opacity: 1; transform: translateY(0) scale(1); }
@@ -991,9 +993,14 @@
     if (inList) html += '</ul>';
     return html || esc(String(text));
 
-    // Bold only, on already-escaped text.
+    // Bold + markdown links, on already-escaped text. Links only for http(s)
+    // URLs (the href is the escaped URL itself — never attribute-injectable
+    // since quotes are already &quot;), opened in a new tab so the visitor
+    // never navigates away from their chat.
     function inline(s) {
-      return esc(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      return esc(s)
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     }
   }
 
