@@ -329,6 +329,11 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
       -webkit-font-smoothing: antialiased;
       outline: none;
+      /* Mobile browsers "boost" text they judge too small inside wide blocks,
+         inflating bubble text way past our set size and breaking lines at odd
+         points. Our sizes are deliberate — opt out of auto-inflation. */
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
     }
     #ap-widget button:focus-visible { outline: 2px solid var(--p); outline-offset: 2px; }
 
@@ -484,8 +489,8 @@
 
     .ap-msg {
       max-width: 80% !important;
-      padding: 14px 18px !important;
-      font-size: 15px !important;
+      padding: 12px 16px !important;
+      font-size: 14px !important;
       line-height: 1.5 !important;
       word-wrap: break-word;
       animation: ap-msg-in 0.4s cubic-bezier(0.34,1.56,0.64,1);
