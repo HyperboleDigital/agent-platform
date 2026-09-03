@@ -237,11 +237,8 @@ function Breadcrumb() {
     })
     return (
       <div className="flex min-w-0 items-center gap-2 text-sm">
-        {/* White backing plate on the logo: client logos are usually designed
-            for light sites, and a dark mark on our dark header was unreadable
-            at any size. */}
         {client?.logoUrl ? (
-          <img src={client.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-md bg-white object-contain p-0.5" />
+          <img src={client.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-sm object-contain" />
         ) : (
           <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
