@@ -21,6 +21,11 @@ const contactSchema = z.object({
   // Why they reached out (e.g. "Visitor requested a demo"), so the team's
   // notification reflects the real intent instead of a generic escalation.
   reason: z.string().max(200).optional(),
+  // The assistant's own summary of what the visitor wants ("Interested in
+  // booking Tra Battle for a sales kickoff"), carried from the chat's
+  // capture_lead call through the inline form — see AgentResponse.context.
+  // Keeps the specifics on the lead even when the visitor types no message.
+  context: z.string().max(2000).optional(),
   // Only sent by clients whose widgetConfig.contactFields opts into asking
   // for these — optional here so every other client's form keeps working
   // unchanged.
@@ -34,7 +39,7 @@ const contactSchema = z.object({
 contactRouter.post('/', async (req, res) => {
   const parsed = contactSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
-  const { clientId, email, name, message, reason, company, phone, division } = parsed.data
+  const { clientId, email, name, message, reason, context, company, phone, division } = parsed.data
 
   // Throttle per client so a public clientId can't be used to flood the
   // client's Gmail/Slack with escalation spam.
@@ -55,7 +60,8 @@ contactRouter.post('/', async (req, res) => {
     await logLead({
       clientId, name, email,
       intent: reason ?? 'contact_form',
-      summary: message || '(No additional message provided.)',
+      summary: [message, context ? `From the chat: ${context}` : '']
+        .filter(Boolean).join(' — ') || '(No additional message provided.)',
       company, phone, division
     })
     await notifyEscalation(client, {
@@ -66,7 +72,10 @@ contactRouter.post('/', async (req, res) => {
       channel: 'contact_form',
       company,
       phone,
-      division
+      division,
+      // Shows as its own row in the notification email, so the team sees
+      // "what they were asking the assistant about" without opening the CRM.
+      details: context ? [{ label: 'From the chat', value: context }] : undefined
     })
     res.json({ ok: true })
   } catch (err) {

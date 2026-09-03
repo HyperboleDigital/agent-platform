@@ -21,6 +21,12 @@ export interface AgentResponse {
   escalate: boolean
   captureLead: boolean
   confidence: number
+  // What the visitor was after, captured from the model's capture_lead
+  // summary / escalation reason when the inline email form is shown WITHOUT
+  // an email (the tool call that knows "interested in speaker X" and the
+  // /contact submission are separate requests — this rides along through the
+  // widget so the lead + notification keep that context).
+  context?: string
   // Per-turn instrumentation the chat route persists to message_logs (and the
   // client analytics dashboard reads back). Never sent to the widget.
   telemetry?: MessageTelemetry

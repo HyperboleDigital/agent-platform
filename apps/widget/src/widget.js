@@ -1175,6 +1175,7 @@
           // quoting filler text back at the client.
           message: fields.msg || undefined,
           reason: copyFor(m).reason,
+          context: m.context || undefined,
           company: fields.company || undefined,
           phone: fields.phone || undefined,
           division: fields.division || undefined
@@ -1322,7 +1323,10 @@
       if (data.action === 'show_contact_form') {
         // Carry the intent (lead/booking/escalate) so the form's label,
         // confirmation, and the saved lead all reflect WHY they're submitting.
-        messages.push({ role: 'assistant', type: 'emailForm', reason: data.intent, submitted: false, ts: Date.now() + 1 });
+        // `context` is the assistant's own summary of what the visitor wants
+        // ("Interested in booking Tra Battle…") — carried onto the /contact
+        // submission so the lead records it even if the visitor types nothing.
+        messages.push({ role: 'assistant', type: 'emailForm', reason: data.intent, context: data.context || '', submitted: false, ts: Date.now() + 1 });
       }
     } catch (err) {
       const specific = err && err.message;

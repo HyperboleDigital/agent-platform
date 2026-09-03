@@ -108,6 +108,11 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
   let escalate = false
   let captureLead = false
   let needContact = false
+  // The model's own words for what the visitor wants (capture_lead summary /
+  // escalation reason). When the inline form is shown without an email, this
+  // travels to the widget and comes back on the /contact submission — see
+  // AgentResponse.context.
+  let leadContext: string | undefined
   let intent: AgentResponse['intent'] = 'unknown'
 
   // Instrumentation collected across the tool loop (logged to message_logs and
@@ -155,12 +160,14 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
         return 'Lead captured.'
       }
       needContact = true
+      leadContext = [input.intent, input.summary].filter(Boolean).join(' — ') || undefined
       return 'An inline email form is now shown in the chat for them to submit their email. Reply with ONE short, upbeat line inviting them to drop their email below — do NOT ask them to type it in a message, and do NOT mention a "form" or "fields".'
     }
     if (name === 'escalate_to_human') {
       intent = 'escalate'
       escalate = true
       escalationReason = input.reason
+      if (!leadContext) leadContext = input.reason
       await notifyEscalation(client, { from: message.from, message: message.body, reason: input.reason, channel: 'chat' })
       // Also surface the inline email form so the visitor can leave contact info
       // for a personal follow-up (a human can't reply without a way to reach them).
@@ -267,6 +274,7 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
       : captureLead ? 'capture_lead'
       : 'send_reply',
     escalate, captureLead, confidence,
+    context: needContact ? leadContext : undefined,
     // Per-turn instrumentation for message_logs / the client analytics dashboard.
     // Kept off the wire response (chat.ts reads it for logging, doesn't send it).
     telemetry: {

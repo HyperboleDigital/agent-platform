@@ -92,7 +92,7 @@ chatRouter.post('/', async (req, res) => {
       outputTokens: t?.outputTokens,
       costMicros: t?.costMicros
     })
-    res.json({ reply: result.reply, intent: result.intent, action: result.action })
+    res.json({ reply: result.reply, intent: result.intent, action: result.action, context: result.context })
   } catch (err) {
     console.error('[chat] agent error', err)
     res.status(500).json({ error: 'Agent error — escalating to human.' })
