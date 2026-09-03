@@ -101,6 +101,15 @@ async function urlsFromSitemap(base: URL): Promise<string[]> {
   return []
 }
 
+// www.example.com and example.com are the same site — a sitemap that lists
+// the canonical www host while the operator typed the apex (or vice versa)
+// must not filter every page out. Sweet Additions' first import returned ONE
+// page for exactly this reason.
+function sameSite(a: string, b: string): boolean {
+  const norm = (h: string) => h.toLowerCase().replace(/^www\./, '')
+  return norm(a) === norm(b)
+}
+
 // Same-origin links from the homepage — the fallback for sites with no
 // sitemap. Nav/footer links land here too, which is fine: those ARE the
 // pages a visitor asks the assistant about.
@@ -109,7 +118,7 @@ function urlsFromHomepageLinks(html: string, base: URL): string[] {
   for (const m of html.matchAll(/<a[^>]+href\s*=\s*["']([^"'#]+)["']/gi)) {
     try {
       const u = new URL(m[1], base)
-      if (u.host !== base.host) continue
+      if (!sameSite(u.host, base.host)) continue
       u.hash = ''
       urls.add(u.href)
     } catch { /* unparsable href */ }
@@ -186,7 +195,7 @@ export async function importWebsite(
     .filter(u => {
       try {
         const parsed = new URL(u)
-        if (parsed.host !== base.host || NON_HTML_RE.test(parsed.pathname + parsed.search)) return false
+        if (!sameSite(parsed.host, base.host) || NON_HTML_RE.test(parsed.pathname + parsed.search)) return false
         const key = parsed.href.replace(/\/$/, '')
         if (seen.has(key)) return false
         seen.add(key)
