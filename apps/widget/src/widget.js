@@ -370,6 +370,21 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
       -webkit-font-smoothing: antialiased;
       outline: none;
+      /* Host pages style bare elements directly — Webflow ships a plain
+         "p" rule at 18px — and a direct rule on the p inside a bubble beats
+         a value merely inherited from .ap-msg, with or without importance
+         on the parent. Forcing inherit here (hardenCss marks it important)
+         routes every descendant's typography back up to the widget's own
+         values; widget rules with real sizes still win via higher
+         specificity. text-transform/letter-spacing are pinned, not
+         inherited, so themed uppercase/tracking can't leak in either.
+         NOTE: never put braces inside comments in this stylesheet —
+         hardenCss's parser treats them as rule boundaries. */
+      font-size: inherit;
+      line-height: inherit;
+      color: inherit;
+      text-transform: none;
+      letter-spacing: normal;
       /* Mobile browsers "boost" text they judge too small inside wide blocks,
          inflating bubble text way past our set size and breaking lines at odd
          points. Our sizes are deliberate — opt out of auto-inflation. */
