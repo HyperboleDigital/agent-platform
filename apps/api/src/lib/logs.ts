@@ -19,11 +19,16 @@ export interface LogEntry {
   toolsUsed?: string[]
   retrievedDocIds?: string[]
   queryEmbedding?: number[] | null
+  // LLM cost accounting (migrate_2026-09-03_chat-cost.sql).
+  model?: string
+  inputTokens?: number
+  outputTokens?: number
+  costMicros?: number
 }
 
 // Fire-and-forget: never let logging failures break a chat response.
 export async function logMessage(entry: LogEntry): Promise<void> {
-  const { error } = await supabase.from('message_logs').insert({
+  const base = {
     client_id: entry.clientId,
     channel: entry.channel,
     intent: entry.intent,
@@ -39,8 +44,25 @@ export async function logMessage(entry: LogEntry): Promise<void> {
     tools_used: entry.toolsUsed ?? [],
     retrieved_doc_ids: entry.retrievedDocIds ?? [],
     query_embedding: entry.queryEmbedding ?? null
+  }
+  const { error } = await supabase.from('message_logs').insert({
+    ...base,
+    model: entry.model ?? null,
+    input_tokens: entry.inputTokens ?? null,
+    output_tokens: entry.outputTokens ?? null,
+    cost_micros: entry.costMicros ?? null
   })
-  if (error) console.error('[logs] failed to write message_log', error.message)
+  if (!error) return
+  // Pre-migration deployments reject the cost columns as unknown — retry the
+  // legacy shape so a pending migration never silences chat analytics.
+  if (/column|cost_micros|input_tokens|schema cache/i.test(error.message)) {
+    const retry = await supabase.from('message_logs').insert(base)
+    if (!retry.error) {
+      console.warn('[logs] chat-cost migration not applied — logged message without cost fields')
+      return
+    }
+  }
+  console.error('[logs] failed to write message_log', error.message)
 }
 
 export interface DashboardStats {

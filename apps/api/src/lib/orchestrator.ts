@@ -7,6 +7,7 @@ import { logLead } from '../tools/crm'
 import { notifyEscalation } from './escalation'
 import { getClientById } from './clients'
 import { runToolLoop } from './llm'
+import { llmCostMicros } from './llm/pricing'
 import { getHistory, appendTurn } from './chat-memory'
 import type { ToolDef } from './llm'
 
@@ -168,7 +169,7 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
     return `Unknown tool: ${name}`
   }
 
-  const { reply } = await runToolLoop({
+  const { reply, usage } = await runToolLoop({
     system: systemPrompt,
     userMessage: message.body,
     history: getHistory(message.clientId, message.from),
@@ -277,7 +278,12 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
       resolvedBy: escalate ? 'human' : 'agent',
       toolsUsed: Array.from(toolsUsed),
       retrievedDocIds: Array.from(retrievedDocIds),
-      queryEmbedding
+      queryEmbedding,
+      // Cost accounting: what this message actually spent on the LLM.
+      model: usage?.model,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+      costMicros: usage ? llmCostMicros(usage.model, usage) : undefined
     }
   }
 }

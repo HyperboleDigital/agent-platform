@@ -38,6 +38,12 @@ export interface MessageTelemetry {
   toolsUsed: string[]
   retrievedDocIds: string[]
   queryEmbedding: number[] | null
+  // LLM cost accounting (migrate_2026-09-03_chat-cost.sql). Absent when the
+  // provider response carried no usage block.
+  model?: string
+  inputTokens?: number
+  outputTokens?: number
+  costMicros?: number
 }
 
 export type Vertical = 'local' | 'b2b'
@@ -159,6 +165,10 @@ export interface AgentConfig {
   // email's To: header). Also the fallback for support escalations when
   // supportEmail is unset.
   escalationEmail?: string
+  // Opt this client out of Slack escalation alerts entirely — including the
+  // platform-wide SLACK_WEBHOOK_URL fallback, which otherwise applies to every
+  // client with no webhook of their own. Set/cleared from the Connectors tab.
+  slackDisabled?: boolean
   // Where SUPPORT escalations ("the assistant couldn't answer / get a human")
   // are sent, when they should go somewhere other than the lead recipients —
   // e.g. Spec-ID's contact@spec-id.com. Unset = escalationEmail.
@@ -241,6 +251,26 @@ export interface WidgetContactFields {
   // multiple values allowed — stored/notified as a comma-separated string
   // since `leads.division` is a single text column.
   divisionMultiSelect?: boolean
+  // ── Built-in field presentation ──────────────────────────────────────────
+  // Every key below defaults to today's behavior, so a client with none of
+  // them set keeps rendering exactly the same form.
+  // Render Name as two inputs (First name / Last name). Joined with a space
+  // into the single `leads.name` column on submit — presentation only.
+  splitName?: boolean
+  // Label/placeholder overrides for the Message textarea, e.g. a client whose
+  // form asks "How can we help?" instead of "Message".
+  messageLabel?: string
+  messagePlaceholder?: string
+  // The static "Get in touch" form requires a message today; true makes it
+  // optional there too (the inline lead-capture form already treats it as
+  // optional, and an empty message is stored as a placeholder string).
+  messageOptional?: boolean
+  // Label override for the Phone input, e.g. "Phone number".
+  phoneLabel?: string
+  // Company/Phone are required whenever shown today; true keeps the field on
+  // the form but lets the visitor skip it.
+  companyOptional?: boolean
+  phoneOptional?: boolean
 }
 
 // Is `origin` (a browser Origin header, e.g. "https://www.spec-id.com") allowed

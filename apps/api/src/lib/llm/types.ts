@@ -31,4 +31,12 @@ export interface ToolLoopOptions {
 
 export interface ToolLoopResult {
   reply: string
+  // Token spend across every turn of the loop, for cost accounting
+  // (message_logs / the AI-spend overview card). Absent only if a provider
+  // response carried no usage block.
+  usage?: {
+    model: string
+    inputTokens: number
+    outputTokens: number
+  }
 }

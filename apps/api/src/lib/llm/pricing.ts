@@ -90,6 +90,37 @@ export function openaiImageCostMicros(size: string): number {
   return Math.round(usd * MICROS_PER_USD)
 }
 
+// USD per million tokens for the OpenAI text models this codebase can run
+// chat on (LLM_PROVIDER=openai). Same env-override convention as Claude.
+function openaiPrices(model: string): { input: number; output: number } | null {
+  const m = model.toLowerCase()
+  if (m.includes('gpt-4o-mini')) {
+    return { input: envUsdPerMTok('PRICE_GPT4O_MINI_INPUT', 0.15), output: envUsdPerMTok('PRICE_GPT4O_MINI_OUTPUT', 0.6) }
+  }
+  if (m.includes('gpt-4o')) {
+    return { input: envUsdPerMTok('PRICE_GPT4O_INPUT', 2.5), output: envUsdPerMTok('PRICE_GPT4O_OUTPUT', 10) }
+  }
+  return null
+}
+
+// Cost of a text completion on whichever provider the model name identifies —
+// the single entry point for chat cost accounting, so callers don't need to
+// know which provider ran the loop. Unknown models log + return 0, same as
+// claudeCostMicros.
+export function llmCostMicros(model: string, usage: TokenUsage, now = Date.now()): number {
+  const m = model.toLowerCase()
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3')) {
+    const prices = openaiPrices(model)
+    if (!prices) {
+      console.warn(`[pricing] no price for OpenAI model "${model}" — cost will under-report`)
+      return 0
+    }
+    const usd = (usage.inputTokens / 1_000_000) * prices.input + (usage.outputTokens / 1_000_000) * prices.output
+    return Math.round(usd * MICROS_PER_USD)
+  }
+  return claudeCostMicros(model, usage, now)
+}
+
 export function formatMicros(micros: number): string {
   return `$${(micros / MICROS_PER_USD).toFixed(3)}`
 }

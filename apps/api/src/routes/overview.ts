@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { getIdentity } from '../lib/authz'
 import { getOverviewSummary, getClientRollups } from '../lib/overview'
+import { getAiSpend } from '../lib/ai-spend'
 import { listOpenRequests, updateRequestStatus } from '../lib/change-requests'
 import { startAdhocCrawl, refreshAdhocCrawl, listAdhocCrawls, crawlConfigured } from '../lib/dataforseo'
 import { listJobsOverview, runJobNow, reconcileAllClients, listJobTypes } from '../lib/scheduled-jobs'
@@ -47,6 +48,16 @@ overviewRouter.post('/jobs/reconcile', async (_req, res) => {
     res.json(await listJobsOverview())
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Reconcile failed' })
+  }
+})
+
+// Month-to-date AI/vendor spend recorded by the platform (chat + generation
+// runs + paid SEO jobs). Superadmin via the router-level gate above.
+overviewRouter.get('/ai-spend', async (_req, res) => {
+  try {
+    res.json(await getAiSpend())
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to compute AI spend' })
   }
 })
 

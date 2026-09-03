@@ -13,7 +13,11 @@ const contactSchema = z.object({
   clientId: z.string().uuid(),
   email: z.string().email().max(200),
   name: z.string().max(200).optional(),
-  message: z.string().min(1).max(4000),
+  // Optional: clients whose widgetConfig.contactFields sets messageOptional
+  // let visitors submit with just an email. An absent/empty message gets a
+  // placeholder in the lead's summary (below), while Slack/email notifications
+  // simply drop their "What they said" quote instead of quoting filler.
+  message: z.string().max(4000).optional(),
   // Why they reached out (e.g. "Visitor requested a demo"), so the team's
   // notification reflects the real intent instead of a generic escalation.
   reason: z.string().max(200).optional(),
@@ -48,11 +52,16 @@ contactRouter.post('/', async (req, res) => {
   }
 
   try {
-    await logLead({ clientId, name, email, intent: reason ?? 'contact_form', summary: message, company, phone, division })
+    await logLead({
+      clientId, name, email,
+      intent: reason ?? 'contact_form',
+      summary: message || '(No additional message provided.)',
+      company, phone, division
+    })
     await notifyEscalation(client, {
       from: email,
       name,
-      message,
+      message: message ?? '',
       reason: reason ?? 'Visitor requested a human via the contact form',
       channel: 'contact_form',
       company,

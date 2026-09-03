@@ -50,7 +50,7 @@ export async function computeSetupStatus(clientId: string): Promise<SetupStatus>
   // 1. Google Search Console: configured AND actually returning data (a set
   // property whose service-account permission was never granted still fails).
   let gscOk = false
-  let gscDetail = 'Set portalConfig.gscProperty and grant the platform service account access'
+  let gscDetail = 'Enter the property under Configure on the Site Health Audit card, and add the platform service account to it in Search Console'
   if (!gscConfigured()) {
     gscDetail = 'GSC service account not configured on this deployment (platform level)'
   } else if (cfg.gscProperty) {
@@ -81,7 +81,7 @@ export async function computeSetupStatus(clientId: string): Promise<SetupStatus>
   const brandOk = (cfg.brandTerms?.length ?? 0) > 0
   items.push({
     key: 'brandTerms', label: 'Brand terms set', complete: brandOk,
-    detail: brandOk ? (cfg.brandTerms ?? []).join(', ') : 'Falls back to the client name only — add the names AI answers actually use', section: 'seo'
+    detail: brandOk ? (cfg.brandTerms ?? []).join(', ') : 'Falls back to the client name only — add the name variants AI answers actually use (Configure on the audit card)', section: 'seo'
   })
 
   // 5. Baseline crawl — at least one finished audit to measure against.

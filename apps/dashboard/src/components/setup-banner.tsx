@@ -10,6 +10,18 @@ import { Badge } from '@/components/ui/badge'
 // SEO page so a half-set-up client can't be silently under-delivered. Red
 // items link to the screen where the fix lives; fully complete collapses to a
 // single green line.
+
+// SEO-page items deep-link to the exact card/modal that completes them (the
+// SEO page reads ?setup= to pick the tab, scroll, and open the Configure
+// modal — see use-setup-target.ts). Items without an entry (local/content
+// sections) fall back to their section page.
+const SETUP_LINKS: Record<string, string> = {
+  gscProperty: 'seo?setup=gscProperty',
+  targetKeywords: 'seo?setup=targetKeywords',
+  visibilityQueries: 'seo?setup=visibilityQueries',
+  brandTerms: 'seo?setup=brandTerms',
+  baselineCrawl: 'seo?setup=baselineCrawl'
+}
 export function SetupBanner({ clientId }: { clientId: string }) {
   const { slug = '' } = useParams()
   const { data: status } = useSWR(['setup-status', clientId], () => api.clients.setupStatus(clientId))
@@ -50,7 +62,7 @@ export function SetupBanner({ clientId }: { clientId: string }) {
                   {item.complete ? (
                     <span>{item.label}</span>
                   ) : (
-                    <Link to={`/clients/${slug}/${item.section}`} className="underline underline-offset-2 hover:text-foreground">
+                    <Link to={`/clients/${slug}/${SETUP_LINKS[item.key] ?? item.section}`} className="underline underline-offset-2 hover:text-foreground">
                       {item.label}
                     </Link>
                   )}

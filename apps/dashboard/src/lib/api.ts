@@ -122,7 +122,7 @@ export interface ConnectorStatus {
     connectedAt?: string
     error?: string
   }
-  slack: { configured: boolean }
+  slack: { configured: boolean; viaFallback: boolean; disabled: boolean }
   calendly: { configured: boolean }
 }
 
@@ -392,6 +392,19 @@ export interface MonthlyUsage {
   used: number
   cap: number
   planName: string | null
+}
+
+export interface AiSpend {
+  month: string // YYYY-MM
+  chat: {
+    costMicros: number
+    messages: number
+    pendingMigration: boolean
+    byModel: { model: string; messages: number; inputTokens: number; outputTokens: number; costMicros: number }[]
+  }
+  generation: { costMicros: number; runs: number }
+  seoJobs: { costCents: number; runs: number }
+  totalUsd: number
 }
 
 export interface OverviewSummary {
@@ -812,6 +825,11 @@ export interface AdsFeeBreakdown {
   feeCents: number
   overageCents: number
   pct: number
+}
+
+export interface VisibilitySuggestions {
+  brandTerms: string[]
+  queries: { query: string; intent: 'category' | 'problem' | 'comparison' | 'brand' }[]
 }
 
 export interface VisibilityQuery {
@@ -1264,6 +1282,7 @@ export const api = {
     generateLlmsTxt: (id: string) =>
       request<{ requestId: string; count: number }>(`/clients/${id}/seo/fix/llms`, { method: 'POST' }),
     seoOpportunities: (id: string) => request<GscQueryRow[]>(`/clients/${id}/seo/opportunities`),
+    suggestVisibilitySetup: (id: string) => request<VisibilitySuggestions>(`/clients/${id}/visibility/suggest`),
     visibilityQueries: (id: string) => request<VisibilityQuery[]>(`/clients/${id}/visibility/queries`),
     addVisibilityQuery: (id: string, query: string) =>
       request<VisibilityQuery>(`/clients/${id}/visibility/queries`, { method: 'POST', body: JSON.stringify({ query }) }),
@@ -1377,6 +1396,11 @@ export const api = {
       }
       return res.json() as Promise<{ documentId: string; ids: string[]; chunks: number }>
     },
+    importWebsiteKnowledge: (id: string, url?: string) =>
+      request<{ pages: { url: string; title: string; chunks: number; replaced: boolean }[]; skipped: number; discovery: string }>(
+        `/clients/${id}/knowledge/import-website`,
+        { method: 'POST', body: JSON.stringify({ url }) }
+      ),
     deleteKnowledgeDocument: (id: string, documentId: string) =>
       request<{ ok: boolean }>(`/clients/${id}/knowledge/${documentId}`, { method: 'DELETE' }),
     updateKnowledgeDescription: (id: string, documentId: string, description: string) =>
@@ -1464,6 +1488,7 @@ export const api = {
       request<{ ok: boolean; billed: number; skipped: number }>(`/billing/${clientId}/one-time-invoice`, { method: 'POST' })
   },
   overview: {
+    aiSpend: () => request<AiSpend>('/overview/ai-spend'),
     summary: () => request<OverviewSummary>('/overview/summary'),
     jobs: () => request<ClientJobs[]>('/overview/jobs'),
     jobTypes: () => request<JobTypeInfo[]>('/overview/jobs/types'),

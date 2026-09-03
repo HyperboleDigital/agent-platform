@@ -10,7 +10,11 @@ export interface ConnectorStatus {
     connectedAt?: string
     error?: string
   }
-  slack: { configured: boolean }
+  slack: {
+    configured: boolean // alerts will actually post (webhook or fallback, and not disabled)
+    viaFallback: boolean // no client webhook — "configured" comes from SLACK_WEBHOOK_URL
+    disabled: boolean // client opted out (suppresses the fallback too)
+  }
   calendly: { configured: boolean }
 }
 
@@ -22,7 +26,11 @@ export async function getConnectorStatus(clientId: string, agentConfig: AgentCon
 
   return {
     gmail: { configured: gmailConfigured(), ...gmail },
-    slack: { configured: !!(agentConfig?.slackWebhook || process.env.SLACK_WEBHOOK_URL) },
+    slack: {
+      configured: !agentConfig?.slackDisabled && !!(agentConfig?.slackWebhook || process.env.SLACK_WEBHOOK_URL),
+      viaFallback: !agentConfig?.slackWebhook && !!process.env.SLACK_WEBHOOK_URL,
+      disabled: !!agentConfig?.slackDisabled
+    },
     calendly: { configured: !!agentConfig?.calendlyLink }
   }
 }

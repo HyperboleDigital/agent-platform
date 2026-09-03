@@ -120,12 +120,28 @@
   const CONTACT_DIVISIONS = Array.isArray(rawContactFields.divisions)
     ? rawContactFields.divisions.map(d => String(d).trim()).filter(Boolean)
     : [];
+  // Optional string overrides fall back to the widget's built-in copy; empty
+  // or whitespace-only values from the dashboard count as unset.
+  const cfStr = (v, fallback) => (v && String(v).trim()) || fallback;
   const CONTACT_FIELDS = {
     company: !!rawContactFields.company,
     phone: !!rawContactFields.phone,
-    divisionLabel: (rawContactFields.divisionLabel && String(rawContactFields.divisionLabel).trim()) || 'Identify Your Primary Business',
+    divisionLabel: cfStr(rawContactFields.divisionLabel, 'Identify Your Primary Business'),
     divisions: CONTACT_DIVISIONS,
-    divisionMultiSelect: !!rawContactFields.divisionMultiSelect
+    divisionMultiSelect: !!rawContactFields.divisionMultiSelect,
+    // Presentation of the built-in Name/Message/Phone fields — every default
+    // here matches the widget's historical behavior, so clients that haven't
+    // opted in render exactly as before. See WidgetContactFields in
+    // packages/shared for what each key means.
+    splitName: !!rawContactFields.splitName,
+    messageLabel: cfStr(rawContactFields.messageLabel, 'Message'),
+    // Placeholder default differs per form (static vs inline), so unset stays
+    // empty here and each form supplies its own fallback.
+    messagePlaceholder: cfStr(rawContactFields.messagePlaceholder, ''),
+    messageOptional: !!rawContactFields.messageOptional,
+    phoneLabel: cfStr(rawContactFields.phoneLabel, 'Phone'),
+    companyOptional: !!rawContactFields.companyOptional,
+    phoneOptional: !!rawContactFields.phoneOptional
   };
   // Stored/notified as one comma-separated string either way (leads.division
   // is a single text column) — this only controls whether the widget lets a
@@ -148,9 +164,50 @@
   // once (unlikely, but the inline form re-renders per message) don't cross-
   // wire their radio groups — irrelevant for checkboxes (multi-select) but
   // harmless to set regardless.
+  // "(optional)" label suffix for a shown-but-skippable field.
+  const optMark = (optional) => optional ? ' <span class="ap-ef-opt">(optional)</span>' : '';
+  // The built-in Name question — either the classic single input or, when
+  // splitName is on, First/Last inputs. Either way the value submitted (and
+  // stored in leads.name) is ONE string; see readNameValue.
+  function nameFieldHTML() {
+    if (CONTACT_FIELDS.splitName) {
+      return '<div class="cf-field"><label class="cf-label">First name</label>' +
+        '<input class="ap-cf-first" type="text" placeholder="Jane" autocomplete="given-name" /></div>' +
+        '<div class="cf-field"><label class="cf-label">Last name</label>' +
+        '<input class="ap-cf-last" type="text" placeholder="Smith" autocomplete="family-name" /></div>';
+    }
+    return '<div class="cf-field"><label class="cf-label">Name</label>' +
+      '<input class="ap-cf-name" type="text" placeholder="Jane Smith" autocomplete="name" /></div>';
+  }
+  // Reads the Name field(s) inside `root` as the single string we submit.
+  function readNameValue(root) {
+    if (CONTACT_FIELDS.splitName) {
+      const first = (root.querySelector('.ap-cf-first') || {}).value || '';
+      const last = (root.querySelector('.ap-cf-last') || {}).value || '';
+      return (first.trim() + ' ' + last.trim()).trim();
+    }
+    const el = root.querySelector('.ap-cf-name');
+    return el ? el.value.trim() : '';
+  }
+  // Restores a previously-typed name into the field(s) when a form bubble
+  // re-renders (error, state change) — split back on the first space, which is
+  // how the two inputs were joined.
+  function applyNameValue(root, saved) {
+    if (!saved) return;
+    if (CONTACT_FIELDS.splitName) {
+      const sp = saved.indexOf(' ');
+      const firstEl = root.querySelector('.ap-cf-first');
+      const lastEl = root.querySelector('.ap-cf-last');
+      if (firstEl) firstEl.value = sp === -1 ? saved : saved.slice(0, sp);
+      if (lastEl) lastEl.value = sp === -1 ? '' : saved.slice(sp + 1);
+    } else {
+      const el = root.querySelector('.ap-cf-name');
+      if (el) el.value = saved;
+    }
+  }
   function companyFieldHTML() {
     if (!CONTACT_FIELDS.company) return '';
-    return '<div class="cf-field"><label class="cf-label">Company Name</label>' +
+    return '<div class="cf-field"><label class="cf-label">Company Name' + optMark(CONTACT_FIELDS.companyOptional) + '</label>' +
       '<input class="ap-cf-company" type="text" placeholder="Name of your company" autocomplete="organization" /></div>';
   }
   function divisionPhoneFieldHTML(groupName) {
@@ -166,7 +223,7 @@
         '</div></div>';
     }
     if (CONTACT_FIELDS.phone) {
-      html += '<div class="cf-field"><label class="cf-label">Phone</label>' +
+      html += '<div class="cf-field"><label class="cf-label">' + esc(CONTACT_FIELDS.phoneLabel) + optMark(CONTACT_FIELDS.phoneOptional) + '</label>' +
         '<input class="ap-cf-phone" type="tel" placeholder="Business phone number" autocomplete="tel" /></div>';
     }
     return html;
@@ -775,18 +832,15 @@
           <div class="cf-title">Get in touch</div>
           <div class="cf-sub">Leave a message and we'll get back to you shortly.</div>
         </div>
-        <div class="cf-field">
-          <label class="cf-label" for="cf-name">Name</label>
-          <input id="cf-name" type="text" placeholder="Jane Smith" />
-        </div>
+        ${nameFieldHTML()}
         ${companyFieldHTML()}
         <div class="cf-field">
           <label class="cf-label" for="cf-email">Email</label>
           <input id="cf-email" type="email" placeholder="jane@company.com" />
         </div>
         <div class="cf-field">
-          <label class="cf-label" for="cf-message">Message</label>
-          <textarea id="cf-message" placeholder="What can we help with?"></textarea>
+          <label class="cf-label" for="cf-message">${esc(CONTACT_FIELDS.messageLabel)}${optMark(CONTACT_FIELDS.messageOptional)}</label>
+          <textarea id="cf-message" placeholder="${esc(CONTACT_FIELDS.messagePlaceholder || 'What can we help with?')}"></textarea>
         </div>
         ${divisionPhoneFieldHTML('cf-division')}
         <button class="cf-submit" id="cf-submit">Send message</button>
@@ -978,18 +1032,21 @@
     // Unique per message bubble so re-rendering multiple form bubbles never
     // cross-wires their division radio groups.
     const radioName = 'ap-ef-division-' + (m.ts || 0);
+    // The inline form's message was always optional, so the "(optional)" mark
+    // is unconditional here; messageOptional only affects the static form.
     div.innerHTML =
       '<div class="cf-header"><div class="cf-title"></div><div class="cf-sub"></div></div>' +
-      '<div class="cf-field"><label class="cf-label">Name</label><input class="ap-ef-name" type="text" placeholder="Jane Smith" autocomplete="name" /></div>' +
+      nameFieldHTML() +
       companyFieldHTML() +
       '<div class="cf-field"><label class="cf-label">Email</label><input class="ap-ef-input" type="email" placeholder="jane@company.com" autocomplete="email" /></div>' +
-      '<div class="cf-field"><label class="cf-label">Message <span class="ap-ef-opt">(optional)</span></label><textarea class="ap-ef-msg" placeholder="Anything we should know?"></textarea></div>' +
+      '<div class="cf-field"><label class="cf-label">' + esc(CONTACT_FIELDS.messageLabel) + ' <span class="ap-ef-opt">(optional)</span></label>' +
+      '<textarea class="ap-ef-msg" placeholder="' + esc(CONTACT_FIELDS.messagePlaceholder || 'Anything we should know?') + '"></textarea></div>' +
       divisionPhoneFieldHTML(radioName) +
       '<button class="cf-submit" type="button"></button>' +
       '<div class="ap-ef-error"></div>';
     div.querySelector('.cf-title').textContent = copy.title;
     div.querySelector('.cf-sub').textContent = copy.sub;
-    const nameEl = div.querySelector('.ap-ef-name');
+    const nameEls = div.querySelectorAll('.ap-cf-name, .ap-cf-first, .ap-cf-last');
     const emailEl = div.querySelector('.ap-ef-input');
     const msgEl = div.querySelector('.ap-ef-msg');
     const companyEl = div.querySelector('.ap-cf-company');
@@ -998,20 +1055,22 @@
     const btn = div.querySelector('.cf-submit');
     const err = div.querySelector('.ap-ef-error');
     btn.textContent = copy.btn;
-    nameEl.value = m.name || ''; emailEl.value = m.value || ''; msgEl.value = m.msg || '';
+    applyNameValue(div, m.name);
+    emailEl.value = m.value || ''; msgEl.value = m.msg || '';
     if (companyEl) companyEl.value = m.company || '';
     if (phoneEl) phoneEl.value = m.phone || '';
     applyCheckedDivisions(div, m.division);
     if (m.error) err.textContent = m.error;
     if (m.submitting) {
       btn.textContent = 'Sending…'; btn.disabled = true;
-      nameEl.disabled = emailEl.disabled = msgEl.disabled = true;
+      emailEl.disabled = msgEl.disabled = true;
+      nameEls.forEach(el => { el.disabled = true; });
       if (companyEl) companyEl.disabled = true;
       if (phoneEl) phoneEl.disabled = true;
       divisionEls.forEach(r => { r.disabled = true; });
     }
     const submit = () => submitEmailForm(m, {
-      name: nameEl.value.trim(),
+      name: readNameValue(div),
       email: emailEl.value.trim(),
       msg: msgEl.value.trim(),
       company: companyEl ? companyEl.value.trim() : '',
@@ -1020,7 +1079,7 @@
     });
     btn.addEventListener('click', submit);
     emailEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-    if (!m._focusedOnce) { m._focusedOnce = true; setTimeout(() => (m.name ? emailEl : nameEl).focus(), 50); }
+    if (!m._focusedOnce) { m._focusedOnce = true; setTimeout(() => (m.name ? emailEl : nameEls[0]).focus(), 50); }
   }
 
   async function submitEmailForm(m, fields) {
@@ -1028,8 +1087,8 @@
     m.name = fields.name; m.value = fields.email; m.msg = fields.msg;
     m.company = fields.company; m.phone = fields.phone; m.division = fields.division;
     if (!EMAIL_RE.test(fields.email)) { m.error = 'Please enter a valid email address.'; renderMessages(); return; }
-    if (CONTACT_FIELDS.company && !fields.company) { m.error = 'Please add your company name.'; renderMessages(); return; }
-    if (CONTACT_FIELDS.phone && !fields.phone) { m.error = 'Please add your phone number.'; renderMessages(); return; }
+    if (CONTACT_FIELDS.company && !CONTACT_FIELDS.companyOptional && !fields.company) { m.error = 'Please add your company name.'; renderMessages(); return; }
+    if (CONTACT_FIELDS.phone && !CONTACT_FIELDS.phoneOptional && !fields.phone) { m.error = 'Please add your phone number.'; renderMessages(); return; }
     if (CONTACT_FIELDS.divisions.length && !fields.division) { m.error = divisionRequiredMessage(); renderMessages(); return; }
     m.error = ''; m.submitting = true; renderMessages();
     try {
@@ -1042,7 +1101,10 @@
           clientId: CLIENT_ID,
           name: fields.name || undefined,
           email: fields.email,
-          message: fields.msg || '(No additional message provided.)',
+          // Empty is allowed — the API stores a placeholder summary and the
+          // notifications simply omit the "What they said" quote, rather than
+          // quoting filler text back at the client.
+          message: fields.msg || undefined,
           reason: copyFor(m).reason,
           company: fields.company || undefined,
           phone: fields.phone || undefined,
@@ -1172,7 +1234,17 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientId: CLIENT_ID, from: SESSION_ID, body: text })
       });
-      if (!res.ok) throw new Error();
+      // Surface the API's own message for deliberate refusals (402 not
+      // entitled, 403 domain lock, 429 caps) instead of the generic
+      // "trouble connecting" — those are setup problems, not outages, and the
+      // generic line sent an operator debugging blind. 5xx keeps the generic.
+      if (!res.ok) {
+        let serverMsg = '';
+        if (res.status < 500) {
+          try { serverMsg = (await res.json()).error || ''; } catch { /* non-JSON body */ }
+        }
+        throw new Error(serverMsg);
+      }
       const data = await res.json();
       messages.push({ role: 'assistant', content: data.reply, ts: Date.now() });
       // Lead capture without an email → show a lightweight inline email form as
@@ -1183,8 +1255,13 @@
         // confirmation, and the saved lead all reflect WHY they're submitting.
         messages.push({ role: 'assistant', type: 'emailForm', reason: data.intent, submitted: false, ts: Date.now() + 1 });
       }
-    } catch {
-      messages.push({ role: 'assistant', content: "I'm having trouble connecting. Try the contact form and we'll reach out personally.", ts: Date.now() });
+    } catch (err) {
+      const specific = err && err.message;
+      messages.push({
+        role: 'assistant',
+        content: specific || "I'm having trouble connecting. Try the contact form and we'll reach out personally.",
+        ts: Date.now()
+      });
     } finally {
       isTyping = false; sendBtn.disabled = false;
       renderMessages(); input.focus();
@@ -1196,18 +1273,22 @@
     const setError = (msg) => { errEl.textContent = msg; };
     setError('');
 
-    const name = document.getElementById('cf-name').value.trim();
+    const contactRoot = document.getElementById('ap-contact');
+    const name = readNameValue(contactRoot);
     const email = document.getElementById('cf-email').value.trim();
     const message = document.getElementById('cf-message').value.trim();
-    const companyEl = document.querySelector('#ap-contact .ap-cf-company');
-    const phoneEl = document.querySelector('#ap-contact .ap-cf-phone');
+    const companyEl = contactRoot.querySelector('.ap-cf-company');
+    const phoneEl = contactRoot.querySelector('.ap-cf-phone');
     const company = companyEl ? companyEl.value.trim() : '';
     const phone = phoneEl ? phoneEl.value.trim() : '';
-    const division = readCheckedDivisions(document.getElementById('ap-contact'));
-    if (!email || !message) { setError('Please add your email and message.'); return; }
+    const division = readCheckedDivisions(contactRoot);
+    if (!email || (!message && !CONTACT_FIELDS.messageOptional)) {
+      setError(CONTACT_FIELDS.messageOptional ? 'Please add your email address.' : 'Please add your email and message.');
+      return;
+    }
     if (!EMAIL_RE.test(email)) { setError('Please enter a valid email address.'); return; }
-    if (CONTACT_FIELDS.company && !company) { setError('Please add your company name.'); return; }
-    if (CONTACT_FIELDS.phone && !phone) { setError('Please add your phone number.'); return; }
+    if (CONTACT_FIELDS.company && !CONTACT_FIELDS.companyOptional && !company) { setError('Please add your company name.'); return; }
+    if (CONTACT_FIELDS.phone && !CONTACT_FIELDS.phoneOptional && !phone) { setError('Please add your phone number.'); return; }
     if (CONTACT_FIELDS.divisions.length && !division) { setError(divisionRequiredMessage()); return; }
     cfSubmit.textContent = 'Sending...'; cfSubmit.disabled = true;
     try {
@@ -1215,7 +1296,8 @@
       const res = await fetch(`${API_URL}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clientId: CLIENT_ID, name: name || undefined, email, message,
+          clientId: CLIENT_ID, name: name || undefined, email,
+          message: message || undefined,
           reason: 'Visitor reached out via the contact form',
           company: company || undefined, phone: phone || undefined, division: division || undefined
         })

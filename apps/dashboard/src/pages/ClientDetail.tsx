@@ -760,7 +760,7 @@ function ConnectorsTab({ clientId, client }: { clientId: string; client: import(
               <Button variant="secondary" size="sm" onClick={connectGmail} disabled={connecting}>
                 {connecting ? 'Opening…' : data.gmail.status === 'not_connected' ? 'Connect' : 'Reconnect with a different account'}
               </Button>
-              {data.gmail.status === 'ok' && (
+              {(data.gmail.status === 'ok' || data.gmail.status === 'error') && (
                 <Button variant="outline" size="sm" onClick={disconnectGmail} disabled={disconnecting}>
                   {disconnecting ? 'Disconnecting…' : 'Disconnect'}
                 </Button>
@@ -770,23 +770,34 @@ function ConnectorsTab({ clientId, client }: { clientId: string; client: import(
         </CardContent>
       </Card>
 
-      <SlackConnectorCard clientId={clientId} client={client} configured={data.slack.configured} />
+      <SlackConnectorCard clientId={clientId} client={client} slack={data.slack} />
       <CalendlyConnectorCard clientId={clientId} client={client} configured={data.calendly.configured} />
     </div>
   )
 }
 
-function SlackConnectorCard({ clientId, client, configured }: {
-  clientId: string; client: import('@agent-platform/shared').Client; configured: boolean
+function SlackConnectorCard({ clientId, client, slack }: {
+  clientId: string
+  client: import('@agent-platform/shared').Client
+  slack: { configured: boolean; viaFallback: boolean; disabled: boolean }
 }) {
   const cfg = client.agentConfig ?? {}
   const [webhook, setWebhook] = useState(cfg.slackWebhook ?? '')
   const [saving, setSaving] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [toggling, setToggling] = useState(false)
+  const confirm = useConfirm()
 
   async function save() {
+    const trimmed = webhook.trim()
+    if (!/^https:\/\/hooks\.slack\.com\//.test(trimmed)) {
+      toast.error('That doesn’t look like a Slack webhook URL (expected https://hooks.slack.com/…)')
+      return
+    }
     setSaving(true)
     try {
-      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, slackWebhook: webhook || undefined } })
+      // Saving a webhook is an explicit "I want Slack alerts" — clear any opt-out.
+      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, slackWebhook: trimmed, slackDisabled: undefined } })
       mutate(['client', clientId])
       mutate(['connectors', clientId])
       toast.success('Slack webhook saved')
@@ -797,6 +808,37 @@ function SlackConnectorCard({ clientId, client, configured }: {
     }
   }
 
+  async function remove() {
+    if (!(await confirm('Remove the Slack webhook? Escalations for this client will stop posting to their Slack (email still sends).'))) return
+    setRemoving(true)
+    try {
+      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, slackWebhook: undefined } })
+      setWebhook('')
+      mutate(['client', clientId])
+      mutate(['connectors', clientId])
+      toast.success('Slack webhook removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove')
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  async function setDisabled(disabled: boolean) {
+    if (disabled && !(await confirm('Disable Slack alerts for this client? Escalations will stop posting to Slack — including via the platform-wide webhook (email still sends).'))) return
+    setToggling(true)
+    try {
+      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, slackDisabled: disabled || undefined } })
+      mutate(['client', clientId])
+      mutate(['connectors', clientId])
+      toast.success(disabled ? 'Slack alerts disabled' : 'Slack alerts enabled')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setToggling(false)
+    }
+  }
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 pt-5">
@@ -804,16 +846,43 @@ function SlackConnectorCard({ clientId, client, configured }: {
           <MessageSquare className="h-4 w-4 text-muted-foreground" />
           <div>
             <div className="font-medium">Slack escalations</div>
-            <Badge variant={configured ? 'success' : 'secondary'} className="mt-1.5">
-              <StatusDot variant={configured ? 'success' : 'secondary'} />
-              {configured ? 'Configured' : 'Not configured'}
+            <Badge variant={slack.configured ? 'success' : 'secondary'} className="mt-1.5">
+              <StatusDot variant={slack.configured ? 'success' : 'secondary'} />
+              {slack.disabled ? 'Disabled' : slack.configured ? 'Configured' : 'Not configured'}
             </Badge>
           </div>
         </div>
         <div className="flex gap-2">
           <Input value={webhook} onChange={e => setWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/…" />
-          <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+          {/* Empty/unchanged input has nothing to save — clearing is the Remove
+              button's job, not an empty Save. */}
+          <Button size="sm" onClick={save} disabled={saving || !webhook.trim() || webhook.trim() === (cfg.slackWebhook ?? '')}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          {/* Remove clears THIS client's webhook. When "Configured" comes from the
+              platform-wide fallback (SLACK_WEBHOOK_URL) there is nothing to remove —
+              Disable opts the client out of that fallback instead. */}
+          {!!cfg.slackWebhook && (
+            <Button variant="outline" size="sm" onClick={remove} disabled={removing}>
+              {removing ? 'Removing…' : 'Remove'}
+            </Button>
+          )}
+          {!cfg.slackWebhook && slack.viaFallback && !slack.disabled && (
+            <Button variant="outline" size="sm" onClick={() => setDisabled(true)} disabled={toggling}>
+              {toggling ? 'Disabling…' : 'Disable'}
+            </Button>
+          )}
+          {slack.disabled && (
+            <Button variant="outline" size="sm" onClick={() => setDisabled(false)} disabled={toggling}>
+              {toggling ? 'Enabling…' : 'Enable'}
+            </Button>
+          )}
         </div>
+        {!cfg.slackWebhook && slack.viaFallback && !slack.disabled && (
+          <p className="text-xs text-muted-foreground">
+            No webhook set for this client — alerts currently post to the platform-wide Slack. Disable to opt this client out, or save their own webhook.
+          </p>
+        )}
       </CardContent>
     </Card>
   )
@@ -825,11 +894,34 @@ function CalendlyConnectorCard({ clientId, client, configured }: {
   const cfg = client.agentConfig ?? {}
   const [link, setLink] = useState(cfg.calendlyLink ?? '')
   const [saving, setSaving] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const confirm = useConfirm()
+
+  async function remove() {
+    if (!(await confirm('Remove the Calendly link? The assistant will stop offering booking slots for this client.'))) return
+    setRemoving(true)
+    try {
+      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, calendlyLink: undefined } })
+      setLink('')
+      mutate(['client', clientId])
+      mutate(['connectors', clientId])
+      toast.success('Calendly link removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove')
+    } finally {
+      setRemoving(false)
+    }
+  }
 
   async function save() {
+    const trimmed = link.trim()
+    if (!/^https:\/\/(www\.)?calendly\.com\//.test(trimmed)) {
+      toast.error('That doesn’t look like a Calendly link (expected https://calendly.com/…)')
+      return
+    }
     setSaving(true)
     try {
-      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, calendlyLink: link || undefined } })
+      await api.clients.upsert({ id: clientId, agentConfig: { ...cfg, calendlyLink: trimmed } })
       mutate(['client', clientId])
       mutate(['connectors', clientId])
       toast.success('Calendly link saved')
@@ -855,7 +947,14 @@ function CalendlyConnectorCard({ clientId, client, configured }: {
         </div>
         <div className="flex gap-2">
           <Input value={link} onChange={e => setLink(e.target.value)} placeholder="https://calendly.com/your-link" />
-          <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+          <Button size="sm" onClick={save} disabled={saving || !link.trim() || link.trim() === (cfg.calendlyLink ?? '')}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          {configured && (
+            <Button variant="outline" size="sm" onClick={remove} disabled={removing}>
+              {removing ? 'Removing…' : 'Remove'}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

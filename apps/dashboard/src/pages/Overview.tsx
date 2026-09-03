@@ -2,7 +2,8 @@ import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { Link, Navigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { AlertCircle, Building2, MessageSquarePlus, Mail } from 'lucide-react'
+import { AlertCircle, Building2, MessageSquarePlus, Mail, Sparkles, ChevronDown, ChevronRight, Info } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { api } from '@/lib/api'
 import type { RequestStatus } from '@/lib/api'
 import { StatTile } from '@/components/stat-tile'
@@ -33,6 +34,138 @@ const REQUEST_KEY = 'overview-requests'
 // Same expandable-detail / comment / attach / status-change actions as the
 // per-client Requests page and the client Home card — just with a Client
 // column since this queue spans every tenant.
+function fmtUsd(usd: number): string {
+  return usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(3)}`
+}
+
+// Categorical series colors for the spend breakdown — dataviz-skill reference
+// palette (dark slots 1–3), validated against this theme's card surface
+// (six-check run: lightness band, chroma, CVD + normal-vision separation,
+// contrast — all pass). Fixed assignment: color follows the entity.
+const SPEND_SERIES = {
+  chat: '#3987e5',
+  generation: '#d95926',
+  seoJobs: '#199e70'
+} as const
+
+function fmtMonth(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
+
+// Month-to-date AI/vendor spend the platform has recorded (chat messages,
+// generation runs, paid SEO jobs) — the "am I running low on credits" glance.
+// Provider consoles remain the billing authority; this is what we measured.
+function AiSpendCard() {
+  const { data: spend } = useSWR('ai-spend', api.overview.aiSpend)
+  const [chatOpen, setChatOpen] = useState(false)
+
+  if (!spend) {
+    return <Card><CardContent className="pt-5"><Skeleton className="h-28 w-full" /></CardContent></Card>
+  }
+
+  const rows = [
+    {
+      key: 'chat', label: 'Chat assistant', color: SPEND_SERIES.chat,
+      usd: spend.chat.costMicros / 1_000_000,
+      detail: `${spend.chat.messages.toLocaleString()} message${spend.chat.messages === 1 ? '' : 's'}`
+    },
+    {
+      key: 'generation', label: 'Prospect generation', color: SPEND_SERIES.generation,
+      usd: spend.generation.costMicros / 1_000_000,
+      detail: `${spend.generation.runs.toLocaleString()} run${spend.generation.runs === 1 ? '' : 's'}`
+    },
+    {
+      key: 'seoJobs', label: 'SEO jobs', color: SPEND_SERIES.seoJobs,
+      usd: spend.seoJobs.costCents / 100,
+      detail: `${spend.seoJobs.runs.toLocaleString()} run${spend.seoJobs.runs === 1 ? '' : 's'}`
+    }
+  ]
+  const total = spend.totalUsd
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <Sparkles className="h-3.5 w-3.5 text-primary" />
+          AI spend · {fmtMonth(spend.month)}
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" aria-label="What AI spend measures" className="cursor-help">
+                  <Info className="h-3 w-3 opacity-60 transition-opacity hover:opacity-100" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-64">
+                What the platform recorded this month across chat, prospect generation, and paid SEO jobs.
+                Provider consoles (Anthropic/OpenAI, Voyage, Perplexity, DataForSEO, Gemini) are the billing
+                authority — set their low-balance alerts too.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+      </div>
+      <div className="mt-1 text-2xl font-semibold">{fmtUsd(total)}</div>
+
+      {/* Part-to-whole: one stacked bar, 2px surface gaps between segments. */}
+      {total > 0 && (
+        <div className="mt-3 flex h-2 w-full gap-0.5 overflow-hidden rounded-full">
+          {rows.filter(r => r.usd > 0).map(r => (
+            <div
+              key={r.key}
+              title={`${r.label}: ${fmtUsd(r.usd)}`}
+              className="h-full rounded-full transition-opacity hover:opacity-80"
+              style={{ backgroundColor: r.color, width: `${Math.max(2, (r.usd / total) * 100)}%` }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Legend rows: swatch carries identity, text wears text tokens. */}
+      <div className="mt-3 flex flex-col">
+        {rows.map(r => {
+          const expandable = r.key === 'chat' && spend.chat.byModel.length > 0
+          return (
+            <div key={r.key}>
+              <button
+                type="button"
+                onClick={() => expandable && setChatOpen(o => !o)}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${expandable ? 'cursor-pointer hover:bg-muted/50' : 'cursor-default'}`}
+              >
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
+                <span className="flex-1">
+                  {r.label} <span className="text-xs text-muted-foreground">· {r.detail}</span>
+                </span>
+                <span className="tabular-nums text-muted-foreground">{fmtUsd(r.usd)}</span>
+                {expandable && (chatOpen
+                  ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />)}
+              </button>
+              {expandable && chatOpen && spend.chat.byModel.map(m => (
+                <div key={m.model} className="flex items-center gap-2 rounded-md py-1 pl-8 pr-2 text-xs text-muted-foreground">
+                  <span className="flex-1">
+                    {m.model} · {(m.inputTokens / 1000).toFixed(1)}K in / {(m.outputTokens / 1000).toFixed(1)}K out · {m.messages.toLocaleString()} msg
+                  </span>
+                  <span className="tabular-nums">{fmtUsd(m.costMicros / 1_000_000)}</span>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+
+      {spend.chat.pendingMigration && (
+        <p className="mt-2 text-xs text-warning">
+          Chat cost columns missing — run migrate_2026-09-03_chat-cost.sql to start recording.
+        </p>
+      )}
+      {total === 0 && !spend.chat.pendingMigration && (
+        <p className="mt-2 text-xs text-muted-foreground">No recorded spend yet this month.</p>
+      )}
+    </Card>
+  )
+}
+
 function OpenRequestsCard() {
   const { data: requests, isLoading } = useSWR(REQUEST_KEY, api.overview.requests)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -221,6 +354,9 @@ export default function Overview() {
           <StatTile label="Near plan cap" value={summary.clientsNearCap} />
         </div>
       )}
+
+      {/* AI cost sits with the AI usage numbers above, not down in ops config. */}
+      <AiSpendCard />
 
       {rollupsLoading && !rollups && (
         <div className="space-y-2">

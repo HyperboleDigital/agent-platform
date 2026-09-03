@@ -5,6 +5,7 @@ import { getAllClients, upsertClient, getClientById, getClientBySlug, inviteClie
 import { applyTierTransition } from '../lib/tier-transitions'
 import { uploadOrgLogo, deleteOrgLogo, ALLOWED_LOGO_TYPES as ALLOWED_ORG_LOGO_TYPES, MAX_LOGO_BYTES as MAX_ORG_LOGO_BYTES } from '../lib/org-logo'
 import { addDocument, listDocuments, deleteDocument, updateDocumentDescription } from '../tools/knowledge-base'
+import { importWebsite, DEFAULT_MAX_PAGES } from '../lib/site-import'
 import { extractText, isSupportedFile, SUPPORTED_EXTENSIONS } from '../lib/file-extract'
 import { uploadLogo, deleteLogo, ALLOWED_LOGO_TYPES, MAX_LOGO_BYTES } from '../lib/widget-logo'
 import { getLeads, updateLeadStatus, deleteLead } from '../tools/crm'
@@ -19,7 +20,7 @@ import { listTargetKeywords, addTargetKeyword, removeTargetKeyword, checkKeyword
 import { createMetaFixRequest, createSchemaFixRequest, createLlmsTxtRequest } from '../lib/seo-fixes'
 import { gscConfigured, fetchSearchAnalytics, getGscTrend, getContentOpportunities, snapshotGsc } from '../lib/gsc'
 import { googleAdsConfigured, fetchAdsPerformance, getAdsTrend, snapshotAds, getConnectedCustomerId } from '../lib/google-ads'
-import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend } from '../lib/visibility'
+import { listQueries, addQuery, removeQuery, runVisibilityChecks, getRuns, getVisibilityTrend, suggestVisibilitySetup } from '../lib/visibility'
 import {
   listRequests, createRequest, updateRequestStatus, cancelRequest, getRequestDetail, addComment, deleteRequest
 } from '../lib/change-requests'
@@ -489,6 +490,34 @@ clientsRouter.post('/:id/knowledge/upload', upload.single('file'), async (req, r
   } catch (err) {
     console.error('[knowledge upload] extraction error', err)
     res.status(400).json({ error: 'Failed to process file' })
+  }
+})
+
+// Import the client's website into the knowledge base: one document per page,
+// each carrying its source URL so chat answers can cite the page. Defaults to
+// the client's own domain; re-running refreshes previously imported pages
+// in place (see lib/site-import.ts).
+clientsRouter.post('/:id/knowledge/import-website', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Client not found' })
+
+  const body = (req.body ?? {}) as { url?: string; maxPages?: number }
+  const url = typeof body.url === 'string' && body.url.trim() ? body.url.trim() : client.domain
+  if (!url) return res.status(400).json({ error: 'No website URL — set the client\'s domain or pass one' })
+  const maxPages = typeof body.maxPages === 'number' ? body.maxPages : DEFAULT_MAX_PAGES
+
+  try {
+    const result = await importWebsite(req.params.id, url, maxPages)
+    if (!result.pages.length) {
+      return res.status(422).json({ error: 'No readable pages found — the site may block bots or render entirely with JavaScript' })
+    }
+    res.json(result)
+  } catch (err) {
+    console.error('[knowledge import-website] failed', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Import failed' })
   }
 })
 
@@ -1218,6 +1247,21 @@ clientsRouter.delete('/:id/visibility/queries/:queryId', async (req, res) => {
     res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to remove query' })
+  }
+})
+
+// AI-suggested brand terms + tracking queries for the setup checklist.
+// Superadmin-only like keyword-ideas: it's an operator curation tool (and a
+// paid LLM call), not something clients self-serve.
+clientsRouter.get('/:id/visibility/suggest', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const id = await requireSeoAccess(req, res)
+  if (!id) return
+  try {
+    res.json(await suggestVisibilitySetup(id))
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to suggest setup' })
   }
 })
 

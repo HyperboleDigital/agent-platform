@@ -66,7 +66,14 @@ widgetConfigRouter.get('/:clientId', async (req, res) => {
           divisions: Array.isArray(cfg.contactFields.divisions)
             ? cfg.contactFields.divisions.map(d => String(d).trim()).filter(Boolean)
             : undefined,
-          divisionMultiSelect: !!cfg.contactFields.divisionMultiSelect
+          divisionMultiSelect: !!cfg.contactFields.divisionMultiSelect,
+          splitName: !!cfg.contactFields.splitName,
+          messageLabel: cfg.contactFields.messageLabel,
+          messagePlaceholder: cfg.contactFields.messagePlaceholder,
+          messageOptional: !!cfg.contactFields.messageOptional,
+          phoneLabel: cfg.contactFields.phoneLabel,
+          companyOptional: !!cfg.contactFields.companyOptional,
+          phoneOptional: !!cfg.contactFields.phoneOptional
         }
       : undefined
   })

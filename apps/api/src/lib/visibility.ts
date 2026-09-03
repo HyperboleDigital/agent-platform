@@ -317,3 +317,61 @@ export async function getVisibilityTrend(clientId: string, days = 30): Promise<V
     .map(([date, b]) => ({ date, mentionRate: b.total > 0 ? b.mentioned / b.total : 0, total: b.total }))
     .sort((a, b) => a.date.localeCompare(b.date))
 }
+
+// ── Setup suggestions ────────────────────────────────────────────────────────
+// AI-generated starting point for the visibility setup steps: brand-term
+// variants (mention matching is string-first, so "SpecID" vs "Spec-ID"
+// matters) and a spread of buyer-phrased queries across the four intent types
+// that make a useful tracking mix. Suggestions only — the operator picks which
+// to add, nothing is written here.
+
+export interface SuggestedQuery {
+  query: string
+  intent: 'category' | 'problem' | 'comparison' | 'brand'
+}
+export interface VisibilitySuggestions {
+  brandTerms: string[]
+  queries: SuggestedQuery[]
+}
+
+export async function suggestVisibilitySetup(clientId: string): Promise<VisibilitySuggestions> {
+  const client = await getClientById(clientId)
+  if (!client) throw new Error('Client not found')
+  const cfg = client.portalConfig ?? {}
+  const existing = await listQueries(clientId)
+
+  const prompt = `You are configuring AI-search visibility tracking for a business. We periodically ask ChatGPT/Claude/Perplexity/Google AI Overviews these queries and check whether the business gets mentioned.
+
+Business: ${client.name}
+Website: ${client.domain || 'unknown'}
+Industry: ${client.industry || 'unknown'}
+Current brand terms: ${cfg.brandTerms?.length ? cfg.brandTerms.join(', ') : '(none)'}
+Already-tracked queries (do NOT repeat these): ${existing.length ? existing.map(q => `"${q.query}"`).join(', ') : '(none)'}
+
+Produce:
+1. "brandTerms": every name variant an AI answer might use for this business (hyphenation, spacing, abbreviations, the bare domain). Include existing terms.
+2. "queries": 10 queries a prospective customer would actually type into an AI assistant, spread across intents — "category" (best-X-for-Y recommendations), "problem" (describing the pain without knowing solutions exist), "comparison" (alternatives/vs a likely competitor), "brand" (asking about this business directly, exactly 1). Conversational phrasing, not keyword strings. Only include a location if the business serves a specific locality.
+
+Reply with strict JSON only: {"brandTerms": ["..."], "queries": [{"query": "...", "intent": "category|problem|comparison|brand"}]}`
+
+  const raw = await complete(prompt, { provider: 'anthropic', maxTokens: 1200 })
+  const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(jsonText)
+  } catch {
+    throw new Error('Suggestion model returned unparseable output — try again')
+  }
+  const p = parsed as { brandTerms?: unknown; queries?: unknown }
+  const brandTerms = Array.isArray(p.brandTerms)
+    ? p.brandTerms.filter((t): t is string => typeof t === 'string' && !!t.trim()).map(t => t.trim())
+    : []
+  const intents = new Set(['category', 'problem', 'comparison', 'brand'])
+  const existingLower = new Set(existing.map(q => q.query.toLowerCase()))
+  const queries = (Array.isArray(p.queries) ? p.queries : [])
+    .filter((q: any): q is SuggestedQuery =>
+      typeof q?.query === 'string' && !!q.query.trim() && intents.has(q?.intent))
+    .map((q: SuggestedQuery) => ({ query: q.query.trim(), intent: q.intent }))
+    .filter(q => !existingLower.has(q.query.toLowerCase()))
+  return { brandTerms, queries }
+}

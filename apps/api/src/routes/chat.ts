@@ -5,6 +5,7 @@ import { logMessage } from '../lib/logs'
 import { overLimit } from '../lib/rate-limit'
 import { checkChatCaps, CHAT_BURST_PER_MIN } from '../lib/usage'
 import { billingConfigured, getSubscription, isActive } from '../lib/billing'
+import { getEntitlements } from '../lib/entitlements'
 import { getClientById } from '../lib/clients'
 import { isOriginAllowed } from '@agent-platform/shared'
 import type { IncomingMessage } from '@agent-platform/shared'
@@ -39,11 +40,25 @@ chatRouter.post('/', async (req, res) => {
   if (!isOriginAllowed(req.get('origin'), originClient?.widgetConfig?.allowedDomains)) {
     return res.status(403).json({ error: 'This assistant is not authorised for this domain.' })
   }
-  // 2. Subscription must be active (paid, trialing, or superadmin-comped) —
-  // only enforced when this deployment has billing configured at all, so
+  // 2. Access. Any ONE of these grants it:
+  //   - an active Stripe base subscription (paid/trialing/past_due, or the
+  //     legacy 'comped' rows from before base-plan comp was removed);
+  //   - a chat entitlement — i.e. an assigned tier that includes chat (Growth)
+  //     or a superadmin service grant. This is the comp path since 2026-07-24
+  //     (see the note in lib/billing.ts); checking the raw subscription alone
+  //     locked every tier-assigned-but-unpaid client out of chat with a 402
+  //     the widget rendered as "trouble connecting";
+  //   - chatUnmanaged — downgraded off a chat tier but keeping the assistant
+  //     live (lib/tier-transitions.ts).
+  // Only enforced when this deployment has billing configured at all, so
   // local/dev without Stripe keys isn't locked out.
-  if (billingConfigured() && !isActive(await getSubscription(message.clientId))) {
-    return res.status(402).json({ error: 'This assistant is currently unavailable.' })
+  if (billingConfigured()) {
+    const [sub, ent] = await Promise.all([getSubscription(message.clientId), getEntitlements(message.clientId)])
+    const hasAccess = isActive(sub) || !!ent.services.chat?.entitled || !!originClient?.agentConfig?.chatUnmanaged
+    if (!hasAccess) {
+      console.warn(`[chat] 402 for client ${message.clientId} — no active subscription, chat tier/grant, or chatUnmanaged`)
+      return res.status(402).json({ error: 'This assistant is currently unavailable.' })
+    }
   }
   // 3. Per-client daily cap + global circuit breaker (DB-backed).
   const caps = await checkChatCaps(message.clientId)
@@ -71,7 +86,11 @@ chatRouter.post('/', async (req, res) => {
       resolvedBy: t?.resolvedBy,
       toolsUsed: t?.toolsUsed,
       retrievedDocIds: t?.retrievedDocIds,
-      queryEmbedding: t?.queryEmbedding
+      queryEmbedding: t?.queryEmbedding,
+      model: t?.model,
+      inputTokens: t?.inputTokens,
+      outputTokens: t?.outputTokens,
+      costMicros: t?.costMicros
     })
     res.json({ reply: result.reply, intent: result.intent, action: result.action })
   } catch (err) {

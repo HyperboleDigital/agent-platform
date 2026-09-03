@@ -14,6 +14,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/empty-state'
 import { AuditReport } from '@/components/audit-report'
 import { AuditProgress } from '@/components/audit-progress'
+import { useSetupTarget } from '@/lib/use-setup-target'
+import { useSearchParams } from 'react-router-dom'
 
 // A little chip that labels which feature on this page a setting drives, so it's
 // obvious at a glance what each field actually affects.
@@ -69,6 +71,19 @@ function ConfigButton({ clientId, domain }: { clientId: string; domain?: string 
     setGscProperty(cfg?.gscProperty ?? '')
     setOpen(true)
   }
+
+  // Setup-checklist deep links for the fields edited here open the modal
+  // directly — once per visit, after the config has loaded so the fields
+  // prefill correctly.
+  const [params] = useSearchParams()
+  const setupKey = params.get('setup')
+  const autoOpened = useRef(false)
+  useEffect(() => {
+    if ((setupKey === 'gscProperty' || setupKey === 'brandTerms') && cfg !== undefined && !autoOpened.current) {
+      autoOpened.current = true
+      startEdit()
+    }
+  }, [setupKey, cfg]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save() {
     setSaving(true)
@@ -331,11 +346,13 @@ function TargetKeywordsCard({ clientId, isSuperadmin, seedHint }: { clientId: st
     }
   }
 
+  const target = useSetupTarget('targetKeywords')
+
   if (isLoading) return <Skeleton className="h-56 w-full" />
   const keywords = data?.keywords ?? []
 
   return (
-    <Card className="overflow-hidden p-0">
+    <Card ref={target.ref} className={`overflow-hidden p-0 ${target.highlight}`}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 p-4">
         <CardTitle className="flex items-center gap-2"><TrendingUp className="h-4 w-4 text-primary" /> Target keywords</CardTitle>
         {isSuperadmin && (
@@ -615,8 +632,13 @@ function AuditCard({ clientId, domain }: { clientId: string; domain?: string }) 
 
   const busy = starting || crawl?.status === 'running'
 
+  // gscProperty + brandTerms live in this card's Configure modal, so all
+  // three checklist deep links highlight here (the modal auto-opens for the
+  // config ones — see ConfigButton).
+  const target = useSetupTarget('baselineCrawl', 'gscProperty', 'brandTerms')
+
   return (
-    <Card>
+    <Card ref={target.ref} className={target.highlight}>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
           SEO Audit {isAdmin && <Badge variant="warning">beta</Badge>}

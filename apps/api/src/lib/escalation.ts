@@ -79,9 +79,10 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
     status: 'open'
   }).then(({ error }) => { if (error) console.error('[escalation] db insert failed', error.message) })
 
-  // 2. Slack.
+  // 2. Slack — unless this client opted out (slackDisabled also suppresses
+  // the platform-wide SLACK_WEBHOOK_URL fallback inside sendSlackAlert).
   try {
-    await sendSlackAlert(cfg.slackWebhook, {
+    if (!cfg.slackDisabled) await sendSlackAlert(cfg.slackWebhook, {
       clientName: client.name,
       from: input.name ? `${input.name} <${input.from}>` : input.from,
       body: input.message,
@@ -136,7 +137,23 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
       label: 'Source',
       value: isRoi ? 'Website ROI calculator' : isLead ? 'Website contact form' : 'Website chat'
     })
-    rows.push({ label: 'Received', value: new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) })
+    // Format in the client's timezone (they read this email), not the
+    // server's — the IANA zone handles DST, so the label flips EST/EDT
+    // correctly through the year.
+    rows.push({
+      label: 'Received',
+      // Component options, not dateStyle/timeStyle — Intl throws if those
+      // are mixed with timeZoneName. Renders "Aug 28, 2026, 11:27 AM EDT".
+      value: new Date().toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: cfg.businessHours?.tz ?? 'America/New_York',
+        timeZoneName: 'short'
+      })
+    })
 
     const { html, text } = buildEmail(brandFor(client), {
       eyebrow: isRoi ? 'New lead — ROI calculator' : isLead ? 'New lead' : 'Needs a human',

@@ -17,6 +17,8 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<ToolLoopResult
     { role: 'user', content: opts.userMessage }
   ]
   let reply = ''
+  let inputTokens = 0
+  let outputTokens = 0
   const maxTurns = opts.maxTurns ?? 6
 
   for (let turn = 0; turn < maxTurns; turn++) {
@@ -27,6 +29,8 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<ToolLoopResult
       tools,
       messages
     })
+    inputTokens += response.usage?.input_tokens ?? 0
+    outputTokens += response.usage?.output_tokens ?? 0
 
     for (const block of response.content) {
       if (block.type === 'text') reply = block.text
@@ -44,5 +48,5 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<ToolLoopResult
     messages.push({ role: 'user', content: toolResults })
   }
 
-  return { reply }
+  return { reply, usage: { model: MODEL, inputTokens, outputTokens } }
 }

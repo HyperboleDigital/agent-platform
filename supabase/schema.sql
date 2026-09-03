@@ -146,7 +146,14 @@ create table if not exists message_logs (
   resolved_by       text check (resolved_by in ('agent', 'human', 'abandoned')),
   tools_used        text[] not null default '{}',
   retrieved_doc_ids uuid[] not null default '{}',
-  query_embedding   vector(1024)
+  query_embedding   vector(1024),
+  -- LLM cost instrumentation (migrate_2026-09-03_chat-cost.sql): which model
+  -- answered, token spend, and cost in millionths of a USD — feeds the
+  -- superadmin AI-spend overview.
+  model             text,
+  input_tokens      integer,
+  output_tokens     integer,
+  cost_micros       bigint
 );
 create index if not exists message_logs_client_idx on message_logs (client_id);
 create index if not exists message_logs_created_idx on message_logs (created_at);

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw, ShieldCheck } from 'lucide-react'
+import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw, ShieldCheck, Globe } from 'lucide-react'
 import type { KnowledgeDoc, KnowledgeFile } from '@/lib/api'
 import type { Client, WidgetConfig, WidgetContactFields } from '@agent-platform/shared'
 import { api } from '@/lib/api'
@@ -142,17 +142,21 @@ function DocumentRow({ clientId, doc, file, onChanged }: {
   )
 }
 
-function KnowledgeTab({ clientId }: { clientId: string }) {
+function KnowledgeTab({ clientId, domain }: { clientId: string; domain: string }) {
   const key = ['knowledge', clientId]
   const filesKey = ['knowledge-files', clientId]
   const { data: docs } = useSWR(key, () => api.clients.knowledge(clientId))
   const { data: files } = useSWR(filesKey, () => api.clients.knowledgeFiles(clientId))
-  const [mode, setMode] = useState<'upload' | 'paste'>('upload')
+  const [mode, setMode] = useState<'upload' | 'paste' | 'website'>('upload')
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  // Prefilled with the client's domain; editable so a staging URL or a
+  // specific section ("example.com/services") can be imported instead.
+  const [siteUrl, setSiteUrl] = useState(domain)
+  const [importing, setImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function add() {
@@ -167,6 +171,24 @@ function KnowledgeTab({ clientId }: { clientId: string }) {
       toast.error(err instanceof Error ? err.message : 'Failed to add document')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function importWebsite() {
+    setImporting(true)
+    try {
+      const result = await api.clients.importWebsiteKnowledge(clientId, siteUrl.trim() || undefined)
+      mutate(key)
+      const refreshed = result.pages.filter(p => p.replaced).length
+      toast.success(
+        `Imported ${result.pages.length} page${result.pages.length === 1 ? '' : 's'}` +
+        (refreshed ? ` (${refreshed} refreshed)` : '') +
+        (result.discovery === 'sitemap' ? ' from the sitemap' : ' from homepage links')
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Website import failed')
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -210,9 +232,29 @@ function KnowledgeTab({ clientId }: { clientId: string }) {
             >
               Paste text
             </button>
+            <button
+              type="button"
+              onClick={() => setMode('website')}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${mode === 'website' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Import website
+            </button>
           </div>
 
-          {mode === 'upload' ? (
+          {mode === 'website' ? (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-muted-foreground">
+                Pulls the site's pages (sitemap first, homepage links as a fallback) into the knowledge base —
+                one document per page, each citing its source URL. Re-importing refreshes previously imported
+                pages without touching uploads or pasted text.
+              </p>
+              <Input value={siteUrl} onChange={e => setSiteUrl(e.target.value)} placeholder="example.com" />
+              <Button onClick={importWebsite} disabled={importing || !siteUrl.trim()} className="justify-self-start">
+                <Globe className="h-4 w-4" />
+                {importing ? 'Importing… (can take a minute)' : 'Import pages'}
+              </Button>
+            </div>
+          ) : mode === 'upload' ? (
             <div className="flex flex-col gap-2">
               <p className="text-xs text-muted-foreground">
                 We'll pull the title and text out of the file automatically — nothing else to fill in.
@@ -404,10 +446,12 @@ function LogoField({ client, draft, onUrlChange }: {
   )
 }
 
-// Extra fields on the widget's contact/lead-capture forms (Company Name,
-// Phone, and a single-select division/category question), beyond the
-// built-in Name/Email/Message. Off by default so opting one client in never
-// changes another's form — see WidgetContactFields in packages/shared.
+// Per-client shape of the widget's contact/lead-capture forms: presentation
+// of the built-in Name/Email/Message fields (split name, labels, required-
+// ness) plus the opt-in extras (Company Name, Phone, a division/category
+// question). Everything defaults to the widget's standard form so opting one
+// client in never changes another's — see WidgetContactFields in
+// packages/shared.
 function ContactFieldsCard({ draft, onChange }: {
   draft: WidgetConfig
   onChange: (cf: WidgetContactFields) => void
@@ -426,19 +470,78 @@ function ContactFieldsCard({ draft, onChange }: {
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
         <p className="text-sm text-muted-foreground">
-          Extra questions on the "Get in touch" form and the inline lead-capture form, on top of the
-          built-in Name / Email / Message. Off by default — only this client's widget is affected.
+          How the "Get in touch" form and the inline lead-capture form ask their questions, and which
+          extra ones they ask on top of the built-in Name / Email / Message. Every option here affects
+          only this client's widget; defaults match the widget's standard form.
         </p>
 
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-col gap-2">
+          <Label>Built-in fields</Label>
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={!!cf.company} onChange={e => patch({ company: e.target.checked })} className="h-4 w-4 accent-primary" />
-            Ask for Company Name
+            <input type="checkbox" checked={!!cf.splitName} onChange={e => patch({ splitName: e.target.checked })} className="h-4 w-4 accent-primary" />
+            Split Name into First name / Last name
+            <span className="text-muted-foreground">(still stored as one name)</span>
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={!!cf.phone} onChange={e => patch({ phone: e.target.checked })} className="h-4 w-4 accent-primary" />
-            Ask for Phone
+            <input type="checkbox" checked={!!cf.messageOptional} onChange={e => patch({ messageOptional: e.target.checked })} className="h-4 w-4 accent-primary" />
+            Message is optional <span className="text-muted-foreground">(only Email stays required)</span>
           </label>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs text-muted-foreground">Message label</Label>
+              <Input
+                value={cf.messageLabel ?? ''}
+                onChange={e => patch({ messageLabel: e.target.value })}
+                placeholder="Message"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs text-muted-foreground">Message placeholder</Label>
+              <Input
+                value={cf.messagePlaceholder ?? ''}
+                onChange={e => patch({ messagePlaceholder: e.target.value })}
+                placeholder="What can we help with?"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label>Extra fields</Label>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!cf.company} onChange={e => patch({ company: e.target.checked })} className="h-4 w-4 accent-primary" />
+              Ask for Company Name
+            </label>
+            {cf.company && (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={!!cf.companyOptional} onChange={e => patch({ companyOptional: e.target.checked })} className="h-4 w-4 accent-primary" />
+                …but optional
+              </label>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!cf.phone} onChange={e => patch({ phone: e.target.checked })} className="h-4 w-4 accent-primary" />
+              Ask for Phone
+            </label>
+            {cf.phone && (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={!!cf.phoneOptional} onChange={e => patch({ phoneOptional: e.target.checked })} className="h-4 w-4 accent-primary" />
+                …but optional
+              </label>
+            )}
+          </div>
+          {cf.phone && (
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs text-muted-foreground">Phone label</Label>
+              <Input
+                value={cf.phoneLabel ?? ''}
+                onChange={e => patch({ phoneLabel: e.target.value })}
+                placeholder="Phone"
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col gap-2">
@@ -538,7 +641,10 @@ function WidgetTab({ client }: { client: Client }) {
         allowedDomains: (draft.allowedDomains ?? []).map(d => d.trim()).filter(Boolean),
         contactFields: draft.contactFields && {
           ...draft.contactFields,
-          divisions: (draft.contactFields.divisions ?? []).map(d => d.trim()).filter(Boolean)
+          divisions: (draft.contactFields.divisions ?? []).map(d => d.trim()).filter(Boolean),
+          messageLabel: draft.contactFields.messageLabel?.trim() || undefined,
+          messagePlaceholder: draft.contactFields.messagePlaceholder?.trim() || undefined,
+          phoneLabel: draft.contactFields.phoneLabel?.trim() || undefined
         }
       }
       await api.clients.upsert({ id: client.id, widgetConfig: clean })
@@ -849,7 +955,7 @@ export default function Assistant() {
           </TabsContent>
 
           <TabsContent value="knowledge">
-            <KnowledgeTab clientId={clientId} />
+            <KnowledgeTab clientId={clientId} domain={client?.domain ?? ''} />
           </TabsContent>
         </Tabs>
       ) : (

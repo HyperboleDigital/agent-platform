@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Bot, Plus, X, RefreshCw } from 'lucide-react'
-import { api } from '@/lib/api'
+import { Bot, Plus, X, RefreshCw, Lightbulb } from 'lucide-react'
+import { api, type VisibilitySuggestions } from '@/lib/api'
+import { useSetupTarget } from '@/lib/use-setup-target'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,9 +17,14 @@ import { TrendChart } from '@/components/charts/trend-chart'
 function QueriesCard({ clientId }: { clientId: string }) {
   const key = ['visibility-queries', clientId]
   const { data: queries } = useSWR(key, () => api.clients.visibilityQueries(clientId))
+  const { data: me } = useSWR('me', api.me)
+  const isSuperadmin = me?.isSuperadmin ?? false
   const [newQuery, setNewQuery] = useState('')
   const [adding, setAdding] = useState(false)
   const [runningAll, setRunningAll] = useState(false)
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestions, setSuggestions] = useState<VisibilitySuggestions | null>(null)
+  const target = useSetupTarget('visibilityQueries')
 
   async function add() {
     if (!newQuery.trim()) return
@@ -27,11 +33,46 @@ function QueriesCard({ clientId }: { clientId: string }) {
       await api.clients.addVisibilityQuery(clientId, newQuery.trim())
       setNewQuery('')
       mutate(key)
+      mutate(['setup-status', clientId])
       toast.success('Query added')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add query')
     } finally {
       setAdding(false)
+    }
+  }
+
+  async function suggest() {
+    setSuggesting(true)
+    try {
+      setSuggestions(await api.clients.suggestVisibilitySetup(clientId))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to get suggestions')
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
+  async function addSuggested(query: string) {
+    try {
+      await api.clients.addVisibilityQuery(clientId, query)
+      setSuggestions(s => s ? { ...s, queries: s.queries.filter(q => q.query !== query) } : s)
+      mutate(key)
+      mutate(['setup-status', clientId])
+      toast.success('Query added')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add query')
+    }
+  }
+
+  async function applyBrandTerms(terms: string[]) {
+    try {
+      await api.clients.updateSeoConfig(clientId, { brandTerms: terms })
+      mutate(['seo-config', clientId])
+      mutate(['setup-status', clientId])
+      toast.success('Brand terms saved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save brand terms')
     }
   }
 
@@ -58,13 +99,20 @@ function QueriesCard({ clientId }: { clientId: string }) {
   }
 
   return (
-    <Card>
+    <Card ref={target.ref} className={target.highlight}>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Tracked queries</CardTitle>
-        <Button size="sm" onClick={runAll} disabled={runningAll || !queries?.length}>
-          <RefreshCw className={`h-3.5 w-3.5 ${runningAll ? 'animate-spin' : ''}`} />
-          {runningAll ? 'Checking…' : 'Run all'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isSuperadmin && (
+            <Button variant="outline" size="sm" onClick={suggest} disabled={suggesting}>
+              <Lightbulb className="h-3.5 w-3.5" /> {suggesting ? 'Thinking…' : 'Suggest queries'}
+            </Button>
+          )}
+          <Button size="sm" onClick={runAll} disabled={runningAll || !queries?.length}>
+            <RefreshCw className={`h-3.5 w-3.5 ${runningAll ? 'animate-spin' : ''}`} />
+            {runningAll ? 'Checking…' : 'Run all'}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 pt-0">
         <div className="flex gap-2">
@@ -78,6 +126,32 @@ function QueriesCard({ clientId }: { clientId: string }) {
             <Plus className="h-4 w-4" /> Add
           </Button>
         </div>
+        {suggestions && (
+          <div className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3">
+            <div className="text-xs font-medium text-muted-foreground">Suggested — click to add the ones worth tracking</div>
+            {suggestions.brandTerms.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-xs text-muted-foreground">Brand terms:</span>
+                <span>{suggestions.brandTerms.join(', ')}</span>
+                <Button variant="secondary" size="sm" onClick={() => applyBrandTerms(suggestions.brandTerms)}>Apply</Button>
+              </div>
+            )}
+            {suggestions.queries.map(s => (
+              <div key={s.query} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                <span className="flex items-center gap-2">
+                  <Badge variant="secondary" className="shrink-0 capitalize">{s.intent}</Badge>
+                  {s.query}
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => addSuggested(s.query)}>
+                  <Plus className="h-3.5 w-3.5" /> Add
+                </Button>
+              </div>
+            ))}
+            {suggestions.queries.length === 0 && (
+              <div className="text-sm text-muted-foreground">All suggestions added — run &quot;Suggest queries&quot; again for more.</div>
+            )}
+          </div>
+        )}
         {queries?.length ? (
           <div className="flex flex-col gap-1.5">
             {queries.map(q => (
