@@ -75,6 +75,19 @@ widgetConfigRouter.get('/:clientId', async (req, res) => {
           companyOptional: !!cfg.contactFields.companyOptional,
           phoneOptional: !!cfg.contactFields.phoneOptional
         }
+      : undefined,
+    // Per-client copy for the inline lead form ("demo" language is wrong for
+    // e.g. a quote-driven client). Strings only, unset keys keep widget
+    // defaults — see WidgetLeadFormCopy in packages/shared.
+    leadForm: cfg.leadForm
+      ? {
+          title: cfg.leadForm.title,
+          sub: cfg.leadForm.sub,
+          btn: cfg.leadForm.btn,
+          donePre: cfg.leadForm.donePre,
+          donePost: cfg.leadForm.donePost,
+          reason: cfg.leadForm.reason
+        }
       : undefined
   })
 })

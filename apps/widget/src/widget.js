@@ -123,6 +123,11 @@
   // Optional string overrides fall back to the widget's built-in copy; empty
   // or whitespace-only values from the dashboard count as unset.
   const cfStr = (v, fallback) => (v && String(v).trim()) || fallback;
+  // Per-client copy for the inline LEAD form (widgetConfig.leadForm). The
+  // built-in copy is demo-flavored; a quote-driven client overrides what a
+  // hot lead is called. Merged into REASON_COPY.lead below — unset keys keep
+  // the widget's defaults.
+  const LEAD_FORM = remote.leadForm && typeof remote.leadForm === 'object' ? remote.leadForm : {};
   const CONTACT_FIELDS = {
     company: !!rawContactFields.company,
     phone: !!rawContactFields.phone,
@@ -1076,7 +1081,14 @@
   // notification (email subject + "Reason:" line), so a demo request reads as a
   // demo request — not a generic "requested a human".
   const REASON_COPY = {
-    lead:     { title: 'Let’s set up your demo', sub: 'Drop your details and we’ll reach out to get it scheduled.', btn: 'Request demo', donePre: 'Perfect — your demo request is in! 🎉 We’ll reach out at ', donePost: ' to get it scheduled.', reason: 'Visitor requested a demo' },
+    lead:     {
+      title: cfStr(LEAD_FORM.title, 'Let’s set up your demo'),
+      sub: cfStr(LEAD_FORM.sub, 'Drop your details and we’ll reach out to get it scheduled.'),
+      btn: cfStr(LEAD_FORM.btn, 'Request demo'),
+      donePre: cfStr(LEAD_FORM.donePre, 'Perfect — your demo request is in! 🎉 We’ll reach out at '),
+      donePost: cfStr(LEAD_FORM.donePost, ' to get it scheduled.'),
+      reason: cfStr(LEAD_FORM.reason, 'Visitor requested a demo')
+    },
     booking:  { title: 'Let’s book your call', sub: 'Leave your details and we’ll set up a time.', btn: 'Book call', donePre: 'Got it! 🎉 We’ll email ', donePost: ' to arrange your call.', reason: 'Visitor wants to book a call' },
     escalate: { title: 'Connect with our team', sub: 'Leave your details and a teammate will follow up.', btn: 'Send', donePre: 'Thanks! 🙌 A teammate will follow up with you at ', donePost: ' shortly.', reason: 'Visitor asked to speak with a human' },
     contact:  { title: 'Get in touch', sub: 'Leave a message and we’ll get back to you shortly.', btn: 'Send message', donePre: 'Thanks! 🎉 We’ll be in touch at ', donePost: ' soon.', reason: 'Visitor reached out via the contact form' },

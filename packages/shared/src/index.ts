@@ -244,6 +244,21 @@ export interface WidgetConfig {
   // Message. Unset means the built-in form only — this keeps every existing
   // client's widget unchanged until an operator opts a client in.
   contactFields?: WidgetContactFields
+  // Copy overrides for the inline LEAD form (the one capture_lead opens).
+  // The built-in copy is demo-flavored ("Let's set up your demo") — right
+  // for a software client, wrong for e.g. an ingredient supplier whose hot
+  // lead wants a quote or samples. Every key optional; unset keeps the
+  // built-in default, so existing clients render unchanged.
+  leadForm?: WidgetLeadFormCopy
+}
+
+export interface WidgetLeadFormCopy {
+  title?: string      // form heading, default "Let's set up your demo"
+  sub?: string        // sub-line, default "Drop your details and we'll reach out to get it scheduled."
+  btn?: string        // submit button, default "Request demo"
+  donePre?: string    // confirmation before the email, default "Perfect — your demo request is in! 🎉 We'll reach out at "
+  donePost?: string   // confirmation after the email, default " to get it scheduled."
+  reason?: string     // notification email "Reason:" line, default "Visitor requested a demo"
 }
 
 export interface WidgetContactFields {

@@ -452,6 +452,50 @@ function LogoField({ client, draft, onUrlChange }: {
 // question). Everything defaults to the widget's standard form so opting one
 // client in never changes another's — see WidgetContactFields in
 // packages/shared.
+// What this client calls a hot lead. The widget's built-in copy is
+// demo-flavored ("Let's set up your demo" / "Request demo") — right for a
+// software client, wrong for a quote- or samples-driven one. Placeholders
+// show the defaults; empty fields keep them.
+const LEAD_FORM_FIELDS: { key: keyof NonNullable<WidgetConfig['leadForm']>; label: string; def: string }[] = [
+  { key: 'title', label: 'Form heading', def: 'Let’s set up your demo' },
+  { key: 'sub', label: 'Sub-line', def: 'Drop your details and we’ll reach out to get it scheduled.' },
+  { key: 'btn', label: 'Submit button', def: 'Request demo' },
+  { key: 'donePre', label: 'Confirmation (before their email)', def: 'Perfect — your demo request is in! 🎉 We’ll reach out at ' },
+  { key: 'donePost', label: 'Confirmation (after their email)', def: ' to get it scheduled.' },
+  { key: 'reason', label: 'Notification email reason line', def: 'Visitor requested a demo' }
+]
+
+function LeadFormCopyCard({ draft, onChange }: {
+  draft: WidgetConfig
+  onChange: (lf: NonNullable<WidgetConfig['leadForm']>) => void
+}) {
+  const lf = draft.leadForm ?? {}
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Lead form wording</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 pt-0">
+        <p className="text-sm text-muted-foreground">
+          What the inline lead-capture form calls the ask. The default is demo language — a client whose
+          hot lead wants a <em>quote</em>, a <em>call</em>, or <em>samples</em> can rename the whole flow
+          here. Empty fields keep the default shown in grey.
+        </p>
+        {LEAD_FORM_FIELDS.map(f => (
+          <div key={f.key} className="flex flex-col gap-1.5">
+            <Label className="text-xs text-muted-foreground">{f.label}</Label>
+            <Input
+              value={lf[f.key] ?? ''}
+              onChange={e => onChange({ ...lf, [f.key]: e.target.value })}
+              placeholder={f.def}
+            />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
 function ContactFieldsCard({ draft, onChange }: {
   draft: WidgetConfig
   onChange: (cf: WidgetContactFields) => void
@@ -639,6 +683,15 @@ function WidgetTab({ client }: { client: Client }) {
         prompts: (draft.prompts ?? []).map(p => p.trim()).filter(Boolean),
         chips: (draft.chips ?? []).filter(c => c.label.trim() && c.message.trim()).slice(0, 4),
         allowedDomains: (draft.allowedDomains ?? []).map(d => d.trim()).filter(Boolean),
+        // Trimmed; a fully-empty leadForm collapses to unset so the widget
+        // keeps its built-in (demo) copy.
+        leadForm: (() => {
+          const lf = draft.leadForm ?? {}
+          const cleaned = Object.fromEntries(
+            Object.entries(lf).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]).filter(([, v]) => v)
+          )
+          return Object.keys(cleaned).length ? cleaned : undefined
+        })(),
         contactFields: draft.contactFields && {
           ...draft.contactFields,
           divisions: (draft.contactFields.divisions ?? []).map(d => d.trim()).filter(Boolean),
@@ -894,6 +947,7 @@ function WidgetTab({ client }: { client: Client }) {
       </Card>
 
       <ContactFieldsCard draft={draft} onChange={cf => set('contactFields', cf)} />
+      <LeadFormCopyCard draft={draft} onChange={lf => set('leadForm', lf)} />
 
       {/* Sticky: every card on this tab is saved by this one button, and the
           tab is long enough that a footer button scrolls out of sight — which
