@@ -1782,7 +1782,9 @@ clientsRouter.patch('/:id/team/members/:userId', async (req, res) => {
   if (!canManageTeam(identity)) return res.status(403).json({ error: 'Only an admin can change roles' })
   if (!isTeamRole(req.body?.role)) return res.status(400).json({ error: 'Invalid role' })
   try {
-    res.json(await updateMemberRole(org.orgId, req.params.userId, req.body.role))
+    // Superadmin may demote a client's last admin (agency operator managing
+    // seats on the client's behalf); client admins still can't strand a team.
+    res.json(await updateMemberRole(org.orgId, req.params.userId, req.body.role, !!identity?.isSuperadmin))
   } catch (err) {
     const { status, error } = teamFailed(err, 'Failed to update role')
     res.status(status).json({ error })
@@ -1795,7 +1797,9 @@ clientsRouter.delete('/:id/team/members/:userId', async (req, res) => {
   if (!org.ok) return res.status(org.status).json({ error: org.error })
   if (!canManageTeam(identity)) return res.status(403).json({ error: 'Only an admin can remove team members' })
   try {
-    await removeMember(org.orgId, req.params.userId)
+    // Superadmin may remove a client's last admin (offboarding / seat reset);
+    // client admins still can't strand their own team.
+    await removeMember(org.orgId, req.params.userId, !!identity?.isSuperadmin)
     res.json({ ok: true })
   } catch (err) {
     const { status, error } = teamFailed(err, 'Failed to remove member')

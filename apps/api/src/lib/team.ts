@@ -165,22 +165,27 @@ export async function revokeInvitation(orgId: string, invitationId: string, requ
   }
 }
 
-export async function removeMember(orgId: string, userId: string): Promise<void> {
+// `allowLastAdmin` is the superadmin override: a CLIENT admin must never
+// strand their own team with no one who can manage seats, but the agency
+// operator legitimately empties teams (offboarding, resetting a client's
+// seats) and can always re-invite via the backend.
+export async function removeMember(orgId: string, userId: string, allowLastAdmin = false): Promise<void> {
   const team = await getTeam(orgId)
   const target = team.members.find(m => m.userId === userId)
   if (!target) throw new TeamError('That member is no longer on the team')
   // Never let a team strand itself with no one who can manage seats.
-  if (target.role === 'org:admin' && team.members.filter(m => m.role === 'org:admin').length === 1) {
+  if (!allowLastAdmin && target.role === 'org:admin' && team.members.filter(m => m.role === 'org:admin').length === 1) {
     throw new TeamError('You can\'t remove the last admin — promote someone else first')
   }
   await clerkClient.organizations.deleteOrganizationMembership({ organizationId: orgId, userId })
 }
 
-export async function updateMemberRole(orgId: string, userId: string, role: TeamRole): Promise<TeamMember> {
+export async function updateMemberRole(orgId: string, userId: string, role: TeamRole, allowLastAdmin = false): Promise<TeamMember> {
   const team = await getTeam(orgId)
   const target = team.members.find(m => m.userId === userId)
   if (!target) throw new TeamError('That member is no longer on the team')
   if (
+    !allowLastAdmin &&
     target.role === 'org:admin' && role !== 'org:admin' &&
     team.members.filter(m => m.role === 'org:admin').length === 1
   ) {
