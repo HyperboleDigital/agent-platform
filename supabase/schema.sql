@@ -257,6 +257,11 @@ create table if not exists subscriptions (
   stripe_customer_id    text not null,
   stripe_subscription_id text unique,
   stripe_price_id       text,
+  -- Resolved pricing-sheet tier for the base item ('care'|'seo'|'growth') —
+  -- from the price when tierForPriceId recognizes it, else from the
+  -- subscription's tier_key Stripe metadata (the manual mapping for legacy
+  -- prices, stamped by mapSubscriptionToTier in lib/billing.ts).
+  tier_key              text,
   status                text not null default 'incomplete', -- Stripe subscription status
   current_period_end    timestamptz,
   created_at            timestamptz not null default now(),

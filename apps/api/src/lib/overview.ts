@@ -11,6 +11,7 @@ interface SubRow {
   stripe_customer_id: string
   stripe_subscription_id: string | null
   stripe_price_id: string | null
+  tier_key?: string | null // optional: column exists only post-2026-09-04 migration
   status: string
   current_period_end: string | null
 }
@@ -22,6 +23,7 @@ function fromRow(row: SubRow): SubscriptionRow {
     stripeCustomerId: row.stripe_customer_id,
     stripeSubscriptionId: row.stripe_subscription_id,
     stripePriceId: row.stripe_price_id,
+    tierKey: row.tier_key ?? null,
     status: row.status,
     currentPeriodEnd: row.current_period_end
   }
@@ -121,7 +123,7 @@ export async function getClientRollups(): Promise<ClientRollup[]> {
 
   return clients.map(c => {
     const sub = subsByClient.get(c.id) ?? null
-    const plan = sub ? planForSubscription(sub.stripePriceId) : null
+    const plan = sub ? planForSubscription(sub.stripePriceId, sub.tierKey) : null
     const comped = isComped(sub)
     const billingActive = isActive(sub) && !comped
     // Tier price + purchased add-ons + monthly custom line items (included:

@@ -5,7 +5,7 @@ import { logLead } from '../tools/crm'
 import { notifyEscalation } from '../lib/escalation'
 import { overLimit } from '../lib/rate-limit'
 import { CONTACT_PER_HOUR } from '../lib/usage'
-import { isOriginAllowed } from '@agent-platform/shared'
+import { isOriginAllowed, isFreeEmail } from '@agent-platform/shared'
 
 export const contactRouter = Router()
 
@@ -54,6 +54,13 @@ contactRouter.post('/', async (req, res) => {
   // emails/Slacks a human, so an unauthorised embed here is a spam vector.
   if (!isOriginAllowed(req.get('origin'), client.widgetConfig?.allowedDomains)) {
     return res.status(403).json({ error: 'This form is not authorised for this domain.' })
+  }
+
+  // Per-client "company emails only" policy: reject free-mailbox addresses so
+  // the team only gets leads they can identify. 422 with a human-readable
+  // message — the widget shows it verbatim under the email field.
+  if (client.agentConfig?.requireCompanyEmail && isFreeEmail(email)) {
+    return res.status(422).json({ error: 'Please use your company email address — personal addresses (Gmail, Yahoo, etc.) aren\u2019t accepted here.' })
   }
 
   try {

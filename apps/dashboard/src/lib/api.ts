@@ -291,6 +291,7 @@ export interface SubscriptionInfo {
   stripeCustomerId: string
   stripeSubscriptionId: string | null
   stripePriceId: string | null
+  tierKey: string | null
   status: string
   currentPeriodEnd: string | null
 }
@@ -302,6 +303,19 @@ export interface ClientSubscriptionSummary {
   status: string
   created: string
   isTracked: boolean
+  tierKey: string | null
+}
+
+export interface SubscriptionLookup {
+  id: string
+  status: string
+  created: string
+  amountCents: number | null
+  priceId: string | null
+  tierKey: string | null
+  customerName: string | null
+  customerEmail: string | null
+  clientId: string | null
 }
 
 export interface Identity {
@@ -1463,6 +1477,15 @@ export const api = {
       request<ClientSubscriptionSummary[]>(`/billing/${clientId}/subscriptions`),
     cancelSubscription: (clientId: string, subId: string) =>
       request<{ ok: boolean }>(`/billing/${clientId}/subscriptions/${subId}/cancel`, { method: 'POST' }),
+    syncFromStripe: (clientId: string) =>
+      request<{ synced: boolean }>(`/billing/${clientId}/sync-stripe`, { method: 'POST' }),
+    lookupSubscription: (clientId: string, subId: string) =>
+      request<SubscriptionLookup>(`/billing/${clientId}/subscriptions/${encodeURIComponent(subId)}`),
+    mapSubscriptionTier: (clientId: string, subId: string, tierKey: string) =>
+      request<{ ok: boolean; tracked: boolean; entitlements: Entitlements }>(`/billing/${clientId}/subscriptions/${subId}/map-tier`, {
+        method: 'POST',
+        body: JSON.stringify({ tierKey })
+      }),
     addon: (clientId: string, serviceKey: ServiceKey, action: 'add' | 'remove') =>
       request<{ ok: boolean; entitlements: Entitlements }>(`/billing/${clientId}/addons`, {
         method: 'POST',

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { normalizeDomain, isPublicHost, type LeadStatus, type HostingOwner } from '@agent-platform/shared'
 import { api } from '@/lib/api'
-import type { ConnectorStatus, RequestStatus, TierInfo, TierFeature, ServiceKey, ClientLineItem, LineItemCadence } from '@/lib/api'
+import type { ConnectorStatus, RequestStatus, TierInfo, TierFeature, ServiceKey, ClientLineItem, LineItemCadence, SubscriptionLookup } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
 import { useClientCtx } from '@/pages/client/ClientLayout'
 import { StatTile } from '@/components/stat-tile'
@@ -1398,6 +1398,211 @@ function LineItemsCard({ clientId, client }: { clientId: string; client: import(
   )
 }
 
+// Superadmin: link ANY Stripe subscription to THIS client by its id. With
+// many customers on look-alike products every subscription id is unique, so
+// the flow is deliberately two-step: paste the exact sub_... id from Stripe,
+// LOOK IT UP (what it bills, which Stripe customer, any existing attribution)
+// and only then link it to this client + map it to a tier. Linking stamps
+// client_id + tier_key on the Stripe subscription's metadata and re-syncs —
+// billing is untouched, and a sub already attributed to a DIFFERENT client is
+// refused by the server (and flagged here first).
+function LinkSubscriptionCard({ clientId, tiers, onLinked }: {
+  clientId: string
+  tiers?: TierInfo[]
+  onLinked: () => void
+}) {
+  const [subId, setSubId] = useState('')
+  const [lookup, setLookup] = useState<SubscriptionLookup | null>(null)
+  const [lookingUp, setLookingUp] = useState(false)
+  const [linkTier, setLinkTier] = useState('')
+  const [linking, setLinking] = useState(false)
+
+  async function doLookup() {
+    const id = subId.trim()
+    if (!id) return
+    setLookingUp(true)
+    setLookup(null)
+    try {
+      const found = await api.billing.lookupSubscription(clientId, id)
+      setLookup(found)
+      setLinkTier(found.tierKey ?? '')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to look up subscription')
+    } finally {
+      setLookingUp(false)
+    }
+  }
+
+  async function link() {
+    if (!lookup || !linkTier) return
+    setLinking(true)
+    try {
+      const res = await api.billing.mapSubscriptionTier(clientId, lookup.id, linkTier)
+      if (res.tracked) toast.success('Subscription linked — it is now this client’s current plan')
+      else toast.warning('Mapped, but a newer active subscription remains the tracked plan')
+      setSubId('')
+      setLookup(null)
+      onLinked()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to link subscription')
+    } finally {
+      setLinking(false)
+    }
+  }
+
+  const foreign = !!lookup?.clientId && lookup.clientId !== clientId
+  const alreadyHere = !!lookup?.clientId && lookup.clientId === clientId
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Link a Stripe subscription</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3 text-sm">
+        <p className="text-muted-foreground">
+          Paste a subscription id from Stripe (<span className="font-mono text-xs">sub_...</span>) to attach that
+          exact subscription to this client and map it to a tier — for legacy subscriptions created before the
+          platform. Billing itself doesn&apos;t change.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="w-72 font-mono text-xs"
+            placeholder="sub_1ABC..."
+            value={subId}
+            onChange={e => { setSubId(e.target.value); setLookup(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') doLookup() }}
+          />
+          <Button size="sm" variant="secondary" onClick={doLookup} disabled={lookingUp || !subId.trim()}>
+            {lookingUp ? 'Looking up…' : 'Look up'}
+          </Button>
+        </div>
+        {lookup && (
+          <div className="rounded-md border border-border bg-background/50 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-medium tabular-nums">
+                {lookup.amountCents != null ? `$${(lookup.amountCents / 100).toFixed(0)}/mo` : 'Unknown amount'}
+              </span>
+              <Badge variant={subStatusVariant(lookup.status)}>
+                <StatusDot variant={subStatusVariant(lookup.status)} />
+                {lookup.status}
+              </Badge>
+              <span className="text-xs text-muted-foreground">started {new Date(lookup.created).toLocaleDateString()}</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Stripe customer: {lookup.customerName ?? 'unnamed'}{lookup.customerEmail ? ` · ${lookup.customerEmail}` : ''}
+            </p>
+            {foreign ? (
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-warning">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                Already linked to a different client — it can’t be linked here. Unlink it from that client first if this is intentional.
+              </p>
+            ) : (
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={linkTier}
+                  onChange={e => setLinkTier(e.target.value)}
+                >
+                  <option value="">Map to tier…</option>
+                  {(tiers ?? []).map(t => (
+                    <option key={t.key} value={t.key}>{t.name} — ${(t.monthlyPriceCents / 100).toFixed(0)}/mo</option>
+                  ))}
+                </select>
+                <Button size="sm" onClick={link} disabled={linking || !linkTier || lookup.status === 'canceled'}>
+                  {linking ? 'Linking…' : alreadyHere ? 'Map to tier' : 'Link to this client'}
+                </Button>
+                {lookup.status === 'canceled' && (
+                  <span className="text-xs text-muted-foreground">Canceled subscriptions can&apos;t be linked.</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Superadmin escape hatch for LEGACY subscriptions: an active sub whose
+// Stripe price predates the current pricing sheet resolves to no plan
+// ("Unknown plan"), the tier never syncs, and the client can't change their
+// plan. Mapping stamps tier_key on the Stripe subscription's metadata
+// (durable — every later webhook re-derives it) and re-syncs, after which the
+// plan label, tier assignment, and entitlements all follow. Billing itself is
+// untouched: the client keeps paying exactly what they were paying.
+function MapLegacySubCard({ clientId, subId, tiers, onMapped }: {
+  clientId: string
+  subId: string
+  tiers?: TierInfo[]
+  onMapped: () => void
+}) {
+  const [mapKey, setMapKey] = useState('')
+  const [mapping, setMapping] = useState(false)
+  // Show exactly WHICH subscription this card is about to map — id, amount,
+  // status, and the Stripe customer — so mapping is never a blind action.
+  const { data: subInfo } = useSWR(['sub-lookup', clientId, subId], () => api.billing.lookupSubscription(clientId, subId))
+
+  async function map() {
+    if (!mapKey) return
+    setMapping(true)
+    try {
+      await api.billing.mapSubscriptionTier(clientId, subId, mapKey)
+      toast.success('Subscription mapped — plan and entitlements now follow this tier')
+      onMapped()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to map subscription')
+    } finally {
+      setMapping(false)
+    }
+  }
+
+  return (
+    <Card className="border-warning/50 bg-warning/5">
+      <CardContent className="pt-5 text-sm">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <div className="flex-1">
+            <span className="font-medium">Legacy subscription — not mapped to a tier.</span>{' '}
+            <span className="text-muted-foreground">
+              This client&apos;s active subscription uses a Stripe price from before the current pricing sheet, so the
+              dashboard can&apos;t tell which tier it is and the client can&apos;t change their plan. Map it to the
+              tier it corresponds to — what the client pays doesn&apos;t change; only the plan label, entitlements,
+              and plan-change options start working.
+            </span>
+            <div className="mt-3 rounded-md border border-border bg-background/50 px-3 py-2 text-xs">
+              <span className="font-mono">{subId}</span>
+              {subInfo ? (
+                <p className="mt-1 text-muted-foreground">
+                  {subInfo.amountCents != null ? `$${(subInfo.amountCents / 100).toFixed(0)}/mo` : 'Unknown amount'} · {subInfo.status} · started {new Date(subInfo.created).toLocaleDateString()}
+                  <br />
+                  Stripe customer: {subInfo.customerName ?? 'unnamed'}{subInfo.customerEmail ? ` · ${subInfo.customerEmail}` : ''}
+                </p>
+              ) : (
+                <p className="mt-1 text-muted-foreground">Loading subscription details…</p>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={mapKey}
+                onChange={e => setMapKey(e.target.value)}
+              >
+                <option value="">Choose tier…</option>
+                {(tiers ?? []).map(t => (
+                  <option key={t.key} value={t.key}>{t.name} — ${(t.monthlyPriceCents / 100).toFixed(0)}/mo</option>
+                ))}
+              </select>
+              <Button size="sm" onClick={map} disabled={mapping || !mapKey}>
+                {mapping ? 'Mapping…' : 'Map to tier'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function BillingTab({ clientId, client }: { clientId: string; client?: import('@agent-platform/shared').Client }) {
   const { data, isLoading } = useSWR(['billing', clientId], () => api.billing.get(clientId), { refreshInterval: 30_000 })
   const { data: services } = useSWR('services', api.billing.services)
@@ -1418,6 +1623,20 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
   const staleSubs = (allSubs ?? []).filter(s => !s.isTracked)
   const [openingPortal, setOpeningPortal] = useState(false)
   const [cancelingSub, setCancelingSub] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+
+  async function syncStripe() {
+    setSyncing(true)
+    try {
+      await api.billing.syncFromStripe(clientId)
+      await Promise.all([mutate(['billing', clientId]), mutateSubs(), mutate(['client', clientId]), mutate(['entitlements', clientId])])
+      toast.success('Refreshed from Stripe')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to sync from Stripe')
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   async function openPortal() {
     setOpeningPortal(true)
@@ -1478,6 +1697,19 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
 
   return (
     <div className="grid gap-3">
+      {me?.isSuperadmin && isActive && !comped && !data?.plan && sub?.stripeSubscriptionId && (
+        <MapLegacySubCard
+          clientId={clientId}
+          subId={sub.stripeSubscriptionId}
+          tiers={tiers}
+          onMapped={() => {
+            mutateSubs()
+            mutate(['billing', clientId])
+            mutate(['client', clientId]) // tier_key changed
+            mutate(['entitlements', clientId])
+          }}
+        />
+      )}
       {staleSubs.length > 0 && (
         <Card className="border-warning/50 bg-warning/5">
           <CardContent className="pt-5 text-sm">
@@ -1557,11 +1789,23 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
                 )}
               </div>
             </div>
-            {!comped && (
-              <Button variant="secondary" size="sm" onClick={openPortal} disabled={openingPortal}>
-                {openingPortal ? 'Opening…' : 'Manage billing'}
-              </Button>
-            )}
+            <div className="flex shrink-0 items-center gap-2">
+              {/* Superadmin: re-pull the tracked subscription from Stripe. The
+                  mirror normally updates via webhooks, which never reach a
+                  local dev server (and can occasionally be missed in prod) —
+                  this closes the "I changed it in Stripe but the dashboard
+                  still shows the old state" gap on demand. */}
+              {me?.isSuperadmin && (
+                <Button variant="ghost" size="sm" onClick={syncStripe} disabled={syncing}>
+                  {syncing ? 'Syncing…' : 'Sync from Stripe'}
+                </Button>
+              )}
+              {!comped && (
+                <Button variant="secondary" size="sm" onClick={openPortal} disabled={openingPortal}>
+                  {openingPortal ? 'Opening…' : 'Manage billing'}
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
       ) : (
@@ -1581,6 +1825,18 @@ function BillingTab({ clientId, client }: { clientId: string; client?: import('@
 
       {isActive && <ServicesCard clientId={clientId} comped={comped} />}
       {isActive && <UsageCard clientId={clientId} />}
+      {me?.isSuperadmin && (
+        <LinkSubscriptionCard
+          clientId={clientId}
+          tiers={tiers}
+          onLinked={() => {
+            mutateSubs()
+            mutate(['billing', clientId])
+            mutate(['client', clientId])
+            mutate(['entitlements', clientId])
+          }}
+        />
+      )}
     </div>
   )
 }

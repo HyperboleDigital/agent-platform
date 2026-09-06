@@ -56,7 +56,7 @@ export async function getEntitlements(clientId: string): Promise<Entitlements> {
   if (grantsRes.error) console.error('[entitlements] service_grants error', grantsRes.error.message)
 
   const baseActive = isActive(sub)
-  const plan = sub ? planForSubscription(sub.stripePriceId) : null
+  const plan = sub ? planForSubscription(sub.stripePriceId, sub.tierKey) : null
 
   // Add-on service keys purchased via Stripe — only count while the base
   // subscription is active.

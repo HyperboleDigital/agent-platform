@@ -54,6 +54,10 @@ widgetConfigRouter.get('/:clientId', async (req, res) => {
     // never exposed.
     logo: cfg.logoPath ? logoUrl(client.id) : cfg.logo,
     avatarEmoji: cfg.avatarEmoji,
+    // Boolean policy flag ONLY — never the agentConfig blob (see the security
+    // note above). Lets the inline form reject personal addresses instantly
+    // instead of round-tripping to the server's 422.
+    requireCompanyEmail: client.agentConfig?.requireCompanyEmail === true,
     prompts: Array.isArray(cfg.prompts) ? cfg.prompts : undefined,
     chips: Array.isArray(cfg.chips)
       ? cfg.chips.slice(0, 4).map(c => ({ label: c?.label ?? '', message: c?.message ?? '' }))

@@ -197,6 +197,45 @@ export interface AgentConfig {
   // unanswered-questions review, and prompt changes are NOT included. Cleared
   // automatically when they move back onto a chat-including tier.
   chatUnmanaged?: boolean
+  // "Company emails only" lead policy: when true, lead capture (the chat
+  // assistant's inline form, the widget contact form) rejects free/personal
+  // mailbox addresses (Gmail, Yahoo, iCloud, ...) and asks the visitor for
+  // their work email instead. Enforced server-side in /contact and the
+  // orchestrator's capture_lead; the widget also checks client-side for an
+  // instant friendly error. Safe to expose as a boolean in widget-config.
+  requireCompanyEmail?: boolean
+}
+
+// Free/personal mailbox providers, for AgentConfig.requireCompanyEmail.
+// Deliberately the common offenders rather than an exhaustive registry — the
+// goal is nudging real prospects to their work address, not bulletproof
+// filtering. ⚠️ Keep the widget's inline copy in sync
+// (apps/widget/src/widget.js FREE_EMAIL_DOMAINS — plain JS, can't import this).
+export const FREE_EMAIL_DOMAINS = [
+  'gmail.com', 'googlemail.com',
+  'yahoo.com', 'yahoo.co.uk', 'ymail.com', 'rocketmail.com',
+  'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.com', 'msn.com',
+  'aol.com', 'icloud.com', 'me.com', 'mac.com',
+  'proton.me', 'protonmail.com', 'pm.me',
+  'gmx.com', 'gmx.net', 'web.de',
+  'yandex.com', 'yandex.ru', 'mail.com', 'mail.ru',
+  'zoho.com', 'hey.com', 'fastmail.com',
+  // Common TYPO domains — undeliverable squats of the big providers. A typo'd
+  // personal address is doubly useless as a lead (personal AND unreachable),
+  // so these get the same "use your company email" nudge.
+  'gmai.com', 'gmial.com', 'gamil.com', 'gmaill.com', 'gmal.com', 'gmail.co', 'gmail.cm', 'gmail.con',
+  'yaho.com', 'yahooo.com', 'yahoo.co',
+  'hotmial.com', 'hotmal.com', 'hotmai.com', 'hotmail.co',
+  'outlok.com', 'outloook.com', 'outlook.co',
+  'icluod.com', 'iclould.com', 'icloud.co'
+]
+
+// True when the address is on a free/personal provider. A malformed address
+// returns false — format validity is the caller's concern; this only answers
+// "is the domain a personal mailbox".
+export function isFreeEmail(email: string): boolean {
+  const domain = email.split('@').pop()?.trim().toLowerCase() ?? ''
+  return FREE_EMAIL_DOMAINS.some(d => domain === d || domain.endsWith(`.${d}`))
 }
 
 export interface BusinessHours {

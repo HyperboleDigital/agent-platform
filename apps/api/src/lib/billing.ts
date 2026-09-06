@@ -32,8 +32,13 @@ export interface PlanInfo {
 // for an unrecognized price — callers MUST handle null (the UI degrades to "no
 // plan" rather than crashing). conversationCap: tiers don't declare one in the
 // sheet yet, so we fall back to 2500. TODO: give tiers their own cap.
-export function planForSubscription(priceId: string | null | undefined): PlanInfo | null {
-  const tier = tierForPriceId(priceId)
+//
+// `mappedTierKey` is the fallback for LEGACY subscriptions whose price the
+// catalog has never heard of: the manually-mapped tier persisted on
+// subscriptions.tier_key (see mapSubscriptionToTier). Price wins when both
+// resolve — what Stripe actually bills is the stronger signal.
+export function planForSubscription(priceId: string | null | undefined, mappedTierKey?: string | null): PlanInfo | null {
+  const tier = tierForPriceId(priceId) ?? tierForKey(mappedTierKey)
   if (!tier) return null
   return { key: tier.key, priceId: tier.stripePriceId, name: tier.name, monthlyPriceCents: tier.monthlyPriceCents, conversationCap: 2500 }
 }
@@ -44,6 +49,7 @@ export interface SubscriptionRow {
   stripeCustomerId: string
   stripeSubscriptionId: string | null
   stripePriceId: string | null
+  tierKey: string | null // resolved tier for the base item — see syncSubscriptionFromStripe
   status: string
   currentPeriodEnd: string | null
 }
@@ -54,6 +60,7 @@ interface SubRow {
   stripe_customer_id: string
   stripe_subscription_id: string | null
   stripe_price_id: string | null
+  tier_key?: string | null // optional: column exists only post-2026-09-04 migration
   status: string
   current_period_end: string | null
 }
@@ -65,6 +72,7 @@ function fromRow(row: SubRow): SubscriptionRow {
     stripeCustomerId: row.stripe_customer_id,
     stripeSubscriptionId: row.stripe_subscription_id,
     stripePriceId: row.stripe_price_id,
+    tierKey: row.tier_key ?? null,
     status: row.status,
     currentPeriodEnd: row.current_period_end
   }
@@ -178,6 +186,7 @@ export interface ClientSubscriptionSummary {
   status: string
   created: string
   isTracked: boolean // matches our subscriptions row's stripe_subscription_id
+  tierKey: string | null // resolved from price or metadata mapping — null = unmapped legacy
 }
 
 // Every active Stripe subscription attributed to this client, via the client_id
@@ -206,6 +215,7 @@ export async function listClientSubscriptions(clientId: string): Promise<ClientS
         status: s.status,
         created: new Date(s.created * 1000).toISOString(),
         isTracked: s.id === tracked?.stripeSubscriptionId,
+        tierKey: (tierForPriceId(price?.id) ?? tierForKey(s.metadata?.tier_key))?.key ?? null,
       }
     })
     .sort((a, b) => a.created.localeCompare(b.created))
@@ -250,6 +260,104 @@ export async function cancelClientSubscription(clientId: string, subId: string):
 
 function isResourceMissing(err: unknown): boolean {
   return (err as { code?: string })?.code === 'resource_missing'
+}
+
+// Manually maps a Stripe subscription to a current pricing-sheet tier — the
+// escape hatch for LEGACY subscriptions whose price predates the tier catalog
+// (retired Starter/Pro, ad-hoc deals). tierForPriceId can't resolve those, so
+// the dashboard shows "Unknown plan", tier_key never syncs, and the client
+// can't change their plan.
+//
+// The mapping is stamped on the Stripe subscription's metadata (tier_key) so
+// Stripe stays the source of truth and every later webhook re-derives the same
+// mapping — then synced locally. Billing itself is untouched: the client keeps
+// paying their existing legacy price. Also adopts an unattributed subscription
+// (no client_id metadata — e.g. created before the platform existed) onto this
+// client; a sub already attributed to a DIFFERENT client is refused, same
+// guard as cancelClientSubscription.
+export async function mapSubscriptionToTier(clientId: string, subId: string, tierKey: string): Promise<{ tracked: boolean }> {
+  const tier = tierForKey(tierKey)
+  if (!tier) throw new Error(`Unknown tier: ${tierKey}`)
+
+  const sub = await stripe.subscriptions.retrieve(subId)
+  if (sub.metadata?.client_id && sub.metadata.client_id !== clientId) {
+    throw new Error('That subscription is attributed to a different client')
+  }
+  if (sub.status === 'canceled') {
+    throw new Error('That subscription is canceled — nothing to map')
+  }
+
+  const updated = await stripe.subscriptions.update(subId, {
+    metadata: { ...sub.metadata, client_id: clientId, tier_key: tier.key }
+  })
+  await syncSubscriptionFromStripe(updated)
+  // The sync guard keeps a NEWER active sub as the tracked plan — tell the
+  // caller whether this sub actually became the client's current one, so the
+  // UI can say so instead of implying the plan switched.
+  const row = await getSubscription(clientId)
+  return { tracked: row?.stripeSubscriptionId === subId }
+}
+
+// Re-pulls the client's tracked subscription from Stripe and syncs the local
+// mirror. The mirror normally updates via webhooks — which never reach a local
+// dev server, and can occasionally be missed in production — so this is the
+// on-demand "make the dashboard match Stripe right now" path (superadmin
+// button on the billing tab). A tracked sub that no longer exists in Stripe
+// clears the row's subscription fields so a deleted test sub stops showing.
+export async function resyncSubscriptionFromStripe(clientId: string): Promise<{ synced: boolean }> {
+  const row = await getSubscription(clientId)
+  if (!row?.stripeSubscriptionId) return { synced: false }
+  let sub: Stripe.Subscription
+  try {
+    sub = await stripe.subscriptions.retrieve(row.stripeSubscriptionId)
+  } catch (err) {
+    if (isResourceMissing(err)) {
+      await supabase.from('subscriptions')
+        .update({ stripe_subscription_id: null, stripe_price_id: null, status: 'canceled', updated_at: new Date().toISOString() })
+        .eq('client_id', clientId)
+      return { synced: true }
+    }
+    throw err
+  }
+  await syncSubscriptionFromStripe(sub)
+  return { synced: true }
+}
+
+// Inspect one Stripe subscription by id — the "look before you link" step for
+// the manual mapping flow. With many customers on look-alike products, every
+// subscription id is unique; showing what a pasted id actually bills (and any
+// existing client attribution) is what stops the wrong sub being linked to
+// the wrong company.
+export interface SubscriptionLookupInfo {
+  id: string
+  status: string
+  created: string
+  amountCents: number | null
+  priceId: string | null
+  tierKey: string | null      // resolved from price or metadata — null = needs manual mapping
+  customerName: string | null
+  customerEmail: string | null
+  clientId: string | null     // metadata attribution — null = unattributed (adoptable)
+}
+
+export async function lookupSubscription(subId: string): Promise<SubscriptionLookupInfo> {
+  const sub = await stripe.subscriptions.retrieve(subId, { expand: ['customer'] })
+  const items = sub.items.data
+  const totalCents = items.reduce((sum, i) => sum + (i.price?.unit_amount ?? 0) * (i.quantity ?? 1), 0)
+  const price = items[0]?.price
+  const rawCust = typeof sub.customer === 'string' ? null : sub.customer
+  const customer = rawCust && !('deleted' in rawCust && rawCust.deleted) ? (rawCust as Stripe.Customer) : null
+  return {
+    id: sub.id,
+    status: sub.status,
+    created: new Date(sub.created * 1000).toISOString(),
+    amountCents: items.length ? totalCents : null,
+    priceId: price?.id ?? null,
+    tierKey: (tierForPriceId(price?.id) ?? tierForKey(sub.metadata?.tier_key))?.key ?? null,
+    customerName: customer?.name ?? null,
+    customerEmail: customer?.email ?? null,
+    clientId: sub.metadata?.client_id ?? null
+  }
 }
 
 export async function createPortalSession(clientId: string, returnUrl: string): Promise<string> {
@@ -311,7 +419,14 @@ export async function syncSubscriptionFromStripe(subscription: Stripe.Subscripti
   // webhook API version determines which shape actually arrives, so accept
   // either rather than assume.
   const periodEndUnix = baseItem?.current_period_end ?? (subscription as unknown as { current_period_end?: number }).current_period_end
-  const { error } = await supabase.from('subscriptions').upsert({
+  // Resolve the billed tier for the base item: from its price when the catalog
+  // (current or legacy env-mapped) recognizes it, else from the subscription's
+  // tier_key Stripe metadata — the durable manual mapping stamped by
+  // mapSubscriptionToTier (custom deals and tier payment links stamp it at
+  // creation too). This is what lets a truly legacy price (retired
+  // Starter/Pro) still resolve to a plan.
+  const tier = tierForPriceId(baseItem?.price?.id) ?? tierForKey(subscription.metadata?.tier_key)
+  const row = {
     client_id: clientId,
     stripe_customer_id: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
     stripe_subscription_id: subscription.id,
@@ -319,7 +434,13 @@ export async function syncSubscriptionFromStripe(subscription: Stripe.Subscripti
     status: subscription.status,
     current_period_end: periodEndUnix ? new Date(periodEndUnix * 1000).toISOString() : null,
     updated_at: new Date().toISOString()
-  }, { onConflict: 'client_id' })
+  }
+  let { error } = await supabase.from('subscriptions').upsert({ ...row, tier_key: tier?.key ?? null }, { onConflict: 'client_id' })
+  if (error && error.message.includes('tier_key')) {
+    // migrate_2026-09-04_subscription-tier-map.sql not applied yet — keep the
+    // sync working with the legacy row shape rather than dropping the event.
+    ;({ error } = await supabase.from('subscriptions').upsert(row, { onConflict: 'client_id' }))
+  }
   if (error) console.error('[billing] failed to sync subscription', error.message)
 
   // If the base price is one of the pricing-sheet tiers, keep the client's
@@ -331,7 +452,6 @@ export async function syncSubscriptionFromStripe(subscription: Stripe.Subscripti
   // dimension 2026-08-18.) A legacy six-tier price resolves to its
   // consolidated tier, so an old subscription renewing quietly migrates the
   // client's tier_key forward.
-  const tier = tierForPriceId(baseItem?.price?.id)
   if (tier && ACTIVE_STATUSES.has(subscription.status)) {
     await applyTierTransition(clientId, tier.key)
   }

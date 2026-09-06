@@ -86,7 +86,7 @@ export async function checkChatCaps(clientId: string): Promise<CapStatus> {
     countConversationsSince(startOfUtcMonth(), clientId),
     getSubscription(clientId)
   ])
-  const plan = sub ? planForSubscription(sub.stripePriceId) : null
+  const plan = sub ? planForSubscription(sub.stripePriceId, sub.tierKey) : null
   const monthlyCap = plan?.conversationCap ?? DEFAULT_MONTHLY_CAP
 
   // Asymmetric on purpose, and this is the whole point of the null:
@@ -122,7 +122,7 @@ export async function getMonthlyUsage(clientId: string): Promise<MonthlyUsage> {
     countConversationsSince(startOfUtcMonth(), clientId),
     getSubscription(clientId)
   ])
-  const plan = sub ? planForSubscription(sub.stripePriceId) : null
+  const plan = sub ? planForSubscription(sub.stripePriceId, sub.tierKey) : null
   // Display-only, so an unknown count shows as 0 rather than breaking the card.
   return { used: used ?? 0, cap: plan?.conversationCap ?? DEFAULT_MONTHLY_CAP, planName: plan?.name ?? null }
 }

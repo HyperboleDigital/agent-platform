@@ -153,6 +153,33 @@
   // visitor pick more than one.
   const DIVISION_SEP = ', ';
 
+  // "Company emails only" policy (agentConfig.requireCompanyEmail, delivered
+  // as a boolean in the public config). Client-side copy of the server's
+  // free-provider list (packages/shared FREE_EMAIL_DOMAINS — keep in sync) so
+  // the visitor gets an instant, friendly nudge; the API enforces it anyway.
+  const REQUIRE_COMPANY_EMAIL = !!remote.requireCompanyEmail;
+  const FREE_EMAIL_DOMAINS = [
+    'gmail.com', 'googlemail.com',
+    'yahoo.com', 'yahoo.co.uk', 'ymail.com', 'rocketmail.com',
+    'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.com', 'msn.com',
+    'aol.com', 'icloud.com', 'me.com', 'mac.com',
+    'proton.me', 'protonmail.com', 'pm.me',
+    'gmx.com', 'gmx.net', 'web.de',
+    'yandex.com', 'yandex.ru', 'mail.com', 'mail.ru',
+    'zoho.com', 'hey.com', 'fastmail.com',
+    // Common typo domains — see packages/shared FREE_EMAIL_DOMAINS (keep in sync).
+    'gmai.com', 'gmial.com', 'gamil.com', 'gmaill.com', 'gmal.com', 'gmail.co', 'gmail.cm', 'gmail.con',
+    'yaho.com', 'yahooo.com', 'yahoo.co',
+    'hotmial.com', 'hotmal.com', 'hotmai.com', 'hotmail.co',
+    'outlok.com', 'outloook.com', 'outlook.co',
+    'icluod.com', 'iclould.com', 'icloud.co'
+  ];
+  const COMPANY_EMAIL_MSG = 'Please use your company email address \u2014 personal addresses (Gmail, Yahoo, etc.) aren\u2019t accepted here.';
+  function isFreeEmail(email) {
+    const domain = (String(email).split('@').pop() || '').trim().toLowerCase();
+    return FREE_EMAIL_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
+  }
+
   // Operator-authored strings interpolated into innerHTML below.
   function esc(s) {
     return String(s)
@@ -1168,6 +1195,7 @@
     m.name = fields.name; m.value = fields.email; m.msg = fields.msg;
     m.company = fields.company; m.phone = fields.phone; m.division = fields.division;
     if (!EMAIL_RE.test(fields.email)) { m.error = 'Please enter a valid email address.'; renderMessages(); return; }
+    if (REQUIRE_COMPANY_EMAIL && isFreeEmail(fields.email)) { m.error = COMPANY_EMAIL_MSG; renderMessages(); return; }
     if (CONTACT_FIELDS.company && !CONTACT_FIELDS.companyOptional && !fields.company) { m.error = 'Please add your company name.'; renderMessages(); return; }
     if (CONTACT_FIELDS.phone && !CONTACT_FIELDS.phoneOptional && !fields.phone) { m.error = 'Please add your phone number.'; renderMessages(); return; }
     if (CONTACT_FIELDS.divisions.length && !fields.division) { m.error = divisionRequiredMessage(); renderMessages(); return; }
@@ -1193,10 +1221,16 @@
           division: fields.division || undefined
         })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        // Surface the server's own message (e.g. the company-email policy)
+        // instead of a generic failure; fall back when the body isn't JSON.
+        let msg = '';
+        try { msg = (await res.json()).error || ''; } catch (e) { /* not JSON */ }
+        throw new Error(msg);
+      }
       m.submitted = true; m.email = fields.email;
-    } catch {
-      m.error = 'Couldn’t send just now — please try again.';
+    } catch (err) {
+      m.error = (err && err.message) || 'Couldn’t send just now — please try again.';
     } finally {
       m.submitting = false; renderMessages();
     }
@@ -1372,6 +1406,7 @@
       return;
     }
     if (!EMAIL_RE.test(email)) { setError('Please enter a valid email address.'); return; }
+    if (REQUIRE_COMPANY_EMAIL && isFreeEmail(email)) { setError(COMPANY_EMAIL_MSG); return; }
     if (CONTACT_FIELDS.company && !CONTACT_FIELDS.companyOptional && !company) { setError('Please add your company name.'); return; }
     if (CONTACT_FIELDS.phone && !CONTACT_FIELDS.phoneOptional && !phone) { setError('Please add your phone number.'); return; }
     if (CONTACT_FIELDS.divisions.length && !division) { setError(divisionRequiredMessage()); return; }
@@ -1387,10 +1422,15 @@
           company: company || undefined, phone: phone || undefined, division: division || undefined
         })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        // Surface the server's own message (e.g. the company-email policy).
+        let msg = '';
+        try { msg = (await res.json()).error || ''; } catch (e) { /* not JSON */ }
+        throw new Error(msg);
+      }
       setView('success');
-    } catch {
-      setError('Couldn’t send just now — please try again.');
+    } catch (err) {
+      setError((err && err.message) || 'Couldn’t send just now — please try again.');
     } finally {
       cfSubmit.textContent = 'Send message'; cfSubmit.disabled = false;
     }

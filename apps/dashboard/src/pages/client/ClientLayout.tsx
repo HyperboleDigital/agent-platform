@@ -1,6 +1,7 @@
 import { Outlet, useOutletContext, useParams, Link } from 'react-router-dom'
 import useSWR from 'swr'
 import { ArrowLeft } from 'lucide-react'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { Client } from '@agent-platform/shared'
 import { api } from '@/lib/api'
 import { useEntitlements } from '@/hooks/use-entitlements'
@@ -58,7 +59,18 @@ export default function ClientLayout() {
         <h1 className={`text-xl font-semibold ${me?.isSuperadmin ? 'mt-2' : ''}`}>{client?.name ?? 'Client'}</h1>
       </div>
 
-      <Outlet context={{ clientId: id, client } satisfies ClientCtx} />
+      {/* The section renders only once the slug has resolved to a real id —
+          this is what makes the ClientCtx "clientId is always present" contract
+          true. Rendering earlier passed clientId='' down, and every section's
+          fetches hit paths like /billing//subscriptions, which Express matches
+          against GET /billing/:id — a 200 with the WRONG SHAPE (an object where
+          an array was expected), crashing the section (the BillingTab
+          "(allSubs ?? []).filter is not a function" error). */}
+      {id ? (
+        <Outlet context={{ clientId: id, client } satisfies ClientCtx} />
+      ) : (
+        <Skeleton className="h-40 w-full" />
+      )}
 
       {showOnboarding && client && (
         <OnboardingModal client={client} chatEntitled={chatEntitled} />

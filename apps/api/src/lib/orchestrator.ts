@@ -1,6 +1,6 @@
 import type { IncomingMessage, AgentResponse, AgentConfig } from '@agent-platform/shared'
 import { recordUnansweredQuestion } from './content-briefs'
-import { DEFAULT_CONFIDENCE_THRESHOLD } from '@agent-platform/shared'
+import { DEFAULT_CONFIDENCE_THRESHOLD, isFreeEmail } from '@agent-platform/shared'
 import { searchDocsDetailed } from '../tools/knowledge-base'
 import { bookCalendly } from '../tools/calendly'
 import { logLead } from '../tools/crm'
@@ -154,6 +154,14 @@ export async function runAgent(message: IncomingMessage): Promise<AgentResponse>
     }
     if (name === 'capture_lead') {
       intent = 'lead'
+      // Per-client "company emails only" policy: never save a free-mailbox
+      // address. Surface the inline form (which enforces the same rule
+      // client- and server-side) and have the model ask for their WORK email.
+      if (input.email && client.agentConfig?.requireCompanyEmail && isFreeEmail(input.email)) {
+        needContact = true
+        leadContext = [input.intent, input.summary].filter(Boolean).join(' — ') || undefined
+        return 'That email is a personal address (Gmail/Yahoo/etc.) and this business only accepts company emails, so it was NOT saved. An inline email form is now shown. Reply with ONE short, friendly line asking them to drop their work email below — do NOT ask them to type it in a message, and do NOT mention a "form" or "fields".'
+      }
       if (input.email) {
         await logLead({ clientId: message.clientId, name: input.name, email: input.email, intent: input.intent, summary: input.summary, sessionId: message.from })
         captureLead = true

@@ -496,6 +496,57 @@ function LeadFormCopyCard({ draft, onChange }: {
   )
 }
 
+// "Company emails only" lead policy (agentConfig.requireCompanyEmail).
+// Lives on the Chat Assistant screen because it governs what the assistant
+// and its forms accept — but it is AGENT config, not widget appearance, so it
+// saves immediately on toggle rather than riding the widgetConfig draft's
+// "Save widget settings" button (same immediate-save precedent as LogoField).
+function LeadEmailPolicyCard({ client }: { client: Client }) {
+  const [on, setOn] = useState(!!client.agentConfig?.requireCompanyEmail)
+  const [saving, setSaving] = useState(false)
+
+  async function toggle(next: boolean) {
+    setOn(next)
+    setSaving(true)
+    try {
+      await api.clients.upsert({ id: client.id, agentConfig: { ...client.agentConfig, requireCompanyEmail: next } })
+      mutate(['client', client.id])
+      toast.success(next ? 'Personal email addresses are now rejected' : 'All email addresses are accepted again')
+    } catch (err) {
+      setOn(!next) // revert — the save didn't happen
+      toast.error(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Lead email policy</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-primary"
+            checked={on}
+            disabled={saving}
+            onChange={e => toggle(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Company emails only</span>{' '}
+            <span className="text-muted-foreground">
+              — the assistant and its contact form won&apos;t accept personal addresses (Gmail, Yahoo, iCloud…)
+              and will ask the visitor for their work email instead. Applies immediately.
+            </span>
+          </span>
+        </label>
+      </CardContent>
+    </Card>
+  )
+}
+
 function ContactFieldsCard({ draft, onChange }: {
   draft: WidgetConfig
   onChange: (cf: WidgetContactFields) => void
@@ -948,6 +999,7 @@ function WidgetTab({ client }: { client: Client }) {
 
       <ContactFieldsCard draft={draft} onChange={cf => set('contactFields', cf)} />
       <LeadFormCopyCard draft={draft} onChange={lf => set('leadForm', lf)} />
+      <LeadEmailPolicyCard client={client} />
 
       {/* Sticky: every card on this tab is saved by this one button, and the
           tab is long enough that a footer button scrolls out of sight — which

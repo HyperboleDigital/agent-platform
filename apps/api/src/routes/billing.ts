@@ -8,7 +8,7 @@ import {
   getSubscription, createCheckoutSession, createPortalSession, syncSubscriptionFromStripe,
   addServiceToSubscription, removeServiceFromSubscription, grantService, revokeService,
   getOrCreateTierPaymentLink, attributeCheckoutToClient,
-  listClientSubscriptions, cancelClientSubscription,
+  listClientSubscriptions, cancelClientSubscription, mapSubscriptionToTier, lookupSubscription, resyncSubscriptionFromStripe,
   computeAdsFee, reconcileAdsFee, getAdsFloorCents,
   createCustomDealSubscription, invoiceOneTimeLineItems
 } from '../lib/billing'
@@ -109,6 +109,22 @@ billingRouter.get('/:id/subscriptions', async (req, res) => {
   }
 })
 
+// Superadmin: inspect one Stripe subscription by id — the "look before you
+// link" step of the manual mapping flow (amount, status, customer, existing
+// attribution). Read-only.
+billingRouter.get('/:id/subscriptions/:subId', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  if (!/^sub_[A-Za-z0-9]+$/.test(req.params.subId)) return res.status(400).json({ error: 'That is not a Stripe subscription id (sub_...)' })
+  try {
+    res.json(await lookupSubscription(req.params.subId))
+  } catch (err) {
+    const missing = (err as { code?: string })?.code === 'resource_missing'
+    res.status(missing ? 404 : 400).json({ error: missing ? 'No subscription with that id (check test vs live mode)' : err instanceof Error ? err.message : 'Failed to look up subscription' })
+  }
+})
+
 // Superadmin: cancel a specific (usually stale) subscription for this client.
 billingRouter.post('/:id/subscriptions/:subId/cancel', async (req, res) => {
   const identity = getIdentity(req)
@@ -120,6 +136,47 @@ billingRouter.post('/:id/subscriptions/:subId/cancel', async (req, res) => {
   } catch (err) {
     console.error('[billing] cancel subscription error', err)
     res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to cancel subscription' })
+  }
+})
+
+// Superadmin: manually map a (legacy) subscription to a current tier — for a
+// sub whose Stripe price predates the tier catalog, which otherwise renders as
+// "Unknown plan" and blocks plan changes. Stamps the mapping on the Stripe
+// subscription's metadata and re-syncs, so the plan label, the client's
+// tier_key, and entitlements all line up; billing itself is untouched.
+const mapTierSchema = z.object({ tierKey: z.string().min(1) })
+
+billingRouter.post('/:id/subscriptions/:subId/map-tier', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+
+  const parsed = mapTierSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
+
+  const client = await getClientById(req.params.id)
+  if (!client) return res.status(404).json({ error: 'Not found' })
+
+  try {
+    const { tracked } = await mapSubscriptionToTier(client.id, req.params.subId, parsed.data.tierKey)
+    res.json({ ok: true, tracked, entitlements: await getEntitlements(client.id) })
+  } catch (err) {
+    console.error('[billing] map-tier error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to map subscription' })
+  }
+})
+
+// Superadmin: re-pull the tracked subscription from Stripe and sync the local
+// mirror — the on-demand alternative to webhooks (which don't reach local dev).
+billingRouter.post('/:id/sync-stripe', async (req, res) => {
+  const identity = getIdentity(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  if (!billingConfigured()) return res.status(500).json({ error: 'Billing not configured' })
+  try {
+    res.json(await resyncSubscriptionFromStripe(req.params.id))
+  } catch (err) {
+    console.error('[billing] sync-stripe error', err)
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to sync from Stripe' })
   }
 })
 
@@ -356,7 +413,7 @@ billingRouter.get('/:id', async (req, res) => {
   if (!(await canAccessClient(identity, req.params.id))) return res.status(403).json({ error: 'Forbidden' })
 
   const sub = await getSubscription(req.params.id)
-  res.json({ subscription: sub, plan: sub ? planForSubscription(sub.stripePriceId) : null })
+  res.json({ subscription: sub, plan: sub ? planForSubscription(sub.stripePriceId, sub.tierKey) : null })
 })
 
 // Stripe webhook — subscription lifecycle events. Mounted separately in
