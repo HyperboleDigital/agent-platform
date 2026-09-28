@@ -31,7 +31,11 @@ const contactSchema = z.object({
   // unchanged.
   company: z.string().max(200).optional(),
   phone: z.string().max(50).optional(),
-  division: z.string().max(200).optional()
+  division: z.string().max(200).optional(),
+  // True when the widget showed this form because of a chat escalation
+  // ("talk to a human"), not a lead/booking ask. Routes the notification as a
+  // support request instead of a "New lead" and keeps it out of lead stats.
+  support: z.boolean().optional()
 })
 
 // Widget contact form. This is an explicit "I want a human" signal — it does
@@ -39,7 +43,7 @@ const contactSchema = z.object({
 contactRouter.post('/', async (req, res) => {
   const parsed = contactSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Invalid request' })
-  const { clientId, email, name, message, reason, context, company, phone, division } = parsed.data
+  const { clientId, email, name, message, reason, context, company, phone, division, support } = parsed.data
 
   // Throttle per client so a public clientId can't be used to flood the
   // client's Gmail/Slack with escalation spam.
@@ -66,7 +70,10 @@ contactRouter.post('/', async (req, res) => {
   try {
     await logLead({
       clientId, name, email,
-      intent: reason ?? 'contact_form',
+      // 'support' is a reserved intent: lead counts (analytics/logs) exclude
+      // it, so escalation follow-ups still appear in the CRM list without
+      // inflating the client's lead numbers.
+      intent: support ? 'support' : reason ?? 'contact_form',
       summary: [message, context ? `From the chat: ${context}` : '']
         .filter(Boolean).join(' — ') || '(No additional message provided.)',
       company, phone, division
@@ -77,6 +84,7 @@ contactRouter.post('/', async (req, res) => {
       message: message ?? '',
       reason: reason ?? 'Visitor requested a human via the contact form',
       channel: 'contact_form',
+      support,
       company,
       phone,
       division,

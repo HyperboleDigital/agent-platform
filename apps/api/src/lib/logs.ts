@@ -141,13 +141,13 @@ export async function getStats(clientId: string): Promise<DashboardStats> {
     supabase.from('message_logs').select('*', count)
       .eq('client_id', clientId).gte('created_at', weekAgo).eq('resolved', true),
     supabase.from('leads').select('*', count)
-      .eq('client_id', clientId).gte('created_at', weekAgo),
+      .eq('client_id', clientId).neq('intent', 'support').gte('created_at', weekAgo),
     supabase.from('escalations').select('*', count)
       .eq('client_id', clientId).eq('status', 'open'),
     supabase.from('chat_sessions').select('*', count)
       .eq('client_id', clientId),
     supabase.from('leads').select('*', count)
-      .eq('client_id', clientId),
+      .eq('client_id', clientId).neq('intent', 'support'),
     supabase.from('message_logs').select('session_id')
       .eq('client_id', clientId).eq('resolved', true).eq('intent', 'faq'),
     supabase.from('chat_sessions').select('*', count)

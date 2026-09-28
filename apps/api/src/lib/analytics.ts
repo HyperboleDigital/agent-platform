@@ -118,6 +118,9 @@ async function countLeads(clientId: string, range: DateRange): Promise<number> {
     .from('leads')
     .select('*', { count: 'exact', head: true })
     .eq('client_id', clientId)
+    // Support follow-ups (escalation → inline form) live in the leads table
+    // for the CRM list but are not leads — keep them out of the headline count.
+    .neq('intent', 'support')
     .gte('created_at', range.from.toISOString())
     .lte('created_at', range.to.toISOString())
   if (error) { console.error('[analytics] countLeads', error.message); return 0 }
@@ -202,6 +205,7 @@ export async function getTimeseries(clientId: string, range: DateRange): Promise
     fetchSessions(clientId, range),
     supabase.from('leads').select('created_at')
       .eq('client_id', clientId)
+      .neq('intent', 'support') // same exclusion as countLeads
       .gte('created_at', range.from.toISOString())
       .lte('created_at', range.to.toISOString())
       .then(r => (r.data ?? []) as { created_at: string }[])

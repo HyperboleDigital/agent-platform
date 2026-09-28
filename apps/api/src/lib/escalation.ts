@@ -15,6 +15,11 @@ export interface EscalationInput {
   message: string       // what the visitor said / wants
   reason: string        // why it's being escalated
   channel: 'chat' | 'contact_form' | 'roi-calculator'
+  // A contact_form submission that came from the inline form shown AFTER a
+  // chat escalation ("I want to talk to a human"). These are support requests,
+  // not leads — they route to supportEmail and are labeled "Needs a human",
+  // so a support complaint never lands in the client's inbox as "New lead".
+  support?: boolean
   // Only present for clients whose widgetConfig.contactFields opted into these.
   company?: string
   phone?: string
@@ -63,7 +68,7 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
   // be contacted — that's a lead. A chat escalation is the bot getting stuck.
   // Same plumbing, but the salesperson opening it should immediately know
   // which one they've got.
-  const isLead = input.channel !== 'chat'
+  const isLead = input.channel !== 'chat' && !input.support
   const isRoi = input.channel === 'roi-calculator'
 
   // 1. Record it (also powers the dashboard "open escalations" stat). An ROI
@@ -156,17 +161,21 @@ export async function notifyEscalation(client: Client, input: EscalationInput): 
     })
 
     const { html, text } = buildEmail(brandFor(client), {
-      eyebrow: isRoi ? 'New lead — ROI calculator' : isLead ? 'New lead' : 'Needs a human',
+      eyebrow: isRoi ? 'New lead — ROI calculator' : isLead ? 'New lead' : input.support ? 'Support request' : 'Needs a human',
       headline: isRoi
         ? `${who} ran the ROI calculator`
         : isLead
           ? `${who} wants to hear from you`
-          : `Your assistant handed off a conversation`,
+          : input.support
+            ? `${who} needs a hand from your team`
+            : `Your assistant handed off a conversation`,
       intro: isRoi
         ? 'They entered their numbers on your website, downloaded their ROI summary (attached), and left their contact details.'
         : isLead
           ? 'Someone reached out through your website and is waiting on a reply.'
-          : "Your AI assistant couldn't finish this one on its own and flagged it for a person.",
+          : input.support
+            ? 'They asked your chat assistant for a person and left their contact details for a follow-up.'
+            : "Your AI assistant couldn't finish this one on its own and flagged it for a person.",
       rows,
       quote: input.message?.trim() ? { title: 'What they said', text: input.message } : undefined,
       cta: visitorEmail ? { label: `Reply to ${input.name || visitorEmail}`, url: `mailto:${visitorEmail}` } : undefined,

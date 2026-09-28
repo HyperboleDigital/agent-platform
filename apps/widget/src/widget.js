@@ -1215,6 +1215,10 @@
           // quoting filler text back at the client.
           message: fields.msg || undefined,
           reason: copyFor(m).reason,
+          // The form bubble knows WHY it was shown (m.reason = the chat
+          // intent). An escalation follow-up is a support request, not a lead
+          // — the API routes/labels it accordingly.
+          support: m.reason === 'escalate' || undefined,
           context: m.context || undefined,
           company: fields.company || undefined,
           phone: fields.phone || undefined,
