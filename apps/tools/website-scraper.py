@@ -2,6 +2,8 @@ import argparse
 import os
 import sys
 import time
+import uuid
+from collections import deque
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -46,7 +48,7 @@ visited = set()
 session = requests.Session()
 session.headers["User-Agent"] = "AgentPlatform-KnowledgeBot/1.0"
 
-MAX_PAGES = 50
+MAX_PAGES = 300
 
 SKIP_EXTENSIONS = {
     ".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
@@ -95,18 +97,28 @@ def embed_documents(texts: list[str]) -> list[list[float] | None]:
     """Embed chunks via Voyage AI. Returns None per item if VOYAGE_API_KEY unset."""
     if not VOYAGE_API_KEY or not texts:
         return [None] * len(texts)
-    try:
-        resp = session.post(
-            "https://api.voyageai.com/v1/embeddings",
-            headers={"Authorization": f"Bearer {VOYAGE_API_KEY}"},
-            json={"model": "voyage-3.5-lite", "input": texts, "input_type": "document"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return [item["embedding"] for item in resp.json()["data"]]
-    except Exception as e:
-        print(f"Voyage embedding error: {e}")
-        return [None] * len(texts)
+    # Retry on rate limits instead of silently saving the row without an
+    # embedding (a NULL embedding is invisible to vector search; the 50→300
+    # page bump made this bite on every page past Voyage's per-minute budget).
+    for attempt in range(6):
+        try:
+            resp = session.post(
+                "https://api.voyageai.com/v1/embeddings",
+                headers={"Authorization": f"Bearer {VOYAGE_API_KEY}"},
+                json={"model": "voyage-3.5-lite", "input": texts, "input_type": "document"},
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After") or 15 * (attempt + 1))
+                print(f"Voyage rate limited — waiting {wait}s (attempt {attempt + 1}/6)")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return [item["embedding"] for item in resp.json()["data"]]
+        except Exception as e:
+            print(f"Voyage embedding error: {e}")
+            break
+    return [None] * len(texts)
 
 
 def fetch_page(url: str) -> requests.Response | None:
@@ -158,9 +170,17 @@ def save_to_supabase(data: dict) -> bool:
     try:
         chunks = chunk_text(data["content"])
         embeddings = embed_documents(chunks)
+        # One document_id shared by all of a page's chunks, and the same
+        # description tag the dashboard importer uses — without these, the
+        # DB's per-row document_id default makes EVERY CHUNK list as its own
+        # document on the dashboard, and the dashboard can't group imports
+        # into the per-site folder.
+        document_id = str(uuid.uuid4())
         rows = [
             {
                 "client_id": data["client_id"],
+                "document_id": document_id,
+                "description": "Imported from website",
                 "url": data["url"],
                 "title": data["title"],
                 "content": chunk,
@@ -206,29 +226,36 @@ def get_internal_links(url: str, response: requests.Response) -> list[str]:
     return links
 
 
-def crawl(url: str) -> None:
-    if url in visited or stats["visited"] >= MAX_PAGES:
-        return
+def crawl(start_url: str) -> None:
+    # Breadth-first, so the page budget covers every top-level section before
+    # descending into deep ones (a blog archive no longer starves the rest of
+    # the site, which is what happened with the old depth-first recursion).
+    queue = deque([start_url])
+    while queue and stats["visited"] < MAX_PAGES:
+        url = queue.popleft()
+        if url in visited:
+            continue
 
-    if should_skip_url(url):
-        print(f"Skipped (file type): {url}")
-        stats["skipped"] += 1
-        return
+        if should_skip_url(url):
+            print(f"Skipped (file type): {url}")
+            stats["skipped"] += 1
+            continue
 
-    print(f"Scraping: {url}")
-    visited.add(url)
-    stats["visited"] += 1
+        print(f"Scraping: {url}")
+        visited.add(url)
+        stats["visited"] += 1
 
-    response = fetch_page(url)
-    if not response:
-        return
+        response = fetch_page(url)
+        if not response:
+            continue
 
-    page_data = extract_page_content(url, response)
-    if page_data:
-        save_to_supabase(page_data)
+        page_data = extract_page_content(url, response)
+        if page_data:
+            save_to_supabase(page_data)
 
-    for link in get_internal_links(url, response):
-        crawl(link)
+        for link in get_internal_links(url, response):
+            if link not in visited:
+                queue.append(link)
         time.sleep(0.5)
 
 
@@ -255,11 +282,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Crawl a website into the knowledge_base table.")
     parser.add_argument("--url", required=True, help="Base URL to crawl, e.g. https://example.com")
     parser.add_argument("--client-id", required=True, help="Client UUID from the Supabase clients table")
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Delete this client's existing knowledge_base rows for the crawled host "
+        "before inserting, so a re-scrape doesn't leave duplicate chunks.",
+    )
     args = parser.parse_args()
 
     CLIENT_ID = args.client_id
     BASE_URL = args.url
     BASE_HOST = urlparse(BASE_URL).netloc
+
+    if args.replace:
+        # Only this host's pages — rows imported from other sources (manual
+        # FAQ uploads, other domains) are left alone.
+        result = (
+            supabase.table("knowledge_base")
+            .delete()
+            .eq("client_id", CLIENT_ID)
+            .like("url", f"%://{BASE_HOST}%")
+            .execute()
+        )
+        print(f"Replaced: deleted {len(result.data or [])} existing rows for {BASE_HOST}")
 
     embed_note = "with embeddings" if VOYAGE_API_KEY else "full-text only (no VOYAGE_API_KEY)"
     interrupted = False

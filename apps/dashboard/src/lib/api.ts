@@ -104,6 +104,19 @@ export interface KnowledgeDoc {
   created_at: string
 }
 
+export interface ImportJobProgress {
+  jobId: string
+  status: 'running' | 'done' | 'failed'
+  total: number        // 0 until page discovery finishes
+  done: number         // pages processed (imported + skipped)
+  imported: number
+  skipped: number
+  unembedded: number   // imported pages stored without vectors (rate limit)
+  discovery: 'sitemap' | 'homepage-links' | 'homepage-only' | null
+  error: string | null
+  result: { pages: { url: string; title: string; chunks: number; replaced: boolean }[]; skipped: number; discovery: string; unembedded: number } | null
+}
+
 export interface KnowledgeFile {
   id: string
   filename: string
@@ -1410,11 +1423,17 @@ export const api = {
       }
       return res.json() as Promise<{ documentId: string; ids: string[]; chunks: number }>
     },
+    // Starts a server-side import job; poll importWebsiteProgress with the
+    // returned jobId until status is 'done' or 'failed'.
     importWebsiteKnowledge: (id: string, url?: string) =>
-      request<{ pages: { url: string; title: string; chunks: number; replaced: boolean }[]; skipped: number; discovery: string }>(
+      request<{ jobId: string }>(
         `/clients/${id}/knowledge/import-website`,
         { method: 'POST', body: JSON.stringify({ url }) }
       ),
+    importWebsiteProgress: (id: string, jobId: string) =>
+      request<ImportJobProgress>(`/clients/${id}/knowledge/import-website/${jobId}`),
+    knowledgeEmbeddingStatus: (id: string) =>
+      request<{ unembeddedChunks: number }>(`/clients/${id}/knowledge/embedding-status`),
     deleteKnowledgeDocument: (id: string, documentId: string) =>
       request<{ ok: boolean }>(`/clients/${id}/knowledge/${documentId}`, { method: 'DELETE' }),
     updateKnowledgeDescription: (id: string, documentId: string, description: string) =>

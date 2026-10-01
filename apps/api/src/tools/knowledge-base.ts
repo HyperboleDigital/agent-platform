@@ -211,7 +211,9 @@ export async function addDocument(
   title: string,
   content: string,
   options: AddDocumentOptions = {}
-): Promise<{ documentId: string; ids: string[] }> {
+  // `embedded` is false when vectors were skipped (Voyage down/rate-limited or
+  // not configured) — the website importer surfaces that in its progress.
+): Promise<{ documentId: string; ids: string[]; embedded: boolean }> {
   const { url, fileId, description } = options
   const chunks = chunkText(content)
   // Embedding failure (Voyage 429 rate limit, outage) must not block storing
@@ -245,7 +247,7 @@ export async function addDocument(
   // Legacy fallback: without a document_id column, each chunk row is its own
   // "document" in listDocuments above — hand back the first chunk's id so
   // callers still get a stable reference.
-  return { documentId: useDocumentColumns ? documentId : ids[0], ids }
+  return { documentId: useDocumentColumns ? documentId : ids[0], ids, embedded: embeddings.length > 0 }
 }
 
 // Deletes every chunk in a document, and — if the document came from an

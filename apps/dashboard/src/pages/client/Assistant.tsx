@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
 import useSWR, { mutate } from 'swr'
 import { toast } from 'sonner'
-import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw, ShieldCheck, Globe } from 'lucide-react'
-import type { KnowledgeDoc, KnowledgeFile } from '@/lib/api'
+import { Bot, MessageSquare, Sparkles, Upload, FileText, LifeBuoy, Trash2, RefreshCw, Code2, Copy, Plus, RotateCcw, ShieldCheck, Globe, ChevronDown, ChevronRight } from 'lucide-react'
+import type { ImportJobProgress, KnowledgeDoc, KnowledgeFile } from '@/lib/api'
 import type { Client, WidgetConfig, WidgetContactFields } from '@agent-platform/shared'
 import { api } from '@/lib/api'
 import { useClientCtx } from '@/pages/client/ClientLayout'
@@ -142,6 +142,86 @@ function DocumentRow({ clientId, doc, file, onChanged }: {
   )
 }
 
+// Matches IMPORT_TAG in apps/api/src/lib/site-import.ts (and the CLI
+// scraper): documents carrying this description came from a website import
+// and get grouped into a per-site folder instead of flooding the list.
+const WEBSITE_IMPORT_TAG = 'Imported from website'
+
+// One collapsible folder per imported site, so 200+ imported pages read as a
+// single row until expanded. Keyed by host — a client with a main site and a
+// docs subdomain gets a folder each.
+function WebsiteGroup({ clientId, host, docs, onChanged }: {
+  clientId: string
+  host: string
+  docs: KnowledgeDoc[]
+  onChanged: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const latest = docs.reduce((max, d) => (d.created_at > max ? d.created_at : max), docs[0].created_at)
+  return (
+    <>
+      <TableRow className="cursor-pointer select-none" onClick={() => setOpen(o => !o)}>
+        <TableCell className="font-medium">
+          <span className="flex items-center gap-2">
+            {open ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+            <Globe className="h-4 w-4 text-primary" />
+            {host}
+            <span className="text-xs font-normal text-muted-foreground">
+              {docs.length} page{docs.length === 1 ? '' : 's'} imported
+            </span>
+          </span>
+        </TableCell>
+        <TableCell className="text-xs text-muted-foreground">Website import — re-import to refresh</TableCell>
+        <TableCell className="text-muted-foreground">{new Date(latest).toLocaleDateString()}</TableCell>
+        <TableCell />
+      </TableRow>
+      {open && docs.map(d => (
+        <TableRow key={d.id} className="bg-muted/30">
+          <TableCell className="py-2 pl-12">
+            {d.url ? (
+              <a href={d.url} target="_blank" rel="noreferrer" className="text-sm hover:underline" onClick={e => e.stopPropagation()}>
+                {d.title}
+              </a>
+            ) : (
+              <span className="text-sm">{d.title}</span>
+            )}
+          </TableCell>
+          <TableCell className="max-w-[280px] truncate text-xs text-muted-foreground">
+            {d.url ? new URL(d.url).pathname : ''}
+          </TableCell>
+          <TableCell className="text-xs text-muted-foreground">{new Date(d.created_at).toLocaleDateString()}</TableCell>
+          <TableCell className="py-2">
+            <DeleteDocButton clientId={clientId} doc={d} onChanged={onChanged} />
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
+  )
+}
+
+function DeleteDocButton({ clientId, doc, onChanged }: { clientId: string; doc: KnowledgeDoc; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const confirm = useConfirm()
+  async function remove() {
+    if (!(await confirm({ message: `Delete "${doc.title}"? This can't be undone.` }))) return
+    setBusy(true)
+    try {
+      await api.clients.deleteKnowledgeDocument(clientId, doc.id)
+      onChanged()
+      toast.success('Page removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Button variant="ghost" size="sm" disabled={busy} onClick={remove} title="Remove this page from the knowledge base">
+      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+    </Button>
+  )
+}
+
 function KnowledgeTab({ clientId, domain }: { clientId: string; domain: string }) {
   const key = ['knowledge', clientId]
   const filesKey = ['knowledge-files', clientId]
@@ -156,8 +236,36 @@ function KnowledgeTab({ clientId, domain }: { clientId: string; domain: string }
   // Prefilled with the client's domain; editable so a staging URL or a
   // specific section ("example.com/services") can be imported instead.
   const [siteUrl, setSiteUrl] = useState(domain)
-  const [importing, setImporting] = useState(false)
+  const [importJob, setImportJob] = useState<ImportJobProgress | null>(null)
+  const importing = importJob?.status === 'running'
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Chunks awaiting embeddings (e.g. stored during a Voyage rate-limit
+  // window). Poll while non-zero so the banner clears itself as the backfill
+  // catches up; otherwise check only on load.
+  const { data: embeddingStatus } = useSWR(
+    ['knowledge-embedding-status', clientId],
+    () => api.clients.knowledgeEmbeddingStatus(clientId),
+    { refreshInterval: latest => (latest && latest.unembeddedChunks > 0 ? 15000 : 0) }
+  )
+
+  // Split website-imported documents (grouped into per-site folders) from
+  // everything the operator added by hand.
+  const importedByHost = new Map<string, KnowledgeDoc[]>()
+  const manualDocs: KnowledgeDoc[] = []
+  for (const d of docs ?? []) {
+    if (d.description === WEBSITE_IMPORT_TAG && d.url) {
+      let host = ''
+      try { host = new URL(d.url).host } catch { /* unparsable stored url */ }
+      if (host) {
+        const group = importedByHost.get(host) ?? []
+        group.push(d)
+        importedByHost.set(host, group)
+        continue
+      }
+    }
+    manualDocs.push(d)
+  }
 
   async function add() {
     if (!title || !content) return
@@ -175,20 +283,34 @@ function KnowledgeTab({ clientId, domain }: { clientId: string; domain: string }
   }
 
   async function importWebsite() {
-    setImporting(true)
     try {
-      const result = await api.clients.importWebsiteKnowledge(clientId, siteUrl.trim() || undefined)
-      mutate(key)
-      const refreshed = result.pages.filter(p => p.replaced).length
-      toast.success(
-        `Imported ${result.pages.length} page${result.pages.length === 1 ? '' : 's'}` +
-        (refreshed ? ` (${refreshed} refreshed)` : '') +
-        (result.discovery === 'sitemap' ? ' from the sitemap' : ' from homepage links')
-      )
+      const { jobId } = await api.clients.importWebsiteKnowledge(clientId, siteUrl.trim() || undefined)
+      setImportJob({ jobId, status: 'running', total: 0, done: 0, imported: 0, skipped: 0, unembedded: 0, discovery: null, error: null, result: null })
+      // Poll until the job settles. Refresh the document list as pages land
+      // so the folder's page count grows live, not just at the end.
+      for (;;) {
+        await new Promise(r => setTimeout(r, 1500))
+        const job = await api.clients.importWebsiteProgress(clientId, jobId)
+        setImportJob(job)
+        mutate(key)
+        if (job.status !== 'running') {
+          if (job.status === 'done' && job.result) {
+            const refreshed = job.result.pages.filter(p => p.replaced).length
+            toast.success(
+              `Imported ${job.result.pages.length} page${job.result.pages.length === 1 ? '' : 's'}` +
+              (refreshed ? ` (${refreshed} refreshed)` : '') +
+              (job.result.discovery === 'sitemap' ? ' from the sitemap' : ' from homepage links')
+            )
+          } else if (job.status === 'failed') {
+            toast.error(job.error ?? 'Website import failed')
+          }
+          mutate(['knowledge-embedding-status', clientId])
+          break
+        }
+      }
     } catch (err) {
+      setImportJob(null)
       toast.error(err instanceof Error ? err.message : 'Website import failed')
-    } finally {
-      setImporting(false)
     }
   }
 
@@ -251,8 +373,33 @@ function KnowledgeTab({ clientId, domain }: { clientId: string; domain: string }
               <Input value={siteUrl} onChange={e => setSiteUrl(e.target.value)} placeholder="example.com" />
               <Button onClick={importWebsite} disabled={importing || !siteUrl.trim()} className="justify-self-start">
                 <Globe className="h-4 w-4" />
-                {importing ? 'Importing… (can take a minute)' : 'Import pages'}
+                {importing ? 'Importing…' : 'Import pages'}
               </Button>
+              {importJob && importJob.status === 'running' && (
+                <div className="flex flex-col gap-1.5 rounded-lg border bg-muted/40 p-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-foreground">
+                      {importJob.total === 0
+                        ? 'Finding pages…'
+                        : `Importing ${importJob.done} of ${importJob.total} pages`}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {importJob.imported} imported{importJob.skipped ? ` · ${importJob.skipped} skipped` : ''}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-500"
+                      style={{ width: importJob.total ? `${Math.round((importJob.done / importJob.total) * 100)}%` : '5%' }}
+                    />
+                  </div>
+                  {importJob.discovery && (
+                    <span className="text-muted-foreground">
+                      Pages found via {importJob.discovery === 'sitemap' ? 'the sitemap' : 'homepage links'}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           ) : mode === 'upload' ? (
             <div className="flex flex-col gap-2">
@@ -279,6 +426,14 @@ function KnowledgeTab({ clientId, domain }: { clientId: string; domain: string }
         </CardContent>
       </Card>
 
+      {(embeddingStatus?.unembeddedChunks ?? 0) > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground">
+          <strong className="text-foreground">{embeddingStatus!.unembeddedChunks} chunk{embeddingStatus!.unembeddedChunks === 1 ? '' : 's'}</strong> still
+          waiting on embeddings (added faster than the embedding service allows). They stay findable by
+          keyword search in the meantime; this clears on its own as they're embedded.
+        </div>
+      )}
+
       <Card className="overflow-hidden p-0">
         {docs?.length ? (
           <Table>
@@ -291,7 +446,16 @@ function KnowledgeTab({ clientId, domain }: { clientId: string; domain: string }
               </TableRow>
             </TableHeader>
             <TableBody>
-              {docs.map(d => (
+              {Array.from(importedByHost.entries()).map(([host, group]) => (
+                <WebsiteGroup
+                  key={host}
+                  clientId={clientId}
+                  host={host}
+                  docs={group}
+                  onChanged={() => mutate(key)}
+                />
+              ))}
+              {manualDocs.map(d => (
                 <DocumentRow
                   key={d.id}
                   clientId={clientId}

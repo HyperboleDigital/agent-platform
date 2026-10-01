@@ -43,6 +43,17 @@ export interface SiteImportResult {
   // How the page list was found — surfaced in the dashboard toast so a thin
   // import ("only 3 pages?") is explainable at a glance.
   discovery: 'sitemap' | 'homepage-links' | 'homepage-only'
+  // Pages whose chunks were stored without vectors (Voyage rate-limited or
+  // down mid-import). Still searchable via keyword; the backfill embeds them.
+  unembedded: number
+}
+
+// Live progress callbacks for the dashboard's import job (lib/import-jobs.ts).
+// `discovered` fires once the page list is known; `page` fires per processed
+// page whether it imported or skipped.
+export interface ImportProgress {
+  discovered?: (total: number, discovery: SiteImportResult['discovery']) => void
+  page?: (update: { imported: boolean; embedded: boolean }) => void
 }
 
 async function fetchWithTimeout(url: string): Promise<Response | null> {
@@ -167,7 +178,8 @@ export function extractPage(html: string, url: string): { title: string; text: s
 export async function importWebsite(
   clientId: string,
   siteUrl: string,
-  maxPages: number = DEFAULT_MAX_PAGES
+  maxPages: number = DEFAULT_MAX_PAGES,
+  progress: ImportProgress = {}
 ): Promise<SiteImportResult> {
   const base = new URL(/^https?:\/\//i.test(siteUrl) ? siteUrl : `https://${siteUrl}`)
   // Same guard the domain save uses — this endpoint makes the server fetch an
@@ -204,6 +216,8 @@ export async function importWebsite(
     })
     .slice(0, limit)
 
+  progress.discovered?.(pageUrls.length, discovery)
+
   // 2. Which URLs already have an imported document (for replace-on-refresh).
   const existing = await listDocuments(clientId)
   const importedByUrl = new Map(
@@ -215,19 +229,26 @@ export async function importWebsite(
   // 3. Fetch + extract + store, a few pages at a time.
   const pages: ImportedPage[] = []
   let skipped = 0
+  let unembedded = 0
   const queue = [...pageUrls]
   async function worker() {
     for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
       const html = url === base.href && homepageHtml ? homepageHtml : await fetchText(url)
       const extracted = html ? extractPage(html, url) : null
-      if (!extracted) { skipped++; continue }
+      if (!extracted) {
+        skipped++
+        progress.page?.({ imported: false, embedded: false })
+        continue
+      }
       const previous = importedByUrl.get(url)
       if (previous) await deleteDocument(clientId, previous)
-      const { ids } = await addDocument(clientId, extracted.title, extracted.text, { url, description: IMPORT_TAG })
+      const { ids, embedded } = await addDocument(clientId, extracted.title, extracted.text, { url, description: IMPORT_TAG })
+      if (!embedded) unembedded++
       pages.push({ url, title: extracted.title, chunks: ids.length, replaced: !!previous })
+      progress.page?.({ imported: true, embedded })
     }
   }
   await Promise.all(Array.from({ length: FETCH_CONCURRENCY }, worker))
 
-  return { pages, skipped, discovery }
+  return { pages, skipped, discovery, unembedded }
 }

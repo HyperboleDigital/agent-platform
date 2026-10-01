@@ -6,6 +6,8 @@ import { applyTierTransition } from '../lib/tier-transitions'
 import { uploadOrgLogo, deleteOrgLogo, ALLOWED_LOGO_TYPES as ALLOWED_ORG_LOGO_TYPES, MAX_LOGO_BYTES as MAX_ORG_LOGO_BYTES } from '../lib/org-logo'
 import { addDocument, listDocuments, deleteDocument, updateDocumentDescription } from '../tools/knowledge-base'
 import { importWebsite, DEFAULT_MAX_PAGES } from '../lib/site-import'
+import { createImportJob, getImportJob } from '../lib/import-jobs'
+import { supabase } from '../lib/supabase'
 import { extractText, isSupportedFile, SUPPORTED_EXTENSIONS } from '../lib/file-extract'
 import { uploadLogo, deleteLogo, ALLOWED_LOGO_TYPES, MAX_LOGO_BYTES } from '../lib/widget-logo'
 import { getLeads, updateLeadStatus, deleteLead } from '../tools/crm'
@@ -509,16 +511,58 @@ clientsRouter.post('/:id/knowledge/import-website', async (req, res) => {
   if (!url) return res.status(400).json({ error: 'No website URL — set the client\'s domain or pass one' })
   const maxPages = typeof body.maxPages === 'number' ? body.maxPages : DEFAULT_MAX_PAGES
 
-  try {
-    const result = await importWebsite(req.params.id, url, maxPages)
-    if (!result.pages.length) {
-      return res.status(422).json({ error: 'No readable pages found — the site may block bots or render entirely with JavaScript' })
+  // Responds immediately with a job id; the import continues server-side and
+  // the dashboard polls the progress endpoint below. A sync response here
+  // meant a mute spinner for the whole import — now the operator sees pages
+  // land as they're processed.
+  const job = createImportJob(req.params.id)
+  void importWebsite(req.params.id, url, maxPages, {
+    discovered: (total, discovery) => { job.total = total; job.discovery = discovery },
+    page: ({ imported, embedded }) => {
+      job.done++
+      if (imported) job.imported++
+      else job.skipped++
+      if (imported && !embedded) job.unembedded++
     }
-    res.json(result)
-  } catch (err) {
+  }).then(result => {
+    job.result = result
+    if (!result.pages.length) {
+      job.status = 'failed'
+      job.error = 'No readable pages found — the site may block bots or render entirely with JavaScript'
+    } else {
+      job.status = 'done'
+    }
+  }).catch(err => {
     console.error('[knowledge import-website] failed', err)
-    res.status(400).json({ error: err instanceof Error ? err.message : 'Import failed' })
-  }
+    job.status = 'failed'
+    job.error = err instanceof Error ? err.message : 'Import failed'
+  })
+  res.json({ jobId: job.id })
+})
+
+// Poll an import started above. Returns live counts while running, and the
+// full SiteImportResult once done.
+clientsRouter.get('/:id/knowledge/import-website/:jobId', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const job = getImportJob(req.params.id, req.params.jobId)
+  if (!job) return res.status(404).json({ error: 'Import job not found (it may have expired — refresh the document list)' })
+  const { id, status, total, done, imported, skipped, unembedded, discovery, error, result } = job
+  res.json({ jobId: id, status, total, done, imported, skipped, unembedded, discovery, error, result })
+})
+
+// Embedding status for the knowledge-base screen: how many chunks are still
+// waiting on vectors (stored during a Voyage rate-limit window). They're
+// keyword-searchable in the meantime; the backfill script clears the count.
+clientsRouter.get('/:id/knowledge/embedding-status', async (req, res) => {
+  const identity = identityOf(req)
+  if (!identity?.isSuperadmin) return res.status(403).json({ error: 'Forbidden' })
+  const { count } = await supabase
+    .from('knowledge_base')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', req.params.id)
+    .is('embedding', null)
+  res.json({ unembeddedChunks: count ?? 0 })
 })
 
 // Delete a whole document (all its chunks, plus its original file if any).
