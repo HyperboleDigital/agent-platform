@@ -7,6 +7,7 @@ import { checkChatCaps, CHAT_BURST_PER_MIN } from '../lib/usage'
 import { billingConfigured, getSubscription, isActive } from '../lib/billing'
 import { getEntitlements } from '../lib/entitlements'
 import { getClientById } from '../lib/clients'
+import { alertChatFailure } from '../lib/ops-alerts'
 import { isOriginAllowed } from '@agent-platform/shared'
 import type { IncomingMessage } from '@agent-platform/shared'
 
@@ -95,6 +96,10 @@ chatRouter.post('/', async (req, res) => {
     res.json({ reply: result.reply, intent: result.intent, action: result.action, context: result.context })
   } catch (err) {
     console.error('[chat] agent error', err)
+    // The operator must hear about this: a hard agent failure means visitors
+    // are getting the widget's "trouble connecting" fallback (provider out of
+    // credits, bad key, outage). Throttled inside — see lib/ops-alerts.ts.
+    void alertChatFailure({ clientId: message.clientId, clientName: originClient?.name, error: err })
     res.status(500).json({ error: 'Agent error — escalating to human.' })
   }
 })
