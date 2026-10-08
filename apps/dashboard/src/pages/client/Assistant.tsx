@@ -629,6 +629,19 @@ const LEAD_FORM_FIELDS: { key: keyof NonNullable<WidgetConfig['leadForm']>; labe
   { key: 'reason', label: 'Notification email reason line', def: 'Visitor requested a demo' }
 ]
 
+// One-click generic wording for clients where demo language is wrong but
+// nobody wants to write six fields of copy — plain "get in touch" phrasing
+// that fits any business. Filling the draft (not saving) keeps the normal
+// review-then-"Save widget settings" flow.
+const GENERIC_LEAD_FORM: NonNullable<WidgetConfig['leadForm']> = {
+  title: 'Get in touch',
+  sub: 'Leave your details and we’ll follow up shortly.',
+  btn: 'Send',
+  donePre: 'Thanks! 🎉 We’ll be in touch at ',
+  donePost: ' shortly.',
+  reason: 'Visitor asked to be contacted'
+}
+
 function LeadFormCopyCard({ draft, onChange }: {
   draft: WidgetConfig
   onChange: (lf: NonNullable<WidgetConfig['leadForm']>) => void
@@ -645,6 +658,15 @@ function LeadFormCopyCard({ draft, onChange }: {
           hot lead wants a <em>quote</em>, a <em>call</em>, or <em>samples</em> can rename the whole flow
           here. Empty fields keep the default shown in grey.
         </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => onChange({ ...GENERIC_LEAD_FORM })}>
+            Use generic wording
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange({})}>
+            Reset to default (demo)
+          </Button>
+          <span className="text-xs text-muted-foreground">Fills the fields below — review, then save.</span>
+        </div>
         {LEAD_FORM_FIELDS.map(f => (
           <div key={f.key} className="flex flex-col gap-1.5">
             <Label className="text-xs text-muted-foreground">{f.label}</Label>
